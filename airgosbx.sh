@@ -1034,13 +1034,17 @@ cat >> "$HOME/agsbx/xr.json" <<EOF
           ]
         },
         "hysteriaSettings": {
-          "version": 2,
-          "obfs": {
-            "type": "salamander",
-            "salamander": {
-              "password": "${obfs_pass}"
+          "version": 2
+        },
+        "finalmask": {
+          "udp": [
+            {
+              "type": "salamander",
+              "settings": {
+                "password": "${obfs_pass}"
+              }
             }
-          }
+          ]
         }
       }
     },
