@@ -12,3 +12,6 @@ singboxraygo.sh
 singboxDNS.md
 yg_diff.txt
 *.py
+
+# 本地提交历史记录文件
+commit_history.md
