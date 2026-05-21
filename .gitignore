@@ -1,0 +1,14 @@
+# 忽略系统文件
+.DS_Store
+
+# 忽略备份和他人脚本的文件夹
+backup/
+fs script/
+yg script/
+
+# 忽略他人及临时的单文件脚本与文档
+sb.sh
+singboxraygo.sh
+singboxDNS.md
+yg_diff.txt
+*.py
