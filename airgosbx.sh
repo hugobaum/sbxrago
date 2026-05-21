@@ -219,10 +219,10 @@ echo
 # [第3段] 启动信息输出、系统环境检测、依赖安装（顺序执行区）
 #============================================================
 echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
-echo "项目地址：github.com/hugobaum/mimic"
+echo "项目地址：github.com/hugobaum/sbxrago"
 echo "基于 yonggekkk/argosbx 二次开发，已加固安全"
 echo "Airgosbx一键无交互小钢炮脚本💣"
-echo "当前版本：V25.11.20-sec"
+echo "当前版本：V26.5.21"
 echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
 hostname=$(uname -a | awk '{print $2}')
 op=$(cat /etc/redhat-release 2>/dev/null || cat /etc/os-release 2>/dev/null | grep -i pretty_name | cut -d \" -f2)
