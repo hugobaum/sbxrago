@@ -1013,7 +1013,7 @@ cat >> "$HOME/agsbx/xr.json" <<EOF
       "tag": "hy2-xr",
       "settings": {
         "version": 2,
-        "users": [
+        "clients": [
           {
             "auth": "${uuid}"
           }
@@ -1034,14 +1034,16 @@ cat >> "$HOME/agsbx/xr.json" <<EOF
           ]
         },
         "hysteriaSettings": {
-          "version": 2,
-          "obfs": {
+          "version": 2
+        },
+        "udpmasks": [
+          {
             "type": "salamander",
-            "salamander": {
+            "settings": {
               "password": "${obfs_pass}"
             }
           }
-        }
+        ]
       }
     },
 EOF
