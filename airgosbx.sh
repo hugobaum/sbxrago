@@ -561,6 +561,9 @@ bash "$acme_script" --home "$acme_home" --install-cert -d "$acme_domain" --ecc -
 [ -s "$HOME/agsbx/cert.pem" ] && [ -s "$HOME/agsbx/private.key" ] || return 1
 echo "$acme_domain" > "$HOME/agsbx/sni.txt"
 echo "ca" > "$HOME/agsbx/cert_mode"
+echo "ACME证书申请成功：$acme_domain"
+echo "证书文件：$HOME/agsbx/cert.pem"
+echo "私钥文件：$HOME/agsbx/private.key"
 }
 setup_tls_certificate(){
 if ! command -v openssl >/dev/null 2>&1; then
