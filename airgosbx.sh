@@ -498,26 +498,42 @@ fi
 command -v socat >/dev/null 2>&1
 }
 write_cert_fingerprint(){
-openssl x509 -noout -fingerprint -sha256 -inform pem -in "$HOME/agsbx/cert.pem" 2>/dev/null | awk -F= '{print $2}' | tr -d ':' > "$HOME/agsbx/cert_sha256.txt"
+cert_file=${tls_cert_file:-$(cat "$HOME/agsbx/cert_file_path" 2>/dev/null)}
+[ -s "$cert_file" ] || cert_file="$HOME/agsbx/cert.pem"
+openssl x509 -noout -fingerprint -sha256 -inform pem -in "$cert_file" 2>/dev/null | awk -F= '{print $2}' | tr -d ':' > "$HOME/agsbx/cert_sha256.txt"
 [ -s "$HOME/agsbx/cert_sha256.txt" ]
 }
+record_tls_cert_paths(){
+tls_cert_file="$1"
+tls_key_file="$2"
+echo "$tls_cert_file" > "$HOME/agsbx/cert_file_path"
+echo "$tls_key_file" > "$HOME/agsbx/key_file_path"
+}
 setup_selfsigned_certificate(){
+mkdir -p "$HOME/agsbx/openssl"
+selfsigned_cert_file="$HOME/agsbx/openssl/cert.pem"
+selfsigned_key_file="$HOME/agsbx/openssl/private.key"
 if [ "$(cat "$HOME/agsbx/cert_mode" 2>/dev/null)" != "selfsigned" ] || [ ! -s "$HOME/agsbx/sni.txt" ]; then
 openssl rand -hex 4 | awk '{print $1".com"}' > "$HOME/agsbx/sni.txt"
 fi
 random_sni=$(cat "$HOME/agsbx/sni.txt" 2>/dev/null)
-openssl ecparam -genkey -name prime256v1 -out "$HOME/agsbx/private.key" >/dev/null 2>&1
-openssl req -new -x509 -days 90 -key "$HOME/agsbx/private.key" -out "$HOME/agsbx/cert.pem" -subj "/CN=$random_sni" >/dev/null 2>&1
+openssl ecparam -genkey -name prime256v1 -out "$selfsigned_key_file" >/dev/null 2>&1
+openssl req -new -x509 -days 90 -key "$selfsigned_key_file" -out "$selfsigned_cert_file" -subj "/CN=$random_sni" >/dev/null 2>&1
 echo "selfsigned" > "$HOME/agsbx/cert_mode"
+record_tls_cert_paths "$selfsigned_cert_file" "$selfsigned_key_file"
 write_cert_fingerprint
 }
 setup_acme_certificate(){
 acme_domain="$1"
+mkdir -p "$HOME/agsbx/acmecer"
+acme_cert_file="$HOME/agsbx/acmecer/cert.pem"
+acme_key_file="$HOME/agsbx/acmecer/private.key"
 if [ -n "$certcrt" ] || [ -n "$certkey" ]; then
 if [ -s "$certcrt" ] && [ -s "$certkey" ]; then
-cp "$certcrt" "$HOME/agsbx/cert.pem" && cp "$certkey" "$HOME/agsbx/private.key" || return 1
+cp "$certcrt" "$acme_cert_file" && cp "$certkey" "$acme_key_file" || return 1
 echo "$acme_domain" > "$HOME/agsbx/sni.txt"
 echo "ca" > "$HOME/agsbx/cert_mode"
+record_tls_cert_paths "$acme_cert_file" "$acme_key_file"
 return 0
 fi
 echo "警告：certcrt/certkey 未同时指向有效文件，将尝试自动申请 ACME 证书。"
@@ -557,13 +573,11 @@ acme_mail=${acmem:-"admin@$acme_domain"}
 bash "$acme_script" --home "$acme_home" --set-default-ca --server letsencrypt >/dev/null 2>&1
 bash "$acme_script" --home "$acme_home" --register-account -m "$acme_mail" --server letsencrypt >/dev/null 2>&1
 bash "$acme_script" --home "$acme_home" --issue --standalone -d "$acme_domain" --keylength ec-256 --server letsencrypt --force >/dev/null 2>&1 || return 1
-bash "$acme_script" --home "$acme_home" --install-cert -d "$acme_domain" --ecc --fullchain-file "$HOME/agsbx/cert.pem" --key-file "$HOME/agsbx/private.key" >/dev/null 2>&1 || return 1
-[ -s "$HOME/agsbx/cert.pem" ] && [ -s "$HOME/agsbx/private.key" ] || return 1
+bash "$acme_script" --home "$acme_home" --install-cert -d "$acme_domain" --ecc --fullchain-file "$acme_cert_file" --key-file "$acme_key_file" >/dev/null 2>&1 || return 1
+[ -s "$acme_cert_file" ] && [ -s "$acme_key_file" ] || return 1
 echo "$acme_domain" > "$HOME/agsbx/sni.txt"
 echo "ca" > "$HOME/agsbx/cert_mode"
-echo "ACME证书申请成功：$acme_domain"
-echo "证书文件：$HOME/agsbx/cert.pem"
-echo "私钥文件：$HOME/agsbx/private.key"
+record_tls_cert_paths "$acme_cert_file" "$acme_key_file"
 }
 setup_tls_certificate(){
 if ! command -v openssl >/dev/null 2>&1; then
@@ -576,16 +590,23 @@ if [ -n "$cert_domain" ]; then
 if valid_domain "$cert_domain"; then
 echo "检测到域名证书变量 certym=$cert_domain，开始准备 ACME/CA 证书。"
 if setup_acme_certificate "$cert_domain" && write_cert_fingerprint; then
+echo "ACME证书申请成功：$cert_domain"
 echo "TLS证书模式：CA/ACME 域名证书 ($cert_domain)"
+echo "证书文件：$tls_cert_file"
+echo "私钥文件：$tls_key_file"
 return 0
 fi
-echo "警告：ACME/CA 证书准备失败，自动回退为自签证书。"
+echo "ACME证书申请失败：$cert_domain"
+echo "正在自动回退为自签证书，确保 TLS 协议仍有证书可用。"
 else
-echo "警告：certym=$cert_domain 不像有效域名，自动回退为自签证书。"
+echo "警告：certym=$cert_domain 不像有效域名。"
+echo "正在自动回退为自签证书，确保 TLS 协议仍有证书可用。"
 fi
 fi
 if setup_selfsigned_certificate; then
 echo "TLS证书模式：自签证书 ($(cat "$HOME/agsbx/sni.txt" 2>/dev/null))"
+echo "证书文件：$tls_cert_file"
+echo "私钥文件：$tls_key_file"
 else
 echo "错误：TLS 证书生成失败，终止安装。"
 exit 1
@@ -1030,8 +1051,8 @@ cat >> "$HOME/agsbx/xr.json" <<EOF
           ],
           "certificates": [
             {
-              "certificateFile": "$HOME/agsbx/cert.pem",
-              "keyFile": "$HOME/agsbx/private.key"
+              "certificateFile": "$tls_cert_file",
+              "keyFile": "$tls_key_file"
             }
           ]
         },
@@ -1095,8 +1116,8 @@ cat >> "$HOME/agsbx/sb.json" <<EOF
             "alpn": [
                 "h3"
             ],
-            "certificate_path": "$HOME/agsbx/cert.pem",
-            "key_path": "$HOME/agsbx/private.key"
+            "certificate_path": "$tls_cert_file",
+            "key_path": "$tls_key_file"
         }
     },
 EOF
@@ -1131,8 +1152,8 @@ cat >> "$HOME/agsbx/sb.json" <<EOF
                 "alpn": [
                     "h3"
                 ],
-                "certificate_path": "$HOME/agsbx/cert.pem",
-                "key_path": "$HOME/agsbx/private.key"
+                "certificate_path": "$tls_cert_file",
+                "key_path": "$tls_key_file"
             }
         },
 EOF
@@ -1163,8 +1184,8 @@ cat >> "$HOME/agsbx/sb.json" <<EOF
             "padding_scheme":[],
             "tls":{
                 "enabled": true,
-                "certificate_path": "$HOME/agsbx/cert.pem",
-                "key_path": "$HOME/agsbx/private.key"
+                "certificate_path": "$tls_cert_file",
+                "key_path": "$tls_key_file"
             }
         },
 EOF
