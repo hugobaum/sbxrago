@@ -997,7 +997,6 @@ fi
 if [ -n "$xhyp" ]; then
 xhyp=xhypt
 setup_tls_certificate
-insobfspass
 if [ -z "$port_xhy2" ] && [ ! -e "$HOME/agsbx/port_xhy2" ]; then
 port_xhy2=$(get_free_port)
 echo "$port_xhy2" > "$HOME/agsbx/port_xhy2"
@@ -1035,15 +1034,7 @@ cat >> "$HOME/agsbx/xr.json" <<EOF
         },
         "hysteriaSettings": {
           "version": 2
-        },
-        "udpmasks": [
-          {
-            "type": "salamander",
-            "settings": {
-              "password": "${obfs_pass}"
-            }
-          }
-        ]
+        }
       }
     },
 EOF
@@ -2023,7 +2014,6 @@ fi
 if grep hy2-xr "$HOME/agsbx/xr.json" >/dev/null 2>&1; then
 echo "💣【 Xray-Hysteria2 】节点信息如下："
 port_xhy2=$(cat "$HOME/agsbx/port_xhy2")
-obfs_pass=$(cat "$HOME/agsbx/obfs_pass" 2>/dev/null)
 cert_hash=$(cat "$HOME/agsbx/cert_sha256.txt" 2>/dev/null)
 ran_sni=$(cat "$HOME/agsbx/sni.txt" 2>/dev/null)
 cert_mode=$(cat "$HOME/agsbx/cert_mode" 2>/dev/null)
@@ -2036,17 +2026,9 @@ if [ -n "$xby_hop" ]; then
   echo "Xray-Hysteria2 跳跃端口已启用：$xby_hop"
 fi
 if [ "$cert_mode" = "ca" ] && [ -n "$ran_sni" ]; then
-if [ -n "$obfs_pass" ]; then
-xhy2_link="hysteria2://$uuid@$server_ip:$port_xhy2?security=tls&alpn=h3&sni=$ran_sni&insecure=0&allowInsecure=0&obfs=salamander&obfs-password=$obfs_pass${xby_mport}#${sxname}xray-hy2-$hostname"
-else
 xhy2_link="hysteria2://$uuid@$server_ip:$port_xhy2?security=tls&alpn=h3&sni=$ran_sni&insecure=0&allowInsecure=0${xby_mport}#${sxname}xray-hy2-$hostname"
-fi
-else
-if [ -n "$obfs_pass" ]; then
-xhy2_link="hysteria2://$uuid@$server_ip:$port_xhy2?pinSHA256=$cert_hash&alpn=h3&sni=$ran_sni&insecure=1&allowInsecure=1&obfs=salamander&obfs-password=$obfs_pass${xby_mport}#${sxname}xray-hy2-$hostname"
 else
 xhy2_link="hysteria2://$uuid@$server_ip:$port_xhy2?pinSHA256=$cert_hash&alpn=h3&sni=$ran_sni&insecure=1&allowInsecure=1${xby_mport}#${sxname}xray-hy2-$hostname"
-fi
 fi
 echo "$xhy2_link" >> "$HOME/agsbx/jh.txt"
 echo "$xhy2_link"
