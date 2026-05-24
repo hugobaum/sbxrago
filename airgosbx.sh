@@ -509,6 +509,36 @@ tls_key_file="$2"
 echo "$tls_cert_file" > "$HOME/agsbx/cert_file_path"
 echo "$tls_key_file" > "$HOME/agsbx/key_file_path"
 }
+show_tls_cert_summary(){
+cert_result="$1"
+cert_domain="$2"
+cert_file=${tls_cert_file:-$(cat "$HOME/agsbx/cert_file_path" 2>/dev/null)}
+key_file=${tls_key_file:-$(cat "$HOME/agsbx/key_file_path" 2>/dev/null)}
+cert_sni=$(cat "$HOME/agsbx/sni.txt" 2>/dev/null)
+cert_mode_now=$(cat "$HOME/agsbx/cert_mode" 2>/dev/null)
+cert_issuer=$(openssl x509 -noout -issuer -in "$cert_file" 2>/dev/null | sed 's/^issuer=//')
+cert_subject=$(openssl x509 -noout -subject -in "$cert_file" 2>/dev/null | sed 's/^subject=//')
+cert_not_before=$(openssl x509 -noout -startdate -in "$cert_file" 2>/dev/null | sed 's/^notBefore=//')
+cert_not_after=$(openssl x509 -noout -enddate -in "$cert_file" 2>/dev/null | sed 's/^notAfter=//')
+cert_serial=$(openssl x509 -noout -serial -in "$cert_file" 2>/dev/null | sed 's/^serial=//')
+cert_fingerprint=$(openssl x509 -noout -fingerprint -sha256 -in "$cert_file" 2>/dev/null | awk -F= '{print $2}')
+echo "========== TLS 证书信息 =========="
+echo "证书结果：$cert_result"
+[ -n "$cert_domain" ] && echo "申请域名：$cert_domain"
+[ -n "$cert_sni" ] && echo "SNI/CN：$cert_sni"
+[ -n "$cert_mode_now" ] && echo "证书模式：$cert_mode_now"
+echo "颁发机构：${cert_issuer:-未知}"
+echo "证书主体：${cert_subject:-未知}"
+echo "有效期开始：${cert_not_before:-未知}"
+echo "有效期结束：${cert_not_after:-未知}"
+echo "证书序列号：${cert_serial:-未知}"
+echo "SHA256指纹：${cert_fingerprint:-未知}"
+echo "证书文件：$cert_file"
+echo "私钥文件：$key_file"
+echo "指纹文件：$HOME/agsbx/cert_sha256.txt"
+[ "$cert_mode_now" = "ca" ] && echo "ACME工作目录：$HOME/agsbx/acme"
+echo "=================================="
+}
 setup_selfsigned_certificate(){
 mkdir -p "$HOME/agsbx/openssl"
 selfsigned_cert_file="$HOME/agsbx/openssl/cert.pem"
@@ -534,6 +564,7 @@ cp "$certcrt" "$acme_cert_file" && cp "$certkey" "$acme_key_file" || return 1
 echo "$acme_domain" > "$HOME/agsbx/sni.txt"
 echo "ca" > "$HOME/agsbx/cert_mode"
 record_tls_cert_paths "$acme_cert_file" "$acme_key_file"
+tls_cert_source="外部导入 CA/ACME 证书"
 return 0
 fi
 echo "警告：certcrt/certkey 未同时指向有效文件，将尝试自动申请 ACME 证书。"
@@ -578,6 +609,7 @@ bash "$acme_script" --home "$acme_home" --install-cert -d "$acme_domain" --ecc -
 echo "$acme_domain" > "$HOME/agsbx/sni.txt"
 echo "ca" > "$HOME/agsbx/cert_mode"
 record_tls_cert_paths "$acme_cert_file" "$acme_key_file"
+tls_cert_source="ACME 自动申请成功"
 }
 setup_tls_certificate(){
 if ! command -v openssl >/dev/null 2>&1; then
@@ -590,10 +622,8 @@ if [ -n "$cert_domain" ]; then
 if valid_domain "$cert_domain"; then
 echo "检测到域名证书变量 certym=$cert_domain，开始准备 ACME/CA 证书。"
 if setup_acme_certificate "$cert_domain" && write_cert_fingerprint; then
-echo "ACME证书申请成功：$cert_domain"
 echo "TLS证书模式：CA/ACME 域名证书 ($cert_domain)"
-echo "证书文件：$tls_cert_file"
-echo "私钥文件：$tls_key_file"
+show_tls_cert_summary "${tls_cert_source:-ACME/CA 证书可用}" "$cert_domain"
 return 0
 fi
 echo "ACME证书申请失败：$cert_domain"
@@ -605,8 +635,7 @@ fi
 fi
 if setup_selfsigned_certificate; then
 echo "TLS证书模式：自签证书 ($(cat "$HOME/agsbx/sni.txt" 2>/dev/null))"
-echo "证书文件：$tls_cert_file"
-echo "私钥文件：$tls_key_file"
+show_tls_cert_summary "OpenSSL 自签证书可用" "$(cat "$HOME/agsbx/sni.txt" 2>/dev/null)"
 else
 echo "错误：TLS 证书生成失败，终止安装。"
 exit 1
