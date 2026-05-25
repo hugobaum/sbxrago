@@ -152,12 +152,14 @@ export LANG=en_US.UTF-8
 [ -z "${arpt+x}" ] || arp=yes
 [ -z "${sopt+x}" ] || sop=yes
 [ -z "${warp+x}" ] || wap=yes
+[ -z "${xdnspt+x}" ] || xdns=yes
+[ -z "${xicmppt+x}" ] || xicp=yes
 if find /proc/*/exe -type l 2>/dev/null | grep -E '/proc/[0-9]+/exe' | xargs -r readlink 2>/dev/null | grep -Eq 'agsbx/(sing-box|xray)' || pgrep -f 'agsbx/sing-box' >/dev/null 2>&1 || pgrep -f 'agsbx/xray' >/dev/null 2>&1; then
 if [ "$1" = "rep" ]; then
-[ "$vwp" = yes ] || [ "$sop" = yes ] || [ "$vxp" = yes ] || [ "$ssp" = yes ] || [ "$vlp" = yes ] || [ "$vmp" = yes ] || [ "$hyp" = yes ] || [ "$tup" = yes ] || [ "$xhp" = yes ] || [ "$anp" = yes ] || [ "$arp" = yes ] || [ "$xhyp" = yes ] || { echo "提示：rep重置协议时，请在脚本前至少设置一个协议变量哦! 💣"; exit; }
+[ "$vwp" = yes ] || [ "$sop" = yes ] || [ "$vxp" = yes ] || [ "$ssp" = yes ] || [ "$vlp" = yes ] || [ "$vmp" = yes ] || [ "$hyp" = yes ] || [ "$tup" = yes ] || [ "$xhp" = yes ] || [ "$anp" = yes ] || [ "$arp" = yes ] || [ "$xhyp" = yes ] || [ "$xdns" = yes ] || [ "$xicp" = yes ] || { echo "提示：rep重置协议时，请在脚本前至少设置一个协议变量哦! 💣"; exit; }
 fi
 else
-[ "$1" = "del" ] || [ "$vwp" = yes ] || [ "$sop" = yes ] || [ "$vxp" = yes ] || [ "$ssp" = yes ] || [ "$vlp" = yes ] || [ "$vmp" = yes ] || [ "$hyp" = yes ] || [ "$tup" = yes ] || [ "$xhp" = yes ] || [ "$anp" = yes ] || [ "$arp" = yes ] || [ "$xhyp" = yes ] || { echo "提示：未安装airgosbx脚本，请在脚本前至少设置一个协议变量哦！💣"; exit; }
+[ "$1" = "del" ] || [ "$vwp" = yes ] || [ "$sop" = yes ] || [ "$vxp" = yes ] || [ "$ssp" = yes ] || [ "$vlp" = yes ] || [ "$vmp" = yes ] || [ "$hyp" = yes ] || [ "$tup" = yes ] || [ "$xhp" = yes ] || [ "$anp" = yes ] || [ "$arp" = yes ] || [ "$xhyp" = yes ] || [ "$xdns" = yes ] || [ "$xicp" = yes ] || { echo "提示：未安装airgosbx脚本，请在脚本前至少设置一个协议变量哦！💣"; exit; }
 fi
 export uuid=${uuid:-''}
 export obfs_pass=${obfs_pass:-''}
@@ -173,6 +175,9 @@ export port_an=${anpt:-''}
 export port_ar=${arpt:-''}
 export port_ss=${sspt:-''}
 export port_so=${sopt:-''}
+export port_xdns=${xdnspt:-''}
+export flag_xicmp=${xicmppt:-''}
+export xdnsym=${xdnsym:-''}
 export ym_vl_re=${reym:-''}
 export cdnym=${cdnym:-''}
 export argo=${argo:-''}
@@ -222,7 +227,7 @@ echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 echo "项目地址：github.com/hugobaum/sbxrago"
 echo "基于 yonggekkk/argosbx 二次开发，已加固安全"
 echo "Airgosbx一键无交互小钢炮脚本💣"
-echo "当前版本：V26.5.21"
+echo "当前版本：V26.5.25"
 echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
 hostname=$(uname -a | awk '{print $2}')
 op=$(cat /etc/redhat-release 2>/dev/null || cat /etc/os-release 2>/dev/null | grep -i pretty_name | cut -d \" -f2)
@@ -234,7 +239,7 @@ amd64|x86_64) cpu=amd64;;
 esac
 mkdir -pm 700 "$HOME/agsbx"
 umask 077
-if [ ! -f sbx_update ]; then
+if [ ! -f "$HOME/agsbx/sbx_update" ]; then
 echo "执行脚本中，请稍后"
 if command -v apk >/dev/null 2>&1; then
 apk update >/dev/null 2>&1
@@ -242,7 +247,7 @@ apk add gcompat libc6-compat >/dev/null 2>&1
 elif command -v apt >/dev/null 2>&1; then
 apt update >/dev/null 2>&1 && apt install coreutils util-linux -y >/dev/null 2>&1
 fi
-touch sbx_update
+touch "$HOME/agsbx/sbx_update"
 fi
 #============================================================
 # [第4段] 网络检测与 WARP 配置函数
@@ -772,7 +777,7 @@ elif [ -n "$port_xh" ]; then
 echo "$port_xh" > "$HOME/agsbx/port_xh"
 fi
 port_xh=$(cat "$HOME/agsbx/port_xh")
-echo "Vlessenc-xhttp-reality-vision端口：$port_xh"
+echo "Vlessenc-xhttp-reality-vision-fm端口：$port_xh"
 cat >> "$HOME/agsbx/xr.json" <<EOF
     {
       "tag":"xhttp-reality",
@@ -842,6 +847,15 @@ cat >> "$HOME/agsbx/xr.json" <<EOF
                 "password": "${uuid}",
                 "paddingMin": 16,
                 "paddingMax": 64
+              }
+            }
+          ],
+          "udp": [
+            {
+              "type": "noise",
+              "settings": {
+                "paddingMin": 32,
+                "paddingMax": 128
               }
             }
           ]
@@ -988,7 +1002,7 @@ elif [ -n "$port_vl_re" ]; then
 echo "$port_vl_re" > "$HOME/agsbx/port_vl_re"
 fi
 port_vl_re=$(cat "$HOME/agsbx/port_vl_re")
-echo "Vless-tcp-reality-v端口：$port_vl_re"
+echo "Vless-tcp-reality-vision-fm端口：$port_vl_re"
 cat >> "$HOME/agsbx/xr.json" <<EOF
         {
             "tag":"reality-vision",
@@ -1058,6 +1072,50 @@ echo "$port_xhy2" > "$HOME/agsbx/port_xhy2"
 fi
 port_xhy2=$(cat "$HOME/agsbx/port_xhy2")
 echo "Xray-Hysteria2端口：$port_xhy2"
+if [ -n "$xhyjpt" ]; then
+setup_port_hopping "$xhyjpt" "$port_xhy2"
+cat >> "$HOME/agsbx/xr.json" <<EOF
+    {
+      "port": ${port_xhy2},
+      "protocol": "hysteria",
+      "tag": "hy2-xr",
+      "settings": {
+        "version": 2,
+        "clients": [
+          {
+            "auth": "${uuid}"
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "hysteria",
+        "security": "tls",
+        "tlsSettings": {
+          "alpn": [
+            "h3"
+          ],
+          "certificates": [
+            {
+              "certificateFile": "$tls_cert_file",
+              "keyFile": "$tls_key_file"
+            }
+          ]
+        },
+        "hysteriaSettings": {
+          "version": 2,
+          "quicParams": {
+            "congestion": "brutal",
+            "force-brutal": true,
+            "udpHop": {
+              "ports": "${xhyjpt}",
+              "interval": 15
+            }
+          }
+        }
+      }
+    },
+EOF
+else
 cat >> "$HOME/agsbx/xr.json" <<EOF
     {
       "port": ${port_xhy2},
@@ -1091,8 +1149,91 @@ cat >> "$HOME/agsbx/xr.json" <<EOF
       }
     },
 EOF
+fi
 else
 xhyp=xhyptargo
+fi
+if [ -n "$xdnspt" ] && [ -n "$xdnsym" ]; then
+if [ -z "$port_xdns" ] && [ ! -e "$HOME/agsbx/port_xdns" ]; then
+port_xdns=$(get_free_port)
+echo "$port_xdns" > "$HOME/agsbx/port_xdns"
+elif [ -n "$port_xdns" ]; then
+echo "$port_xdns" > "$HOME/agsbx/port_xdns"
+fi
+port_xdns=$(cat "$HOME/agsbx/port_xdns")
+echo "Vless-kcp-xdns-fm端口：$port_xdns"
+cat >> "$HOME/agsbx/xr.json" <<EOF
+    {
+      "tag": "vless-kcp-xdns",
+      "listen": "::",
+      "port": ${port_xdns},
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "${uuid}"
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "kcp",
+        "kcpSettings": {
+          "uplinkCapacity": 5,
+          "downlinkCapacity": 20,
+          "congestion": true,
+          "header": {
+            "type": "none"
+          }
+        },
+        "finalmask": {
+          "xdns": {
+            "domain": "${xdnsym}",
+            "downstreamDataA": true,
+            "downstreamDataAAAA": true
+          }
+        }
+      }
+    },
+EOF
+fi
+if [ -n "$xicmppt" ]; then
+setcap cap_net_raw+ep "$HOME/agsbx/xray"
+sysctl -w net.ipv4.icmp_echo_ignore_all=1
+echo "Vless-kcp-xicmp-fm 特种L3协议已激活✓"
+cat >> "$HOME/agsbx/xr.json" <<EOF
+    {
+      "tag": "vless-kcp-xicmp",
+      "listen": "::",
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "${uuid}"
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "kcp",
+        "kcpSettings": {
+          "uplinkCapacity": 5,
+          "downlinkCapacity": 20,
+          "congestion": true,
+          "header": {
+            "type": "none"
+          }
+        },
+        "finalmask": {
+          "xicmp": {
+            "listenIp": "0.0.0.0"
+          }
+        }
+      }
+    },
+EOF
+else
+sysctl -w net.ipv4.icmp_echo_ignore_all=0 >/dev/null 2>&1
 fi
 }
 
@@ -1667,13 +1808,13 @@ xrsbso
 warpsx
 xrsbout
 hyp="shyptargo"; tup="tuptargo"; anp="anptargo"; arp="arptargo"; ssp="ssptargo"
-elif [ "$xhp" != yes ] && [ "$vlp" != yes ] && [ "$vxp" != yes ] && [ "$vwp" != yes ] && [ "$xhyp" != yes ]; then
+elif [ "$xhp" != yes ] && [ "$vlp" != yes ] && [ "$vxp" != yes ] && [ "$vwp" != yes ] && [ "$xhyp" != yes ] && [ "$xdns" != yes ] && [ "$xicp" != yes ]; then
 installsb
 xrsbvm
 xrsbso
 warpsx
 xrsbout
-xhp="xhptargo"; vlp="vlptargo"; vxp="vxptargo"; vwp="vwptargo"; xhyp="xhyptargo"
+xhp="xhptargo"; vlp="vlptargo"; vxp="vxptargo"; vwp="vwptargo"; xhyp="xhyptargo"; xdns="xdnstargo"; xicp="xicptargo"
 else
 installsb
 installxray
@@ -1939,9 +2080,9 @@ fm_tcp_encoded=$(printf '%s' "$fm_tcp_config" | sed 's/{/%7B/g;s/}/%7D/g;s/"/%22
 fm_xh_config="{\"tcp\":[{\"type\":\"sudoku\",\"settings\":{\"password\":\"$uuid\",\"paddingMin\":16,\"paddingMax\":64}}]}"
 fm_xh_encoded=$(printf '%s' "$fm_xh_config" | sed 's/{/%7B/g;s/}/%7D/g;s/"/%22/g;s/:/%3A/g;s/,/%2C/g;s/ //g;s/\[/%5B/g;s/\]/%5D/g')
 if grep xhttp-reality "$HOME/agsbx/xr.json" >/dev/null 2>&1; then
-echo "💣【 Vlessenc-xhttp-reality-vision 】支持ENC加密，节点信息如下："
+echo "💣【 Vlessenc-xhttp-reality-vision-fm 】支持ENC加密，节点信息如下："
 port_xh=$(cat "$HOME/agsbx/port_xh")
-vl_xh_link="vless://$uuid@$server_ip:$port_xh?encryption=$enkey&flow=xtls-rprx-vision&security=reality&sni=$ym_vl_re&fp=chrome&pbk=$public_key_x&sid=$short_id_x&type=xhttp&path=$uuid-xh&mode=auto&extra=$xh_extra_encoded&fm=$fm_xh_encoded#${sxname}vlessenc-xhttp-reality-vision-$hostname"
+vl_xh_link="vless://$uuid@$server_ip:$port_xh?encryption=$enkey&flow=xtls-rprx-vision&security=reality&sni=$ym_vl_re&fp=chrome&pbk=$public_key_x&sid=$short_id_x&type=xhttp&path=$uuid-xh&mode=auto&extra=$xh_extra_encoded&fm=$fm_xh_encoded#${sxname}vlessenc-xhttp-reality-vision-fm-$hostname"
 echo "$vl_xh_link" >> "$HOME/agsbx/jh.txt"
 echo "$vl_xh_link"
 echo
@@ -1979,11 +2120,30 @@ echo
 fi
 fi
 if grep reality-vision "$HOME/agsbx/xr.json" >/dev/null 2>&1; then
-echo "💣【 Vless-tcp-reality-vision 】节点信息如下："
+echo "💣【 Vless-tcp-reality-vision-fm 】节点信息如下："
 port_vl_re=$(cat "$HOME/agsbx/port_vl_re")
-vl_link="vless://$uuid@$server_ip:$port_vl_re?encryption=none&flow=xtls-rprx-vision&security=reality&sni=$ym_vl_re&fp=chrome&pbk=$public_key_x&sid=$short_id_x&type=tcp&headerType=none&fm=$fm_tcp_encoded#${sxname}vl-reality-vision-$hostname"
+vl_link="vless://$uuid@$server_ip:$port_vl_re?encryption=none&flow=xtls-rprx-vision&security=reality&sni=$ym_vl_re&fp=chrome&pbk=$public_key_x&sid=$short_id_x&type=tcp&headerType=none&fm=$fm_tcp_encoded#${sxname}vl-reality-vision-fm-$hostname"
 echo "$vl_link" >> "$HOME/agsbx/jh.txt"
 echo "$vl_link"
+echo
+fi
+if grep vless-kcp-xdns "$HOME/agsbx/xr.json" >/dev/null 2>&1; then
+echo "💣【 Vless-kcp-xdns-fm 】备用DNS隧道，节点信息如下："
+port_xdns=$(cat "$HOME/agsbx/port_xdns")
+xdns_fm="{\"xdns\":{\"domain\":\"$xdnsym\",\"downstreamDataA\":true,\"downstreamDataAAAA\":true}}"
+xdns_fm_encoded=$(printf '%s' "$xdns_fm" | sed 's/{/%7B/g;s/}/%7D/g;s/"/%22/g;s/:/%3A/g;s/,/%2C/g;s/ //g;s/\[/%5B/g;s/\]/%5D/g')
+vl_xdns_link="vless://$uuid@$server_ip:$port_xdns?encryption=none&flow=&type=kcp&headerType=none&fm=$xdns_fm_encoded#${sxname}vless-kcp-xdns-fm-$hostname"
+echo "$vl_xdns_link" >> "$HOME/agsbx/jh.txt"
+echo "$vl_xdns_link"
+echo
+fi
+if grep vless-kcp-xicmp "$HOME/agsbx/xr.json" >/dev/null 2>&1; then
+echo "💣【 Vless-kcp-xicmp-fm 】特种L3 Ping隧道，节点信息如下："
+xicmp_fm="{\"xicmp\":{\"listenIp\":\"0.0.0.0\"}}"
+xicmp_fm_encoded=$(printf '%s' "$xicmp_fm" | sed 's/{/%7B/g;s/}/%7D/g;s/"/%22/g;s/:/%3A/g;s/,/%2C/g;s/ //g;s/\[/%5B/g;s/\]/%5D/g')
+vl_xicmp_link="vless://$uuid@$server_ip:0?encryption=none&flow=&type=kcp&headerType=none&fm=$xicmp_fm_encoded#${sxname}vless-kcp-xicmp-fm-$hostname"
+echo "$vl_xicmp_link" >> "$HOME/agsbx/jh.txt"
+echo "$vl_xicmp_link"
 echo
 fi
 if grep ss-2022 "$HOME/agsbx/sb.json" >/dev/null 2>&1; then
@@ -2187,6 +2347,7 @@ showmode
 #   sbrestart() - 重启 Sing-box
 #============================================================
 cleandel(){
+sysctl -w net.ipv4.icmp_echo_ignore_all=0 >/dev/null 2>&1
 cleanup_port_hopping
 for P in /proc/[0-9]*; do if [ -L "$P/exe" ]; then TARGET=$(readlink -f "$P/exe" 2>/dev/null); if echo "$TARGET" | grep -qE '/agsbx/cloudflared|/agsbx/sing-box|/agsbx/xray'; then PID=$(basename "$P"); kill "$PID" 2>/dev/null; fi; fi; done
 kill -15 $(pgrep -f 'agsbx/sing-box' 2>/dev/null) $(pgrep -f 'agsbx/cloudflared' 2>/dev/null) $(pgrep -f 'agsbx/xray' 2>/dev/null) >/dev/null 2>&1
