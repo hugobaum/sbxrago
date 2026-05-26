@@ -156,12 +156,16 @@ export LANG=en_US.UTF-8
 [ -z "${xdnspt+x}" ] || xdns=yes
 [ -z "${xicmp+x}" ] || xicp=yes
 [ -z "${xicmppt+x}" ] || xicp=yes
+[ -z "${xvcdnpt+x}" ] || xvcdn=yes
+[ -z "${xvargopt+x}" ] || xvargo=yes
+[ -z "${subpt+x}" ] || sub=yes
+[ -z "${subid+x}" ] || sub=yes
 if find /proc/*/exe -type l 2>/dev/null | grep -E '/proc/[0-9]+/exe' | xargs -r readlink 2>/dev/null | grep -Eq 'agsbx/(sing-box|xray)' || pgrep -f 'agsbx/sing-box' >/dev/null 2>&1 || pgrep -f 'agsbx/xray' >/dev/null 2>&1; then
 if [ "$1" = "rep" ]; then
-[ "$vwp" = yes ] || [ "$sop" = yes ] || [ "$vxp" = yes ] || [ "$ssp" = yes ] || [ "$vlp" = yes ] || [ "$vmp" = yes ] || [ "$hyp" = yes ] || [ "$tup" = yes ] || [ "$xhp" = yes ] || [ "$anp" = yes ] || [ "$arp" = yes ] || [ "$xhyp" = yes ] || [ "$xdns" = yes ] || [ "$xicp" = yes ] || { echo "提示：rep重置协议时，请在脚本前至少设置一个协议变量哦! 💣"; exit; }
+[ "$vwp" = yes ] || [ "$sop" = yes ] || [ "$vxp" = yes ] || [ "$ssp" = yes ] || [ "$vlp" = yes ] || [ "$vmp" = yes ] || [ "$hyp" = yes ] || [ "$tup" = yes ] || [ "$xhp" = yes ] || [ "$anp" = yes ] || [ "$arp" = yes ] || [ "$xhyp" = yes ] || [ "$xdns" = yes ] || [ "$xicp" = yes ] || [ "$xvcdn" = yes ] || [ "$xvargo" = yes ] || { echo "提示：rep重置协议时，请在脚本前至少设置一个协议变量哦! 💣"; exit; }
 fi
 else
-[ "$1" = "del" ] || [ "$vwp" = yes ] || [ "$sop" = yes ] || [ "$vxp" = yes ] || [ "$ssp" = yes ] || [ "$vlp" = yes ] || [ "$vmp" = yes ] || [ "$hyp" = yes ] || [ "$tup" = yes ] || [ "$xhp" = yes ] || [ "$anp" = yes ] || [ "$arp" = yes ] || [ "$xhyp" = yes ] || [ "$xdns" = yes ] || [ "$xicp" = yes ] || { echo "提示：未安装airgosbx脚本，请在脚本前至少设置一个协议变量哦！💣"; exit; }
+[ "$1" = "del" ] || [ "$vwp" = yes ] || [ "$sop" = yes ] || [ "$vxp" = yes ] || [ "$ssp" = yes ] || [ "$vlp" = yes ] || [ "$vmp" = yes ] || [ "$hyp" = yes ] || [ "$tup" = yes ] || [ "$xhp" = yes ] || [ "$anp" = yes ] || [ "$arp" = yes ] || [ "$xhyp" = yes ] || [ "$xdns" = yes ] || [ "$xicp" = yes ] || [ "$xvcdn" = yes ] || [ "$xvargo" = yes ] || { echo "提示：未安装airgosbx脚本，请在脚本前至少设置一个协议变量哦！💣"; exit; }
 fi
 export uuid=${uuid:-''}
 export obfs_pass=${obfs_pass:-''}
@@ -180,6 +184,10 @@ export port_so=${sopt:-''}
 export port_xdns=53
 export flag_xicmp=${xicmppt:-''}
 export xdnsym=${xdnsym:-''}
+export port_xvcdn=${xvcdnpt:-''}
+export port_xvargo=${xvargopt:-''}
+export subpt=${subpt:-''}
+export subid=${subid:-''}
 export ym_vl_re=${reym:-''}
 export cdnym=${cdnym:-''}
 export argo=${argo:-''}
@@ -245,9 +253,10 @@ if [ ! -f "$HOME/agsbx/sbx_update" ]; then
 echo "执行脚本中，请稍后"
 if command -v apk >/dev/null 2>&1; then
 apk update >/dev/null 2>&1
-apk add gcompat libc6-compat >/dev/null 2>&1
+apk add gcompat libc6-compat bash busybox-extras >/dev/null 2>&1
 elif command -v apt >/dev/null 2>&1; then
-apt update >/dev/null 2>&1 && apt install coreutils util-linux -y >/dev/null 2>&1
+export DEBIAN_FRONTEND=noninteractive
+apt update >/dev/null 2>&1 && apt install coreutils util-linux busybox cron -y >/dev/null 2>&1
 fi
 touch "$HOME/agsbx/sbx_update"
 fi
@@ -1268,6 +1277,260 @@ cat >> "$HOME/agsbx/xr.json" <<EOF
     },
 EOF
 fi
+if [ "$xvcdn" = yes ]; then
+setup_tls_certificate
+if [ -z "$port_xvcdn" ] && [ ! -e "$HOME/agsbx/port_xvcdn" ]; then
+port_xvcdn=$(get_free_port)
+echo "$port_xvcdn" > "$HOME/agsbx/port_xvcdn"
+elif [ -n "$port_xvcdn" ]; then
+echo "$port_xvcdn" > "$HOME/agsbx/port_xvcdn"
+fi
+port_xvcdn=$(cat "$HOME/agsbx/port_xvcdn")
+echo "Vlessenc-xhttp-tls-vision-fm-cdn端口：$port_xvcdn"
+cat >> "$HOME/agsbx/xr.json" <<EOF
+    {
+      "tag": "vlessenc-xhttp-cdn",
+      "listen": "::",
+      "port": ${port_xvcdn},
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "${uuid}",
+            "flow": "xtls-rprx-vision"
+          }
+        ],
+        "decryption": "${dekey}"
+      },
+      "streamSettings": {
+        "network": "xhttp",
+        "security": "tls",
+        "tlsSettings": {
+          "alpn": [
+            "h2",
+            "http/1.1"
+          ],
+          "certificates": [
+            {
+              "certificateFile": "$tls_cert_file",
+              "keyFile": "$tls_key_file"
+            }
+          ]
+        },
+        "xhttpSettings": {
+          "path": "/${uuid}-xvd",
+          "mode": "auto",
+          "extra": {
+            "noGRPCHeader": false,
+            "noSSEHeader": false,
+            "xPaddingObfsMode": true,
+            "xPaddingBytes": "100-1000",
+            "xPaddingKey": "cf_clearance",
+            "xPaddingHeader": "Referer",
+            "xPaddingPlacement": "queryInHeader",
+            "xPaddingMethod": "repeat-x",
+            "uplinkHTTPMethod": "POST",
+            "sessionPlacement": "path",
+            "sessionKey": "",
+            "seqPlacement": "path",
+            "seqKey": "",
+            "uplinkDataPlacement": "body",
+            "uplinkDataKey": "",
+            "uplinkChunkSize": 0,
+            "scMaxEachPostBytes": 1000000,
+            "scMinPostsIntervalMs": "10-50",
+            "scMaxBufferedPosts": 30,
+            "scStreamUpServerSecs": "20-80",
+            "maxConcurrency": "16-32",
+            "maxConnections": "0-0",
+            "cMaxReuseTimes": "64-128",
+            "hMaxReusableSecs": "1800-3000",
+            "hKeepAlivePeriod": 45
+          }
+        },
+        "finalmask": {
+          "tcp": [
+            {
+              "type": "sudoku",
+              "settings": {
+                "password": "${uuid}",
+                "paddingMin": 16,
+                "paddingMax": 64
+              }
+            }
+          ],
+          "udp": [
+            {
+              "type": "noise",
+              "settings": {
+                "reset": "30-60",
+                "noise": [
+                  {
+                    "rand": "32-128",
+                    "randRange": "0-255",
+                    "delay": "10-20"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
+EOF
+fi
+if [ "$xvargo" = yes ]; then
+setup_tls_certificate
+if [ -z "$port_xvargo" ] && [ ! -e "$HOME/agsbx/port_xvargo" ]; then
+port_xvargo=$(get_free_port)
+echo "$port_xvargo" > "$HOME/agsbx/port_xvargo"
+elif [ -n "$port_xvargo" ]; then
+echo "$port_xvargo" > "$HOME/agsbx/port_xvargo"
+fi
+port_xvargo=$(cat "$HOME/agsbx/port_xvargo")
+echo "Vlessenc-xhttp-tls-vision-fm-argo端口：$port_xvargo"
+cat >> "$HOME/agsbx/xr.json" <<EOF
+    {
+      "tag": "vlessenc-xhttp-argo",
+      "listen": "127.0.0.1",
+      "port": ${port_xvargo},
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "${uuid}",
+            "flow": "xtls-rprx-vision"
+          }
+        ],
+        "decryption": "${dekey}"
+      },
+      "streamSettings": {
+        "network": "xhttp",
+        "security": "tls",
+        "tlsSettings": {
+          "alpn": [
+            "h2",
+            "http/1.1"
+          ],
+          "certificates": [
+            {
+              "certificateFile": "$tls_cert_file",
+              "keyFile": "$tls_key_file"
+            }
+          ]
+        },
+        "xhttpSettings": {
+          "path": "/${uuid}-xva",
+          "mode": "auto",
+          "extra": {
+            "noGRPCHeader": false,
+            "noSSEHeader": false,
+            "xPaddingObfsMode": true,
+            "xPaddingBytes": "100-1000",
+            "xPaddingKey": "cf_clearance",
+            "xPaddingHeader": "Referer",
+            "xPaddingPlacement": "queryInHeader",
+            "xPaddingMethod": "repeat-x",
+            "uplinkHTTPMethod": "POST",
+            "sessionPlacement": "path",
+            "sessionKey": "",
+            "seqPlacement": "path",
+            "seqKey": "",
+            "uplinkDataPlacement": "body",
+            "uplinkDataKey": "",
+            "uplinkChunkSize": 0,
+            "scMaxEachPostBytes": 1000000,
+            "scMinPostsIntervalMs": "10-50",
+            "scMaxBufferedPosts": 30,
+            "scStreamUpServerSecs": "20-80",
+            "maxConcurrency": "16-32",
+            "maxConnections": "0-0",
+            "cMaxReuseTimes": "64-128",
+            "hMaxReusableSecs": "1800-3000",
+            "hKeepAlivePeriod": 45
+          }
+        },
+        "finalmask": {
+          "tcp": [
+            {
+              "type": "sudoku",
+              "settings": {
+                "password": "${uuid}",
+                "paddingMin": 16,
+                "paddingMax": 64
+              }
+            }
+          ],
+          "udp": [
+            {
+              "type": "noise",
+              "settings": {
+                "reset": "30-60",
+                "noise": [
+                  {
+                    "rand": "32-128",
+                    "randRange": "0-255",
+                    "delay": "10-20"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
+EOF
+fi
+if [ "$sub" = yes ]; then
+setup_tls_certificate
+if [ -f "$tls_cert_file" ] && [ -f "$tls_key_file" ]; then
+if [ -z "$subpt" ] && [ ! -e "$HOME/agsbx/subport.log" ]; then
+subport=$(get_free_port)
+echo "$subport" > "$HOME/agsbx/subport.log"
+elif [ -n "$subpt" ]; then
+echo "$subpt" > "$HOME/agsbx/subport.log"
+fi
+subport=$(cat "$HOME/agsbx/subport.log")
+if [ ! -e "$HOME/agsbx/subport_real.log" ]; then
+subport_real=$(get_free_port)
+while [ "$subport_real" -eq "$subport" ]; do
+subport_real=$(get_free_port)
+done
+echo "$subport_real" > "$HOME/agsbx/subport_real.log"
+fi
+subport_real=$(cat "$HOME/agsbx/subport_real.log")
+echo "Xray-core TLS 卸载订阅服务端口：$subport (内部回源端口：$subport_real)"
+cat >> "$HOME/agsbx/xr.json" <<EOF
+    {
+      "tag": "sub-https-proxy",
+      "listen": "::",
+      "port": ${subport},
+      "protocol": "dokodemo-door",
+      "settings": {
+        "network": "tcp",
+        "followRedirect": false,
+        "address": "127.0.0.1",
+        "port": ${subport_real}
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "tls",
+        "tlsSettings": {
+          "alpn": [
+            "http/1.1"
+          ],
+          "certificates": [
+            {
+              "certificateFile": "$tls_cert_file",
+              "keyFile": "$tls_key_file"
+            }
+          ]
+        }
+      }
+    },
+EOF
+fi
+fi
 }
 
 installsb(){
@@ -1727,6 +1990,43 @@ nohup "$HOME/agsbx/xray" run -c "$HOME/agsbx/xr.json" > "$HOME/agsbx/xray.log" 2
 fi
 fi
 if [ -e "$HOME/agsbx/sb.json" ]; then
+if [ "$sub" = yes ] && [ ! -f "$HOME/agsbx/xray" ]; then
+setup_tls_certificate
+if [ -f "$tls_cert_file" ] && [ -f "$tls_key_file" ]; then
+if [ -z "$subpt" ] && [ ! -e "$HOME/agsbx/subport.log" ]; then
+subport=$(get_free_port)
+echo "$subport" > "$HOME/agsbx/subport.log"
+elif [ -n "$subpt" ]; then
+echo "$subpt" > "$HOME/agsbx/subport.log"
+fi
+subport=$(cat "$HOME/agsbx/subport.log")
+if [ ! -e "$HOME/agsbx/subport_real.log" ]; then
+subport_real=$(get_free_port)
+while [ "$subport_real" -eq "$subport" ]; do
+subport_real=$(get_free_port)
+done
+echo "$subport_real" > "$HOME/agsbx/subport_real.log"
+fi
+subport_real=$(cat "$HOME/agsbx/subport_real.log")
+echo "Sing-box TLS 卸载订阅服务端口：$subport (内部回源端口：$subport_real)"
+cat >> "$HOME/agsbx/sb.json" <<EOF
+  ,
+  {
+    "type": "direct",
+    "tag": "sub-https-proxy",
+    "listen": "::",
+    "listen_port": ${subport},
+    "tcp_fast_open": true,
+    "tls": {
+      "enabled": true,
+      "certificate_path": "$tls_cert_file",
+      "key_path": "$tls_key_file"
+    },
+    "destination": "127.0.0.1:${subport_real}"
+  }
+EOF
+fi
+fi
 sed -i '$ s/,[[:space:]]*$//' "$HOME/agsbx/sb.json" 2>/dev/null || sed -i '$s/,$//' "$HOME/agsbx/sb.json"
 cat >> "$HOME/agsbx/sb.json" <<EOF
   ],
@@ -1841,13 +2141,13 @@ xrsbso
 warpsx
 xrsbout
 hyp="shyptargo"; tup="tuptargo"; anp="anptargo"; arp="arptargo"; ssp="ssptargo"
-elif [ "$xhp" != yes ] && [ "$vlp" != yes ] && [ "$vxp" != yes ] && [ "$vwp" != yes ] && [ "$xhyp" != yes ] && [ "$xdns" != yes ] && [ "$xicp" != yes ]; then
+elif [ "$xhp" != yes ] && [ "$vlp" != yes ] && [ "$vxp" != yes ] && [ "$vwp" != yes ] && [ "$xhyp" != yes ] && [ "$xdns" != yes ] && [ "$xicp" != yes ] && [ "$xvcdn" != yes ] && [ "$xvargo" != yes ]; then
 installsb
 xrsbvm
 xrsbso
 warpsx
 xrsbout
-xhp="xhptargo"; vlp="vlptargo"; vxp="vxptargo"; vwp="vwptargo"; xhyp="xhyptargo"; xdns="xdnstargo"; xicp="xicptargo"
+xhp="xhptargo"; vlp="vlptargo"; vxp="vxptargo"; vwp="vwptargo"; xhyp="xhyptargo"; xdns="xdnstargo"; xicp="xicptargo"; xvcdn="xvcdnptargo"; xvargo="xvargoptargo"
 else
 installsb
 installxray
@@ -1884,7 +2184,7 @@ echo "下载Cloudflared-argo最新正式版内核：$argocore"
 url="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-$cpu"; out="$HOME/agsbx/cloudflared"; (command -v curl>/dev/null 2>&1 && curl -Lo "$out" -# --retry 2 "$url") || (command -v wget>/dev/null 2>&1 && timeout 3 wget -O "$out" --tries=2 "$url")
 chmod +x "$HOME/agsbx/cloudflared"
 fi
-if [ "$argo" = "vmpt" ]; then argoport=$(cat "$HOME/agsbx/port_vm_ws" 2>/dev/null); echo "Vmess" > "$HOME/agsbx/vlvm"; elif [ "$argo" = "vwpt" ]; then argoport=$(cat "$HOME/agsbx/port_vw" 2>/dev/null); echo "Vless" > "$HOME/agsbx/vlvm"; fi; echo "$argoport" > "$HOME/agsbx/argoport.log"
+if [ "$argo" = "vmpt" ]; then argoport=$(cat "$HOME/agsbx/port_vm_ws" 2>/dev/null); echo "Vmess" > "$HOME/agsbx/vlvm"; elif [ "$argo" = "vwpt" ]; then argoport=$(cat "$HOME/agsbx/port_vw" 2>/dev/null); echo "Vless" > "$HOME/agsbx/vlvm"; elif [ "$argo" = "xvargopt" ]; then argoport=$(cat "$HOME/agsbx/port_xvargo" 2>/dev/null); echo "Vlessenc-xhttp-tls-vision-fm" > "$HOME/agsbx/vlvm"; fi; echo "$argoport" > "$HOME/agsbx/argoport.log"
 if [ -n "${ARGO_DOMAIN}" ] && [ -n "${ARGO_AUTH}" ]; then
 argoname='固定'
 if pidof systemd >/dev/null 2>&1 && is_root; then
@@ -2119,6 +2419,67 @@ vl_xh_link="vless://$uuid@$server_ip:$port_xh?encryption=$enkey&flow=xtls-rprx-v
 echo "$vl_xh_link" >> "$HOME/agsbx/jh.txt"
 echo "$vl_xh_link"
 echo
+if [ "$sub" = yes ]; then
+clxhpt(){
+cat <<EOF
+- name: "${sxname}vlessenc-xhttp-reality-vision-fm-$hostname"
+  type: vless
+  server: $server_ip
+  port: $port_xh
+  uuid: $uuid
+  network: xhttp
+  udp: true
+  tls: true
+  flow: xtls-rprx-vision
+  servername: $ym_vl_re
+  reality-opts:
+    public-key: $public_key_x
+    short-id: $short_id_x
+  client-fingerprint: chrome
+  xhttp-opts:
+    path: "/$uuid-xh"
+EOF
+}
+clxhpt1(){
+echo "- ${sxname}vlessenc-xhttp-reality-vision-fm-$hostname"
+}
+fi
+fi
+if grep vlessenc-xhttp-cdn "$HOME/agsbx/xr.json" >/dev/null 2>&1; then
+echo "💣【 Vlessenc-xhttp-tls-vision-fm-cdn 】支持ENC/FM双端混淆与回源TLS加密，节点信息如下："
+port_xvcdn=$(cat "$HOME/agsbx/port_xvcdn")
+xvvmcdnym=$(cat "$HOME/agsbx/cdnym" 2>/dev/null)
+if [ -z "$xvvmcdnym" ]; then
+  xvvmcdnym="$server_ip"
+fi
+vl_xvcdn_link="vless://$uuid@icook.hk:$port_xvcdn?encryption=$enkey&flow=xtls-rprx-vision&security=tls&sni=$xvvmcdnym&host=$xvvmcdnym&type=xhttp&path=/$uuid-xvd&mode=auto&extra=$xh_extra_encoded&fm=$fm_xh_encoded#${sxname}vlessenc-xhttp-tls-vision-fm-cdn-$hostname"
+echo "$vl_xvcdn_link" >> "$HOME/agsbx/jh.txt"
+echo "$vl_xvcdn_link"
+echo
+if [ "$sub" = yes ]; then
+clxvcdnpt(){
+cat <<EOF
+- name: "${sxname}vlessenc-xhttp-tls-vision-fm-cdn-$hostname"
+  type: vless
+  server: icook.hk
+  port: $port_xvcdn
+  uuid: $uuid
+  network: xhttp
+  udp: true
+  tls: true
+  flow: xtls-rprx-vision
+  servername: "$xvvmcdnym"
+  client-fingerprint: chrome
+  xhttp-opts:
+    path: "/$uuid-xvd"
+  headers:
+    Host: "$xvvmcdnym"
+EOF
+}
+clxvcdnpt1(){
+echo "- ${sxname}vlessenc-xhttp-tls-vision-fm-cdn-$hostname"
+}
+fi
 fi
 if grep vless-xhttp "$HOME/agsbx/xr.json" >/dev/null 2>&1; then
 echo "💣【 Vlessenc-xhttp-vision 】支持ENC加密，节点信息如下："
@@ -2159,6 +2520,29 @@ vl_link="vless://$uuid@$server_ip:$port_vl_re?encryption=none&flow=xtls-rprx-vis
 echo "$vl_link" >> "$HOME/agsbx/jh.txt"
 echo "$vl_link"
 echo
+if [ "$sub" = yes ]; then
+clvlpt(){
+cat <<EOF
+- name: "${sxname}vl-reality-vision-fm-$hostname"
+  type: vless
+  server: $server_ip
+  port: $port_vl_re
+  uuid: $uuid
+  network: tcp
+  udp: true
+  tls: true
+  flow: xtls-rprx-vision
+  servername: $ym_vl_re
+  reality-opts:
+    public-key: $public_key_x
+    short-id: $short_id_x
+  client-fingerprint: chrome
+EOF
+}
+clvlpt1(){
+echo "- ${sxname}vl-reality-vision-fm-$hostname"
+}
+fi
 fi
 if grep vless-kcp-xdns "$HOME/agsbx/xr.json" >/dev/null 2>&1; then
 echo "💣【 Vless-kcp-xdns-fm 】备用DNS隧道，节点信息如下："
@@ -2186,6 +2570,24 @@ ss_link="ss://$(echo -n "2022-blake3-aes-128-gcm:$sskey@$server_ip:$port_ss" | s
 echo "$ss_link" >> "$HOME/agsbx/jh.txt"
 echo "$ss_link"
 echo
+if [ "$sub" = yes ]; then
+clsspt(){
+cat <<EOF
+- name: "${sxname}Shadowsocks-2022-$hostname"
+  type: ss
+  server: $server_ip
+  port: $port_ss
+  cipher: 2022-blake3-aes-128-gcm
+  password: "$sskey"
+  udp: true
+  udp-over-tcp: true
+  udp-over-tcp-version: 2
+EOF
+}
+clsspt1(){
+echo "- ${sxname}Shadowsocks-2022-$hostname"
+}
+fi
 fi
 if grep vmess-xr "$HOME/agsbx/xr.json" >/dev/null 2>&1 || grep vmess-sb "$HOME/agsbx/sb.json" >/dev/null 2>&1; then
 echo "💣【 Vmess-ws 】节点信息如下："
@@ -2194,6 +2596,30 @@ vm_link="vmess://$(echo "{ \"v\": \"2\", \"ps\": \"${sxname}vm-ws-$hostname\", \
 echo "$vm_link" >> "$HOME/agsbx/jh.txt"
 echo "$vm_link"
 echo
+if [ "$sub" = yes ]; then
+clvmpt(){
+cat <<EOF
+- name: "${sxname}vmess-ws-$hostname"
+  type: vmess
+  server: $server_ip
+  port: $port_vm_ws
+  uuid: $uuid
+  alterId: 0
+  cipher: auto
+  udp: true
+  tls: false
+  network: ws
+  servername: www.bing.com
+  ws-opts:
+    path: "/$uuid-vm"
+    headers:
+      Host: www.bing.com
+EOF
+}
+clvmpt1(){
+echo "- ${sxname}vmess-ws-$hostname"
+}
+fi
 if [ -f "$HOME/agsbx/cdnym" ]; then
 echo "💣【 Vmess-ws-cdn 】节点信息如下："
 echo "注：默认地址 icook.hk 可自行更换优选IP域名，如是回源端口需手动修改443或者80系端口"
@@ -2201,6 +2627,30 @@ vm_cdn_link="vmess://$(echo "{ \"v\": \"2\", \"ps\": \"${sxname}vm-ws-cdn-$hostn
 echo "$vm_cdn_link" >> "$HOME/agsbx/jh.txt"
 echo "$vm_cdn_link"
 echo
+if [ "$sub" = yes ]; then
+clvmcdnpt(){
+cat <<EOF
+- name: "${sxname}vmess-ws-cdn-$hostname"
+  type: vmess
+  server: icook.hk
+  port: $port_vm_ws
+  uuid: $uuid
+  alterId: 0
+  cipher: auto
+  udp: true
+  tls: false
+  network: ws
+  servername: "$xvvmcdnym"
+  ws-opts:
+    path: "/$uuid-vm"
+    headers:
+      Host: "$xvvmcdnym"
+EOF
+}
+clvmcdnpt1(){
+echo "- ${sxname}vmess-ws-cdn-$hostname"
+}
+fi
 fi
 fi
 if grep anytls-sb "$HOME/agsbx/sb.json" >/dev/null 2>&1; then
@@ -2256,6 +2706,32 @@ fi
 echo "$hy2_link" >> "$HOME/agsbx/jh.txt"
 echo "$hy2_link"
 echo
+if [ "$sub" = yes ]; then
+clhypt(){
+local sby_hop_clean=$(echo "$sby_hop" | tr ':' '-')
+local cl_skip_cert="true"
+[ "$cert_mode" = "ca" ] && cl_skip_cert="false"
+local cl_obfs=""
+[ -n "$obfs_pass" ] && cl_obfs="  obfs: salamander\n  obfs-password: \"$obfs_pass\""
+cat <<EOF
+- name: "${sxname}hy2-$hostname"
+  type: hysteria2
+  server: $server_ip
+  port: $port_hy2
+  ports: "$sby_hop_clean"
+  password: "$uuid"
+  alpn:
+    - h3
+  sni: "${ran_sni:-www.bing.com}"
+  skip-cert-verify: $cl_skip_cert
+  fast-open: true
+$(printf "$cl_obfs")
+EOF
+}
+clhypt1(){
+echo "- ${sxname}hy2-$hostname"
+}
+fi
 fi
 if grep hy2-xr "$HOME/agsbx/xr.json" >/dev/null 2>&1; then
 echo "💣【 Xray-Hysteria2 】节点信息如下："
@@ -2279,6 +2755,29 @@ fi
 echo "$xhy2_link" >> "$HOME/agsbx/jh.txt"
 echo "$xhy2_link"
 echo
+if [ "$sub" = yes ]; then
+clxhypt(){
+local xby_hop_clean=$(echo "$xby_hop" | tr ':' '-')
+local cl_skip_cert="true"
+[ "$cert_mode" = "ca" ] && cl_skip_cert="false"
+cat <<EOF
+- name: "${sxname}xray-hy2-$hostname"
+  type: hysteria2
+  server: $server_ip
+  port: $port_xhy2
+  ports: "$xby_hop_clean"
+  password: "$uuid"
+  alpn:
+    - h3
+  sni: "${ran_sni:-www.bing.com}"
+  skip-cert-verify: $cl_skip_cert
+  fast-open: true
+EOF
+}
+clxhypt1(){
+echo "- ${sxname}xray-hy2-$hostname"
+}
+fi
 fi
 if grep tuic5-sb "$HOME/agsbx/sb.json" >/dev/null 2>&1; then
 echo "💣【 Tuic 】节点信息如下："
@@ -2293,6 +2792,31 @@ fi
 echo "$tuic5_link" >> "$HOME/agsbx/jh.txt"
 echo "$tuic5_link"
 echo
+if [ "$sub" = yes ]; then
+cltupt(){
+local cl_skip_cert="true"
+[ "$cert_mode" = "ca" ] && cl_skip_cert="false"
+cat <<EOF
+- name: "${sxname}tuic5-$hostname"
+  server: $server_ip
+  port: $port_tu
+  type: tuic
+  uuid: $uuid
+  password: "$uuid"
+  alpn:
+    - h3
+  disable-sni: false
+  reduce-rtt: true
+  udp-relay-mode: native
+  congestion-controller: bbr
+  sni: "${ran_sni:-www.bing.com}"
+  skip-cert-verify: $cl_skip_cert
+EOF
+}
+cltupt1(){
+echo "- ${sxname}tuic5-$hostname"
+}
+fi
 fi
 if grep socks5-xr "$HOME/agsbx/xr.json" >/dev/null 2>&1 || grep socks5-sb "$HOME/agsbx/sb.json" >/dev/null 2>&1; then
 echo "💣【 Socks5 】客户端信息如下："
@@ -2337,16 +2861,132 @@ if [ "$vlvm" = "Vmess" ]; then
       echo "$vma_link12" >> "$HOME/agsbx/jh.txt"
       vma_link13="vmess://$(echo "{ \"v\": \"2\", \"ps\": \"${sxname}vmess-ws-argo-$hostname-2095\", \"add\": \"[2400:cb00:2049::0]\", \"port\": \"2095\", \"id\": \"$uuid\", \"aid\": \"0\", \"scy\": \"auto\", \"net\": \"ws\", \"type\": \"none\", \"host\": \"$argodomain\", \"path\": \"/$uuid-vm\", \"tls\": \"\"}" | safe_base64)"
       echo "$vma_link13" >> "$HOME/agsbx/jh.txt"
+      if [ "$sub" = yes ]; then
+      clvmargopt(){
+      cat <<EOF
+- name: "${sxname}vmess-ws-tls-argo-$hostname-443"
+  type: vmess
+  server: icook.hk
+  port: 443
+  uuid: $uuid
+  alterId: 0
+  cipher: auto
+  udp: true
+  tls: true
+  network: ws
+  servername: "$argodomain"
+  ws-opts:
+    path: "/$uuid-vm"
+    headers:
+      Host: "$argodomain"
+- name: "${sxname}vmess-ws-argo-$hostname-80"
+  type: vmess
+  server: icook.hk
+  port: 80
+  uuid: $uuid
+  alterId: 0
+  cipher: auto
+  udp: true
+  tls: false
+  network: ws
+  servername: "$argodomain"
+  ws-opts:
+    path: "/$uuid-vm"
+    headers:
+      Host: "$argodomain"
+EOF
+      }
+      clvmargopt1(){
+      echo "- ${sxname}vmess-ws-tls-argo-$hostname-443"
+      echo "- ${sxname}vmess-ws-argo-$hostname-80"
+      }
+      fi
 elif [ "$vlvm" = "Vless" ]; then
 vwatls_link1="vless://$uuid@icook.hk:443?encryption=$enkey&flow=xtls-rprx-vision&type=ws&host=$argodomain&path=$uuid-vw&security=tls&sni=$argodomain&fp=chrome&insecure=0&allowInsecure=0#${sxname}vlessenc-ws-tls-vision-argo-$hostname"
 echo "$vwatls_link1" >> "$HOME/agsbx/jh.txt"
 vwa_link2="vless://$uuid@icook.hk:80?encryption=$enkey&flow=xtls-rprx-vision&type=ws&host=$argodomain&path=$uuid-vw&security=none#${sxname}vlessenc-ws-vision-argo-$hostname"
 echo "$vwa_link2" >> "$HOME/agsbx/jh.txt"
+if [ "$sub" = yes ]; then
+clvlargopt(){
+cat <<EOF
+- name: "${sxname}vlessenc-ws-tls-vision-argo-$hostname"
+  type: vless
+  server: icook.hk
+  port: 443
+  uuid: $uuid
+  network: ws
+  udp: true
+  tls: true
+  flow: xtls-rprx-vision
+  servername: "$argodomain"
+  client-fingerprint: chrome
+  ws-opts:
+    path: "$uuid-vw"
+    headers:
+      Host: "$argodomain"
+- name: "${sxname}vlessenc-ws-vision-argo-$hostname"
+  type: vless
+  server: icook.hk
+  port: 80
+  uuid: $uuid
+  network: ws
+  udp: true
+  tls: false
+  flow: xtls-rprx-vision
+  ws-opts:
+    path: "$uuid-vw"
+    headers:
+      Host: "$argodomain"
+EOF
+}
+clvlargopt1(){
+echo "- ${sxname}vlessenc-ws-tls-vision-argo-$hostname"
+echo "- ${sxname}vlessenc-ws-vision-argo-$hostname"
+}
+fi
+elif [ "$vlvm" = "Vlessenc-xhttp-tls-vision-fm" ]; then
+vwa_xvargo_link="vless://$uuid@icook.hk:443?encryption=$enkey&flow=xtls-rprx-vision&security=tls&sni=$argodomain&host=$argodomain&type=xhttp&path=/$uuid-xva&mode=auto&extra=$xh_extra_encoded&fm=$fm_xh_encoded#${sxname}vlessenc-xhttp-tls-vision-fm-argo-$hostname"
+echo "$vwa_xvargo_link" >> "$HOME/agsbx/jh.txt"
+if [ "$sub" = yes ]; then
+clxvargopt(){
+cat <<EOF
+- name: "${sxname}vlessenc-xhttp-tls-vision-fm-argo-$hostname"
+  type: vless
+  server: icook.hk
+  port: 443
+  uuid: $uuid
+  network: xhttp
+  udp: true
+  tls: true
+  flow: xtls-rprx-vision
+  servername: "$argodomain"
+  client-fingerprint: chrome
+  xhttp-opts:
+    path: "/$uuid-xva"
+  headers:
+    Host: "$argodomain"
+EOF
+}
+clxvargopt1(){
+echo "- ${sxname}vlessenc-xhttp-tls-vision-fm-argo-$hostname"
+}
+fi
 fi
 sbtk=$(cat "$HOME/agsbx/sbargotoken.log" 2>/dev/null)
 if [ -n "$sbtk" ]; then
 nametn="Argo固定隧道token：$sbtk"
 fi
+if [ "$vlvm" = "Vlessenc-xhttp-tls-vision-fm" ]; then
+argoshow=$(
+echo "Argo隧道端口正在使用$vlvm主协议端口：$(cat $HOME/agsbx/argoport.log 2>/dev/null)
+Argo域名：$argodomain
+$nametn
+
+💣【 vlessenc-xhttp-tls-vision-fm-argo 超旗舰 Argo 隧道节点 】
+$vwa_xvargo_link
+"
+)
+else
 argoshow=$(
 echo "Argo隧道端口正在使用$vlvm-ws主协议端口：$(cat $HOME/agsbx/argoport.log 2>/dev/null)
 Argo域名：$argodomain
@@ -2360,9 +3000,166 @@ ${vma_link7}${vwa_link2}
 "
 )
 fi
+fi
+if [ "$sub" = yes ]; then
+get_func() {
+  local f=$1
+  if type "$f" >/dev/null 2>&1; then
+    local out
+    out=$($f)
+    [ -n "$out" ] && printf "%s\n" "$out"
+  fi
+}
+clxy="$(get_func clvlpt; get_func clsspt; get_func clvmpt; get_func clvmcdnpt; get_func clxhpt; get_func clxvcdnpt; get_func clvxpt; get_func clvxcdnpt; get_func clvwpt; get_func clvwcdnpt; get_func clhypt; get_func clxhypt; get_func cltupt; get_func clvmargopt; get_func clvlargopt; get_func clxvargopt)"
+clgz="$({ get_func clvlpt1; get_func clsspt1; get_func clvmpt1; get_func clvmcdnpt1; get_func clxhpt1; get_func clxvcdnpt1; get_func clvxpt1; get_func clvxcdnpt1; get_func clvwpt1; get_func clvwcdnpt1; get_func clhypt1; get_func clxhypt1; get_func cltupt1; get_func clvmargopt1; get_func clvlargopt1; get_func clxvargopt1; } | sed '2,$s/^/    /')"
+sbgz="$({ get_func clvlpt1; get_func clsspt1; get_func clvmpt1; get_func clvmcdnpt1; get_func clxhpt1; get_func clxvcdnpt1; get_func clvxpt1; get_func clvxcdnpt1; get_func clvwpt1; get_func clvwcdnpt1; get_func clhypt1; get_func clxhypt1; get_func cltupt1; get_func clvmargopt1; get_func clvlargopt1; get_func clxvargopt1; } | sed '$ s/,$//')"
+cat > "$HOME/agsbx/clmi.yaml" <<EOF
+port: 7890
+allow-lan: true
+mode: rule
+log-level: info
+unified-delay: true
+dns:
+  enable: true 
+  listen: "0.0.0.0:1053"
+  ipv6: true
+  prefer-h3: false
+  respect-rules: true
+  use-system-hosts: false
+  cache-algorithm: "arc"
+  enhanced-mode: "fake-ip"
+  fake-ip-range: "198.18.0.1/16"
+  fake-ip-filter:
+    - "+.lan"
+    - "+.local"
+    - "+.msftconnecttest.com"
+    - "+.msftncsi.com"
+    - "localhost.ptlogin2.qq.com"
+    - "localhost.sec.qq.com"
+    - "+.in-addr.arpa"
+    - "+.ip6.arpa"
+    - "time.*.com"
+    - "time.*.gov"
+    - "pool.ntp.org"
+    - "localhost.work.weixin.qq.com"
+  default-nameserver: ["223.5.5.5", "119.29.29.29"]
+  nameserver:
+    - "https://1.1.1.1/dns-query"
+    - "https://8.8.8.8/dns-query"
+  proxy-server-nameserver:
+    - "https://223.5.5.5/dns-query"
+    - "https://doh.pub/dns-query"
+nameserver-policy:
+  "geosite:cn":
+     - "https://223.5.5.5/dns-query"
+     - "https://doh.pub/dns-query"
+proxies:
+$clxy
+
+proxy-groups:
+- name: 负载均衡
+  type: load-balance
+  url: https://www.gstatic.com/generate_204
+  interval: 300
+  strategy: round-robin
+  proxies:
+    $clgz
+- name: 自动选择
+  type: url-test
+  url: https://www.gstatic.com/generate_204
+  interval: 300
+  tolerance: 50
+  proxies:
+    $clgz 
+- name: 🌍选择代理节点
+  type: select
+  proxies:
+    - 负载均衡                                         
+    - 自动选择
+    - DIRECT
+    $clgz
+rules:
+  - GEOIP,LAN,DIRECT
+  - GEOIP,CN,DIRECT
+  - MATCH,🌍选择代理节点
+EOF
+
+if [ -z "$subid" ]; then
+  subtoken="$uuid"
+else
+  subtoken="$subid"
+fi
+echo "$subtoken" > "$HOME/agsbx/subtoken.log"
+
+setup_tls_certificate
+if [ ! -f "$tls_cert_file" ] || [ ! -f "$tls_key_file" ]; then
+  setup_selfsigned_certificate
+fi
+
+if [ -z "$subpt" ] && [ ! -e "$HOME/agsbx/subport.log" ]; then
+  subport=$(get_free_port)
+  echo "$subport" > "$HOME/agsbx/subport.log"
+elif [ -n "$subpt" ]; then
+  echo "$subpt" > "$HOME/agsbx/subport.log"
+fi
+subport_show=$(cat "$HOME/agsbx/subport.log")
+
+if [ ! -e "$HOME/agsbx/subport_real.log" ]; then
+  subport_real=$(get_free_port)
+  while [ "$subport_real" -eq "$subport_show" ]; do
+    subport_real=$(get_free_port)
+  done
+  echo "$subport_real" > "$HOME/agsbx/subport_real.log"
+fi
+subport_real=$(cat "$HOME/agsbx/subport_real.log")
+sub_protocol="https"
+
+kill -15 $(pgrep -f 'websbx' 2>/dev/null) >/dev/null 2>&1
+mkdir -p "$HOME/websbx/$subtoken"
+ln -sf "$HOME/agsbx/clmi.yaml" "$HOME/websbx/$subtoken/clmi.yaml"
+ln -sf "$HOME/agsbx/jh.txt" "$HOME/websbx/$subtoken/jhsub.txt"
+
+if command -v apk >/dev/null 2>&1; then
+  busybox-extras httpd -f -p $subport_real -h "$HOME/websbx" > /dev/null 2>&1 &
+  cat > /etc/local.d/alpinesubsbx.start <<EOF
+#!/bin/bash
+sleep 10
+busybox-extras httpd -f -p $subport_real -h $HOME/websbx > /dev/null 2>&1 &
+EOF
+  chmod +x /etc/local.d/alpinesubsbx.start
+  rc-update add local default >/dev/null 2>&1
+else
+  busybox httpd -f -p $subport_real -h "$HOME/websbx" > /dev/null 2>&1 &
+  crontab -l 2>/dev/null > /tmp/crontab.tmp
+  sed -i '/websbx/d' /tmp/crontab.tmp
+  echo "@reboot sleep 10 && /bin/bash -c \"busybox httpd -f -p $subport_real -h $HOME/websbx > /dev/null 2>&1 &\"" >> /tmp/crontab.tmp
+  crontab /tmp/crontab.tmp >/dev/null 2>&1
+  rm /tmp/crontab.tmp
+fi
+
+subdomain=$(cat "$HOME/agsbx/cdnym" 2>/dev/null)
+[ -z "$subdomain" ] && subdomain="$server_ip"
+suburl="${sub_protocol}://${subdomain}:${subport_show}/${subtoken}"
+clash_sub_info="Clash/Mihomo 本地订阅链接：${suburl}/clmi.yaml"
+fi
 echo "---------------------------------------------------------"
 echo "$argoshow"
 echo
+if [ "$sub" = yes ]; then
+echo "**********************************************************"
+echo "$clash_sub_info"
+echo "聚合协议本地订阅地址：${suburl}/jhsub.txt"
+if [ "$(cat "$HOME/agsbx/cert_mode" 2>/dev/null)" = "selfsigned" ]; then
+echo "----------------------------------------------------------"
+echo "⚠️  安全加密提示 (自签证书模式)："
+echo "   由于您当前未使用域名或 ACME 证书，系统已自动启用本地自签 TLS 强加密。"
+echo "   客户端（Clash/Mihomo/Shadowrocket）拉取订阅时，请务必勾选："
+echo "   -> [ 允许不安全证书 / 跳过证书验证 (skip-cert-verify: true) ]"
+echo "   即可无痛拉取，同时 100% 获得高强度 TLS 传输加密，防御中间人嗅探！"
+fi
+echo "**********************************************************"
+echo
+fi
 echo "---------------------------------------------------------"
 echo "聚合节点信息，请进入 $HOME/agsbx/jh.txt 文件目录查看或者运行 cat $HOME/agsbx/jh.txt 查看"
 echo "========================================================="
@@ -2383,7 +3180,7 @@ cleandel(){
 restore_xicmp_state
 cleanup_port_hopping
 for P in /proc/[0-9]*; do if [ -L "$P/exe" ]; then TARGET=$(readlink -f "$P/exe" 2>/dev/null); if echo "$TARGET" | grep -qE '/agsbx/cloudflared|/agsbx/sing-box|/agsbx/xray'; then PID=$(basename "$P"); kill "$PID" 2>/dev/null; fi; fi; done
-kill -15 $(pgrep -f 'agsbx/sing-box' 2>/dev/null) $(pgrep -f 'agsbx/cloudflared' 2>/dev/null) $(pgrep -f 'agsbx/xray' 2>/dev/null) >/dev/null 2>&1
+kill -15 $(pgrep -f 'agsbx/sing-box' 2>/dev/null) $(pgrep -f 'agsbx/cloudflared' 2>/dev/null) $(pgrep -f 'agsbx/xray' 2>/dev/null) $(pgrep -f 'websbx' 2>/dev/null) >/dev/null 2>&1
 sed -i '/agsbx/d' ~/.bashrc
 sed -i '/export PATH="\$HOME\/bin:\$PATH"/d' ~/.bashrc
 sed -i '/export PATH="\$PATH:\$HOME\/bin"/d' ~/.bashrc
@@ -2392,9 +3189,10 @@ crontab -l > /tmp/crontab.tmp 2>/dev/null
 sed -i '/agsbx\/sing-box/d' /tmp/crontab.tmp
 sed -i '/agsbx\/xray/d' /tmp/crontab.tmp
 sed -i '/agsbx\/cloudflared/d' /tmp/crontab.tmp
+sed -i '/websbx/d' /tmp/crontab.tmp
 crontab /tmp/crontab.tmp >/dev/null 2>&1
 rm /tmp/crontab.tmp
-rm -rf  "$HOME/bin/agsbx"
+rm -rf  "$HOME/bin/agsbx" "$HOME/websbx"
 if pidof systemd >/dev/null 2>&1; then
 for svc in xr sb argo; do
 systemctl stop "$svc" >/dev/null 2>&1
@@ -2406,7 +3204,7 @@ for svc in sing-box xray argo; do
 rc-service "$svc" stop >/dev/null 2>&1
 rc-update del "$svc" default >/dev/null 2>&1
 done
-rm -rf /etc/init.d/{sing-box,xray,argo}
+rm -rf /etc/init.d/{sing-box,xray,argo} /etc/local.d/alpinesubsbx.start
 fi
 }
 xrestart(){
