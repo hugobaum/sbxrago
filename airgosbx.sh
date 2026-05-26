@@ -137,6 +137,14 @@ get_reality_domain() {
 
 #============================================================
 # [第1段] 环境初始化：解析用户传入的协议变量，校验运行前提
+#------------------------------------------------------------
+# 🎯 架构维护提示与变量数据流向：
+# 1. xvcdnpt/xvcdn 关联超旗舰 CDN 节点 (VLESSenc+XHTTP+TLS+Vision+Finalmask)
+#    - 数据流向：Xray/Sing-box Inbound 配置文件装配 -> 终端大卡片打印 -> 客户端订阅
+# 2. xvargopt/xvargo 关联超旗舰 Argo 隧道节点 (VLESSenc+XHTTP+TLS+Vision+Finalmask)
+#    - 数据流向：后台拉起 cloudflared 进程 -> 本地 Xray/Sing-box Inbound 隧道接收
+# 3. subpt/subid/sub 关联 Clash/Mihomo 本地加密 Web 订阅分发服务
+#    - 关联逻辑：在 Xray/Sing-box 中增量装配 TLS 卸载 Inbound 反代本地 127.0.0.1 上的 Web 服务
 #============================================================
 export LANG=en_US.UTF-8
 [ -z "${vlpt+x}" ] || vlp=yes
@@ -1518,6 +1526,14 @@ cat >> "$HOME/agsbx/xr.json" <<EOF
     },
 EOF
 fi
+# ------------------------------------------------------------
+# 🎯 任务 H 模块 C：Xray-core TLS 卸载 Inbound 注入段
+# - 功能描述：当启用订阅服务 (sub=yes) 时，使用 Xray-core 原生充当高位 HTTPS 反向代理。
+# - 端口机制：
+#   - subport (外部 HTTPS 端口，持久化于 subport.log)：供客户端从公网拉取订阅。
+#   - subport_real (本地回源端口，持久化于 subport_real.log)：只监听在 127.0.0.1，防外网直连。
+# - 关联映射：此处 dokodemo-door 反代的目标端口与最尾部 (L3120之后) 启动 busybox httpd 监听的真实端口强关联一致。
+# ------------------------------------------------------------
 if [ "$sub" = yes ]; then
 setup_tls_certificate
 if [ -f "$tls_cert_file" ] && [ -f "$tls_key_file" ]; then
@@ -2027,6 +2043,12 @@ nohup "$HOME/agsbx/xray" run -c "$HOME/agsbx/xr.json" > "$HOME/agsbx/xray.log" 2
 fi
 fi
 if [ -e "$HOME/agsbx/sb.json" ]; then
+# ------------------------------------------------------------
+# 🎯 任务 H 模块 C：Sing-box 独占式 TLS 卸载 direct Inbound 注入段
+# - 功能描述：当 xray 不在线、只激活 sing-box 时，自适应地在 sb.json 尾部注入 direct 反代。
+# - 运作逻辑：实现单 sing-box 核环境下的 HTTPS 订阅卸载，同样将公网 subport 解密并路由给本地 subport_real。
+# - 关联映射：与最尾部拉起的 busybox httpd 监听端口强关联一致。
+# ------------------------------------------------------------
 if [ "$sub" = yes ] && [ ! -f "$HOME/agsbx/xray" ]; then
 setup_tls_certificate
 if [ -f "$tls_cert_file" ] && [ -f "$tls_key_file" ]; then
@@ -3128,6 +3150,12 @@ else
 fi
 echo "$subtoken" > "$HOME/agsbx/subtoken.log"
 
+# ------------------------------------------------------------
+# 🎯 任务 H 模块 C & D：Web 订阅分发沙盒挂载与轻量 BusyBox 启动
+# - 功能描述：构建安全的 UUID 二级沙盒目录，强制进行 TLS 加密 (自签或 ACME)。
+# - 端口机制：读取前置 (installxray/installsb) 注入时持久化保存的独立回源端口 subport_real 予以启动。
+# - 关联映射：自启动和 crontab 守护任务将天然与该随机回源端口绑定，对前文的 TLS 卸载 Inbound 提供闭环数据响应。
+# ------------------------------------------------------------
 setup_tls_certificate
 if [ ! -f "$tls_cert_file" ] || [ ! -f "$tls_key_file" ]; then
   setup_selfsigned_certificate
