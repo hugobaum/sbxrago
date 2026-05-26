@@ -152,7 +152,9 @@ export LANG=en_US.UTF-8
 [ -z "${arpt+x}" ] || arp=yes
 [ -z "${sopt+x}" ] || sop=yes
 [ -z "${warp+x}" ] || wap=yes
+[ -z "${xdns+x}" ] || xdns=yes
 [ -z "${xdnspt+x}" ] || xdns=yes
+[ -z "${xicmp+x}" ] || xicp=yes
 [ -z "${xicmppt+x}" ] || xicp=yes
 if find /proc/*/exe -type l 2>/dev/null | grep -E '/proc/[0-9]+/exe' | xargs -r readlink 2>/dev/null | grep -Eq 'agsbx/(sing-box|xray)' || pgrep -f 'agsbx/sing-box' >/dev/null 2>&1 || pgrep -f 'agsbx/xray' >/dev/null 2>&1; then
 if [ "$1" = "rep" ]; then
@@ -175,7 +177,7 @@ export port_an=${anpt:-''}
 export port_ar=${arpt:-''}
 export port_ss=${sspt:-''}
 export port_so=${sopt:-''}
-export port_xdns=${xdnspt:-''}
+export port_xdns=53
 export flag_xicmp=${xicmppt:-''}
 export xdnsym=${xdnsym:-''}
 export ym_vl_re=${reym:-''}
@@ -714,6 +716,21 @@ cleanup_port_hopping(){
     rc-service ip6tables save >/dev/null 2>&1 || true
   fi
 }
+save_xicmp_state(){
+  [ -e "$HOME/agsbx/xicmp_enabled" ] && return
+  if [ -r /proc/sys/net/ipv4/icmp_echo_ignore_all ]; then
+    cat /proc/sys/net/ipv4/icmp_echo_ignore_all > "$HOME/agsbx/xicmp_echo_ignore_all.prev" 2>/dev/null
+  fi
+  echo "yes" > "$HOME/agsbx/xicmp_enabled"
+}
+restore_xicmp_state(){
+  [ -e "$HOME/agsbx/xicmp_enabled" ] || return
+  prev_xicmp=$(cat "$HOME/agsbx/xicmp_echo_ignore_all.prev" 2>/dev/null)
+  case "$prev_xicmp" in
+    0|1) sysctl -w net.ipv4.icmp_echo_ignore_all="$prev_xicmp" >/dev/null 2>&1 ;;
+  esac
+  rm -f "$HOME/agsbx/xicmp_enabled" "$HOME/agsbx/xicmp_echo_ignore_all.prev"
+}
 installxray(){
 echo
 echo "=========启用xray内核========="
@@ -805,7 +822,7 @@ cat >> "$HOME/agsbx/xr.json" <<EOF
           "shortIds": ["$short_id_x"]
         },
         "xhttpSettings": {
-          "path": "${uuid}-xh",
+          "path": "/${uuid}-xh",
           "mode": "auto",
           "extra": {
             "noGRPCHeader": false,
@@ -854,8 +871,14 @@ cat >> "$HOME/agsbx/xr.json" <<EOF
             {
               "type": "noise",
               "settings": {
-                "paddingMin": 32,
-                "paddingMax": 128
+                "reset": "30-60",
+                "noise": [
+                  {
+                    "rand": "32-128",
+                    "randRange": "0-255",
+                    "delay": "10-20"
+                  }
+                ]
               }
             }
           ]
@@ -1073,7 +1096,6 @@ fi
 port_xhy2=$(cat "$HOME/agsbx/port_xhy2")
 echo "Xray-Hysteria2端口：$port_xhy2"
 if [ -n "$xhyjpt" ]; then
-setup_port_hopping "$xhyjpt" "$port_xhy2"
 cat >> "$HOME/agsbx/xr.json" <<EOF
     {
       "port": ${port_xhy2},
@@ -1102,10 +1124,11 @@ cat >> "$HOME/agsbx/xr.json" <<EOF
           ]
         },
         "hysteriaSettings": {
-          "version": 2,
+          "version": 2
+        },
+        "finalmask": {
           "quicParams": {
-            "congestion": "brutal",
-            "force-brutal": true,
+            "congestion": "force-brutal",
             "udpHop": {
               "ports": "${xhyjpt}",
               "interval": 15
@@ -1153,14 +1176,9 @@ fi
 else
 xhyp=xhyptargo
 fi
-if [ -n "$xdnspt" ] && [ -n "$xdnsym" ]; then
-if [ -z "$port_xdns" ] && [ ! -e "$HOME/agsbx/port_xdns" ]; then
-port_xdns=$(get_free_port)
+if [ "$xdns" = yes ]; then
+if valid_domain "$xdnsym"; then
 echo "$port_xdns" > "$HOME/agsbx/port_xdns"
-elif [ -n "$port_xdns" ]; then
-echo "$port_xdns" > "$HOME/agsbx/port_xdns"
-fi
-port_xdns=$(cat "$HOME/agsbx/port_xdns")
 echo "Vless-kcp-xdns-fm端口：$port_xdns"
 cat >> "$HOME/agsbx/xr.json" <<EOF
     {
@@ -1187,19 +1205,30 @@ cat >> "$HOME/agsbx/xr.json" <<EOF
           }
         },
         "finalmask": {
-          "xdns": {
-            "domain": "${xdnsym}",
-            "downstreamDataA": true,
-            "downstreamDataAAAA": true
-          }
+          "udp": [
+            {
+              "type": "xdns",
+              "settings": {
+                "domains": ["${xdnsym}"]
+              }
+            }
+          ]
         }
       }
     },
 EOF
+else
+echo "警告：启用了 XDNS，但 xdnsym=$xdnsym 不是有效域名，已跳过 XDNS 配置。"
 fi
-if [ -n "$xicmppt" ]; then
-setcap cap_net_raw+ep "$HOME/agsbx/xray"
-sysctl -w net.ipv4.icmp_echo_ignore_all=1
+fi
+if [ "$xicp" = yes ]; then
+save_xicmp_state
+if command -v setcap >/dev/null 2>&1; then
+setcap cap_net_raw+ep "$HOME/agsbx/xray" 2>/dev/null || echo "警告：XICMP 需要 CAP_NET_RAW，但 setcap 执行失败。"
+else
+echo "警告：系统未安装 setcap，XICMP 可能无法获得 CAP_NET_RAW 权限。"
+fi
+sysctl -w net.ipv4.icmp_echo_ignore_all=1 >/dev/null 2>&1
 echo "Vless-kcp-xicmp-fm 特种L3协议已激活✓"
 cat >> "$HOME/agsbx/xr.json" <<EOF
     {
@@ -1225,15 +1254,19 @@ cat >> "$HOME/agsbx/xr.json" <<EOF
           }
         },
         "finalmask": {
-          "xicmp": {
-            "listenIp": "0.0.0.0"
-          }
+          "udp": [
+            {
+              "type": "xicmp",
+              "settings": {
+                "listenIp": "0.0.0.0",
+                "id": 0
+              }
+            }
+          ]
         }
       }
     },
 EOF
-else
-sysctl -w net.ipv4.icmp_echo_ignore_all=0 >/dev/null 2>&1
 fi
 }
 
@@ -2076,13 +2109,13 @@ xh_extra_encoded=$(printf '%s' "$xh_extra" | sed 's/{/%7B/g;s/}/%7D/g;s/"/%22/g;
 # 构建 TCP 专属 Finalmask JSON 并 URL 编码（包含 fragment + sudoku，专属于 TCP-Reality 裸节点对抗 TLS 指纹）
 fm_tcp_config="{\"tcp\":[{\"type\":\"fragment\",\"settings\":{\"packets\":\"tlshello\",\"length\":\"100-200\",\"delay\":\"10-20\",\"maxSplit\":\"3-6\"}},{\"type\":\"sudoku\",\"settings\":{\"password\":\"$uuid\",\"paddingMin\":16,\"paddingMax\":64}}]}"
 fm_tcp_encoded=$(printf '%s' "$fm_tcp_config" | sed 's/{/%7B/g;s/}/%7D/g;s/"/%22/g;s/:/%3A/g;s/,/%2C/g;s/ //g;s/\[/%5B/g;s/\]/%5D/g')
-# 构建 XHTTP 专属 Finalmask JSON 并 URL 编码（去除 fragment 避免 TCP 特征穿帮，仅保留 sudoku 强头部加密）
-fm_xh_config="{\"tcp\":[{\"type\":\"sudoku\",\"settings\":{\"password\":\"$uuid\",\"paddingMin\":16,\"paddingMax\":64}}]}"
+# 构建 XHTTP 专属 Finalmask JSON 并 URL 编码（TCP 用 sudoku，UDP 使用 noise）
+fm_xh_config="{\"tcp\":[{\"type\":\"sudoku\",\"settings\":{\"password\":\"$uuid\",\"paddingMin\":16,\"paddingMax\":64}}],\"udp\":[{\"type\":\"noise\",\"settings\":{\"reset\":\"30-60\",\"noise\":[{\"rand\":\"32-128\",\"randRange\":\"0-255\",\"delay\":\"10-20\"}]}}]}"
 fm_xh_encoded=$(printf '%s' "$fm_xh_config" | sed 's/{/%7B/g;s/}/%7D/g;s/"/%22/g;s/:/%3A/g;s/,/%2C/g;s/ //g;s/\[/%5B/g;s/\]/%5D/g')
 if grep xhttp-reality "$HOME/agsbx/xr.json" >/dev/null 2>&1; then
 echo "💣【 Vlessenc-xhttp-reality-vision-fm 】支持ENC加密，节点信息如下："
 port_xh=$(cat "$HOME/agsbx/port_xh")
-vl_xh_link="vless://$uuid@$server_ip:$port_xh?encryption=$enkey&flow=xtls-rprx-vision&security=reality&sni=$ym_vl_re&fp=chrome&pbk=$public_key_x&sid=$short_id_x&type=xhttp&path=$uuid-xh&mode=auto&extra=$xh_extra_encoded&fm=$fm_xh_encoded#${sxname}vlessenc-xhttp-reality-vision-fm-$hostname"
+vl_xh_link="vless://$uuid@$server_ip:$port_xh?encryption=$enkey&flow=xtls-rprx-vision&security=reality&sni=$ym_vl_re&fp=chrome&pbk=$public_key_x&sid=$short_id_x&type=xhttp&path=/$uuid-xh&mode=auto&extra=$xh_extra_encoded&fm=$fm_xh_encoded#${sxname}vlessenc-xhttp-reality-vision-fm-$hostname"
 echo "$vl_xh_link" >> "$HOME/agsbx/jh.txt"
 echo "$vl_xh_link"
 echo
@@ -2130,7 +2163,7 @@ fi
 if grep vless-kcp-xdns "$HOME/agsbx/xr.json" >/dev/null 2>&1; then
 echo "💣【 Vless-kcp-xdns-fm 】备用DNS隧道，节点信息如下："
 port_xdns=$(cat "$HOME/agsbx/port_xdns")
-xdns_fm="{\"xdns\":{\"domain\":\"$xdnsym\",\"downstreamDataA\":true,\"downstreamDataAAAA\":true}}"
+xdns_fm="{\"udp\":[{\"type\":\"xdns\",\"settings\":{\"domains\":[\"$xdnsym\"]}}]}"
 xdns_fm_encoded=$(printf '%s' "$xdns_fm" | sed 's/{/%7B/g;s/}/%7D/g;s/"/%22/g;s/:/%3A/g;s/,/%2C/g;s/ //g;s/\[/%5B/g;s/\]/%5D/g')
 vl_xdns_link="vless://$uuid@$server_ip:$port_xdns?encryption=none&flow=&type=kcp&headerType=none&fm=$xdns_fm_encoded#${sxname}vless-kcp-xdns-fm-$hostname"
 echo "$vl_xdns_link" >> "$HOME/agsbx/jh.txt"
@@ -2139,7 +2172,7 @@ echo
 fi
 if grep vless-kcp-xicmp "$HOME/agsbx/xr.json" >/dev/null 2>&1; then
 echo "💣【 Vless-kcp-xicmp-fm 】特种L3 Ping隧道，节点信息如下："
-xicmp_fm="{\"xicmp\":{\"listenIp\":\"0.0.0.0\"}}"
+xicmp_fm="{\"udp\":[{\"type\":\"xicmp\",\"settings\":{\"listenIp\":\"0.0.0.0\",\"id\":0}}]}"
 xicmp_fm_encoded=$(printf '%s' "$xicmp_fm" | sed 's/{/%7B/g;s/}/%7D/g;s/"/%22/g;s/:/%3A/g;s/,/%2C/g;s/ //g;s/\[/%5B/g;s/\]/%5D/g')
 vl_xicmp_link="vless://$uuid@$server_ip:0?encryption=none&flow=&type=kcp&headerType=none&fm=$xicmp_fm_encoded#${sxname}vless-kcp-xicmp-fm-$hostname"
 echo "$vl_xicmp_link" >> "$HOME/agsbx/jh.txt"
@@ -2347,7 +2380,7 @@ showmode
 #   sbrestart() - 重启 Sing-box
 #============================================================
 cleandel(){
-sysctl -w net.ipv4.icmp_echo_ignore_all=0 >/dev/null 2>&1
+restore_xicmp_state
 cleanup_port_hopping
 for P in /proc/[0-9]*; do if [ -L "$P/exe" ]; then TARGET=$(readlink -f "$P/exe" 2>/dev/null); if echo "$TARGET" | grep -qE '/agsbx/cloudflared|/agsbx/sing-box|/agsbx/xray'; then PID=$(basename "$P"); kill "$PID" 2>/dev/null; fi; fi; done
 kill -15 $(pgrep -f 'agsbx/sing-box' 2>/dev/null) $(pgrep -f 'agsbx/cloudflared' 2>/dev/null) $(pgrep -f 'agsbx/xray' 2>/dev/null) >/dev/null 2>&1
