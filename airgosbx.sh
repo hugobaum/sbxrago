@@ -564,7 +564,8 @@ openssl rand -hex 4 | awk '{print $1".com"}' > "$HOME/agsbx/sni.txt"
 fi
 random_sni=$(cat "$HOME/agsbx/sni.txt" 2>/dev/null)
 openssl ecparam -genkey -name prime256v1 -out "$selfsigned_key_file" >/dev/null 2>&1
-openssl req -new -x509 -days 90 -key "$selfsigned_key_file" -out "$selfsigned_cert_file" -subj "/CN=$random_sni" >/dev/null 2>&1
+# 极具自愈性地将本地自签证书有效期设置为 36500 天（100 年），省去高频重新签发及失效排障烦恼！
+openssl req -new -x509 -days 36500 -key "$selfsigned_key_file" -out "$selfsigned_cert_file" -subj "/CN=$random_sni" >/dev/null 2>&1
 echo "selfsigned" > "$HOME/agsbx/cert_mode"
 record_tls_cert_paths "$selfsigned_cert_file" "$selfsigned_key_file"
 write_cert_fingerprint
@@ -659,6 +660,11 @@ record_tls_cert_paths "$acme_cert_file" "$acme_key_file"
 tls_cert_source="ACME 自动申请成功"
 }
 setup_tls_certificate(){
+  # 智能安全网关拦截：当前没有任何启用 TLS 的节点，且未启用订阅分发时，直接静默退出，避免无意义的证书生成和定时任务注册
+  if [ "$sub" != "yes" ] && [ "$hyp" != "yes" ] && [ "$xhyp" != "yes" ] && [ "$tup" != "yes" ] && [ "$ssp" != "yes" ] && [ "$xvcdn" != "yes" ] && [ "$xvargo" != "yes" ]; then
+    return 0
+  fi
+
 if ! command -v openssl >/dev/null 2>&1; then
 echo "错误：系统未安装 openssl，无法生成 TLS 证书。"
 echo "请先安装 openssl 后重试：apt install openssl 或 yum install openssl"
