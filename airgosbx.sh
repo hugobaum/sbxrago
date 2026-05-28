@@ -292,45 +292,54 @@ v6dq=$( (command -v curl >/dev/null 2>&1 && curl -s6m5 https://ip.fm | sed -n 's
 warpsx(){
 if [ "$wap" = yes ]; then
 echo "正在获取安全的本地 WARP 网络身份..."
-# 1. 使用 Xray 生成真实可用的 x25519 密钥对，避免回退到无效随机值
+# 1. 生成 WireGuard 标准 Curve25519 密钥对（WARP API 要求标准 Base64 编码）
 pvk=""
 pub=""
-    if [ ! -f "$HOME/agsbx/xray" ]; then
-      upxray
+    # 按需安装 wireguard-tools（仅提供 wg 命令行工具，不涉及内核模块，包体 < 1MB）
+    if ! command -v wg >/dev/null 2>&1; then
+      if command -v apt >/dev/null 2>&1; then
+        apt install wireguard-tools -y >/dev/null 2>&1
+      elif command -v apk >/dev/null 2>&1; then
+        apk add wireguard-tools >/dev/null 2>&1
+      elif command -v yum >/dev/null 2>&1; then
+        yum install wireguard-tools -y >/dev/null 2>&1
+      elif command -v dnf >/dev/null 2>&1; then
+        dnf install wireguard-tools -y >/dev/null 2>&1
+      fi
     fi
-    if [ -f "$HOME/agsbx/xray" ]; then
-      xkey_err=$(mktemp)
-      xkey=$("$HOME/agsbx/xray" x25519 2> "$xkey_err")
-      pvk=$(echo "$xkey" | grep -i "private" | awk '{for(i=1;i<=NF;i++) if($i ~ /^[A-Za-z0-9+\/=]{43,44}$/) print $i}' | head -n 1)
-      if echo "$xkey" | grep -qi "password"; then
-        pub=$(echo "$xkey" | grep -i "password" | awk '{for(i=1;i<=NF;i++) if($i ~ /^[A-Za-z0-9+\/=]{43,44}$/) print $i}' | head -n 1)
+    # 方案 A：使用 wireguard-tools 的 wg genkey/pubkey（最标准、最可靠）
+    if command -v wg >/dev/null 2>&1; then
+      pvk=$(wg genkey 2>/dev/null)
+      if [ -n "$pvk" ]; then
+        pub=$(echo "$pvk" | wg pubkey 2>/dev/null)
+      fi
+      if [ -n "$pvk" ] && [ -n "$pub" ]; then
+        echo "WireGuard 密钥对已通过 wg 工具生成 ✓"
       else
-        pub=$(echo "$xkey" | grep -i "public" | awk '{for(i=1;i<=NF;i++) if($i ~ /^[A-Za-z0-9+\/=]{43,44}$/) print $i}' | head -n 1)
+        echo "[诊断提示] wg genkey/pubkey 执行异常，尝试 openssl 回退..."
+        pvk=""; pub=""
       fi
-      if [ -z "$pvk" ] || [ -z "$pub" ]; then
-        echo "--------------------------------------------------------"
-        echo "[诊断提示] 步骤 1.1：尝试调用 Xray 内核生成 x25519 密钥对失败！"
-        echo "-> 执行命令: \$HOME/agsbx/xray x25519"
-        echo "-> 物理错误输出: $(cat "$xkey_err" 2>/dev/null)"
-        echo "--------------------------------------------------------"
-      fi
-      rm -f "$xkey_err"
     fi
-    # 智能双核补位：若 Xray 生成密钥失败或提取为空，立即在后台自动调用 Sing-box 生成并解析，实现 100% 成功提取
+    # 方案 B：使用 openssl 生成 x25519 密钥并提取原始 32 字节 Base64（几乎所有 VPS 均有 openssl）
     if [ -z "$pvk" ] || [ -z "$pub" ]; then
-      if [ -f "$HOME/agsbx/sing-box" ]; then
-        sbkey_err=$(mktemp)
-        xkey=$("$HOME/agsbx/sing-box" generate x25519 2> "$sbkey_err")
-        pvk=$(echo "$xkey" | grep -i "private" | awk '{for(i=1;i<=NF;i++) if($i ~ /^[A-Za-z0-9+\/=]{43,44}$/) print $i}' | head -n 1)
-        pub=$(echo "$xkey" | grep -i "public" | awk '{for(i=1;i<=NF;i++) if($i ~ /^[A-Za-z0-9+\/=]{43,44}$/) print $i}' | head -n 1)
-        if [ -z "$pvk" ] || [ -z "$pub" ]; then
-          echo "--------------------------------------------------------"
-          echo "[诊断提示] 步骤 1.2：尝试调起 Sing-box 补位内核生成 x25519 密钥对同样失败！"
-          echo "-> 执行命令: \$HOME/agsbx/sing-box generate x25519"
-          echo "-> 物理错误输出: $(cat "$sbkey_err" 2>/dev/null)"
-          echo "--------------------------------------------------------"
+      if command -v openssl >/dev/null 2>&1; then
+        wg_pem=$(mktemp)
+        openssl genpkey -algorithm x25519 -out "$wg_pem" 2>/dev/null
+        if [ -s "$wg_pem" ]; then
+          pvk=$(openssl pkey -in "$wg_pem" -outform DER 2>/dev/null | tail -c 32 | base64 2>/dev/null)
+          pub=$(openssl pkey -in "$wg_pem" -pubout -outform DER 2>/dev/null | tail -c 32 | base64 2>/dev/null)
+          if [ -n "$pvk" ] && [ -n "$pub" ]; then
+            echo "WireGuard 密钥对已通过 openssl x25519 生成 ✓"
+          else
+            echo "[诊断提示] openssl 提取 x25519 原始密钥失败，密钥对为空。"
+            pvk=""; pub=""
+          fi
+        else
+          echo "[诊断提示] openssl genpkey -algorithm x25519 执行失败（可能 openssl 版本 < 1.1.0 不支持 x25519）。"
         fi
-        rm -f "$sbkey_err"
+        rm -f "$wg_pem"
+      else
+        echo "[诊断提示] 系统未安装 openssl，无法生成 WireGuard 密钥对。"
       fi
     fi
 
@@ -370,12 +379,21 @@ pub=""
       fi
     else
       echo "--------------------------------------------------------"
-      echo "[诊断提示] 步骤 2：Cloudflare WARP 官方 API 注册连接失败！"
+      echo "[诊断提示] 步骤 2：Cloudflare WARP 官方 API 注册失败！"
       echo "-> 请求接口: https://api.cloudflareclient.com/v0a2158/reg"
       [ -n "$http_code" ] && echo "-> 接口返回 HTTP 状态码: $http_code"
-      echo "-> 物理连接错误信息: $(cat "$reg_err" 2>/dev/null)"
-      echo "-> 接口返回原始数据: $response_body"
-      echo "-> 常见原因: 您的 VPS 物理网络出站受阻，api.cloudflareclient.com 被防火墙屏蔽或连接超时。"
+      if echo "$response_body" | grep -q "Invalid public key"; then
+        echo "-> 错误原因: 提交的公钥格式不被 Cloudflare 接受 (Invalid public key)"
+        echo "-> 排查方向: 密钥生成工具输出了非 WireGuard 标准格式的公钥，请检查 wg/openssl 是否正常"
+      else
+        echo "-> 物理连接错误信息: $(cat "$reg_err" 2>/dev/null)"
+        echo "-> 接口返回原始数据: $response_body"
+        if [ -z "$http_code" ]; then
+          echo "-> 常见原因: VPS 物理网络出站受阻，api.cloudflareclient.com 被防火墙屏蔽或连接超时。"
+        else
+          echo "-> 常见原因: Cloudflare API 拒绝了请求，请检查请求参数是否有效。"
+        fi
+      fi
       echo "--------------------------------------------------------"
       wap=warpargo
       pvk="dummy"; pub="dummy"; res="[0, 0, 0]"; wpv6="2606:4700:d0::a29f:c001"
@@ -383,9 +401,10 @@ pub=""
     rm -f "$reg_err"
   else
     echo "--------------------------------------------------------"
-    echo "[诊断提示] 步骤 1：物理双核密钥生成失败！"
-    echo "-> 无论是 Xray 还是 Sing-box 补位内核，均无法在当前 VPS 下执行并成功生成 x25519 密钥对。"
-    echo "-> 系统已自动执行退避防护，降级为直连出站，以防安装中断。"
+    echo "[诊断提示] 步骤 1：WireGuard 密钥生成失败！"
+    echo "-> wg 工具和 openssl 均无法在当前系统下成功生成 WireGuard Curve25519 密钥对。"
+    echo "-> 建议: 安装 wireguard-tools (apt install wireguard-tools) 或升级 openssl >= 1.1.0。"
+    echo "-> 系统已自动降级为直连出站，以防安装中断。"
     echo "--------------------------------------------------------"
     wap=warpargo
     pvk="dummy"; pub="dummy"; res="[0, 0, 0]"; wpv6="2606:4700:d0::a29f:c001"
