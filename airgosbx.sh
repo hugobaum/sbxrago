@@ -295,9 +295,9 @@ echo "正在获取安全的本地 WARP 网络身份..."
 # 1. 使用 Xray 生成真实可用的 x25519 密钥对，避免回退到无效随机值
 pvk=""
 pub=""
-if [ ! -f "$HOME/agsbx/xray" ]; then
-upxray
-fi
+    if [ ! -x "$HOME/agsbx/xray" ] || ! "$HOME/agsbx/xray" version >/dev/null 2>&1; then
+      upxray
+    fi
 if [ -f "$HOME/agsbx/xray" ]; then
 xkey=$("$HOME/agsbx/xray" x25519 2>/dev/null)
 pvk=$(echo "$xkey" | awk '/Private key:/{print $3}')
@@ -808,7 +808,7 @@ installxray(){
 echo
 echo "=========启用xray内核========="
 mkdir -p "$HOME/agsbx/xrk"
-if [ ! -e "$HOME/agsbx/xray" ]; then
+if [ ! -x "$HOME/agsbx/xray" ] || ! "$HOME/agsbx/xray" version >/dev/null 2>&1; then
 upxray
 fi
 cat > "$HOME/agsbx/xr.json" <<EOF
@@ -1608,7 +1608,7 @@ fi
 installsb(){
 echo
 echo "=========启用sing-box内核========="
-if [ ! -e "$HOME/agsbx/sing-box" ]; then
+if [ ! -x "$HOME/agsbx/sing-box" ] || ! "$HOME/agsbx/sing-box" version >/dev/null 2>&1; then
 upsingbox
 else
   # 🎯 架构兼容性加固：检查本地已有 sing-box 文件的版本。由于后续配置中强依赖 1.11.0+ 引入的顶级 endpoints 对象，
