@@ -301,8 +301,12 @@ pub=""
     if [ -f "$HOME/agsbx/xray" ]; then
       xkey_err=$(mktemp)
       xkey=$("$HOME/agsbx/xray" x25519 2> "$xkey_err")
-      pvk=$(echo "$xkey" | awk '/Private key:/{print $3}')
-      pub=$(echo "$xkey" | awk '/Public key:/{print $3}')
+      pvk=$(echo "$xkey" | grep -i "private" | grep -oE "[A-Za-z0-9+/=]{43,44}" | head -n 1)
+      if echo "$xkey" | grep -qi "password"; then
+        pub=$(echo "$xkey" | grep -i "password" | grep -oE "[A-Za-z0-9+/=]{43,44}" | head -n 1)
+      else
+        pub=$(echo "$xkey" | grep -i "public" | grep -oE "[A-Za-z0-9+/=]{43,44}" | head -n 1)
+      fi
       if [ -z "$pvk" ] || [ -z "$pub" ]; then
         echo "--------------------------------------------------------"
         echo "[诊断提示] 步骤 1.1：尝试调用 Xray 内核生成 x25519 密钥对失败！"
@@ -317,8 +321,8 @@ pub=""
       if [ -f "$HOME/agsbx/sing-box" ]; then
         sbkey_err=$(mktemp)
         xkey=$("$HOME/agsbx/sing-box" generate x25519 2> "$sbkey_err")
-        pvk=$(echo "$xkey" | awk -F':' '/PrivateKey/ {print $2}' | xargs)
-        pub=$(echo "$xkey" | awk -F':' '/PublicKey/ {print $2}' | xargs)
+        pvk=$(echo "$xkey" | grep -i "private" | grep -oE "[A-Za-z0-9+/=]{43,44}" | head -n 1)
+        pub=$(echo "$xkey" | grep -i "public" | grep -oE "[A-Za-z0-9+/=]{43,44}" | head -n 1)
         if [ -z "$pvk" ] || [ -z "$pub" ]; then
           echo "--------------------------------------------------------"
           echo "[诊断提示] 步骤 1.2：尝试调起 Sing-box 补位内核生成 x25519 密钥对同样失败！"
