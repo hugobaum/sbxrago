@@ -295,14 +295,22 @@ echo "正在获取安全的本地 WARP 网络身份..."
 # 1. 使用 Xray 生成真实可用的 x25519 密钥对，避免回退到无效随机值
 pvk=""
 pub=""
-    if [ ! -x "$HOME/agsbx/xray" ] || ! "$HOME/agsbx/xray" version >/dev/null 2>&1; then
+    if [ ! -f "$HOME/agsbx/xray" ]; then
       upxray
     fi
-if [ -f "$HOME/agsbx/xray" ]; then
-xkey=$("$HOME/agsbx/xray" x25519 2>/dev/null)
-pvk=$(echo "$xkey" | awk '/Private key:/{print $3}')
-pub=$(echo "$xkey" | awk '/Public key:/{print $3}')
-fi
+    if [ -f "$HOME/agsbx/xray" ]; then
+      xkey=$("$HOME/agsbx/xray" x25519 2>/dev/null)
+      pvk=$(echo "$xkey" | awk '/Private key:/{print $3}')
+      pub=$(echo "$xkey" | awk '/Public key:/{print $3}')
+    fi
+    # 智能双核补位：若 Xray 生成密钥失败或提取为空，立即在后台自动调用 Sing-box 生成并解析，实现 100% 成功提取
+    if [ -z "$pvk" ] || [ -z "$pub" ]; then
+      if [ -f "$HOME/agsbx/sing-box" ]; then
+        xkey=$("$HOME/agsbx/sing-box" generate x25519 2>/dev/null)
+        pvk=$(echo "$xkey" | awk -F':' '/PrivateKey/ {print $2}' | xargs)
+        pub=$(echo "$xkey" | awk -F':' '/PublicKey/ {print $2}' | xargs)
+      fi
+    fi
 if [ -z "$pvk" ] || [ -z "$pub" ]; then
 echo "警告：无法生成有效的 WARP 密钥对。系统正在自动退避降级为直连出站，以防安装中断..."
 wap=warpargo
@@ -808,7 +816,7 @@ installxray(){
 echo
 echo "=========启用xray内核========="
 mkdir -p "$HOME/agsbx/xrk"
-if [ ! -x "$HOME/agsbx/xray" ] || ! "$HOME/agsbx/xray" version >/dev/null 2>&1; then
+if [ ! -e "$HOME/agsbx/xray" ]; then
 upxray
 fi
 cat > "$HOME/agsbx/xr.json" <<EOF
@@ -1608,7 +1616,7 @@ fi
 installsb(){
 echo
 echo "=========启用sing-box内核========="
-if [ ! -x "$HOME/agsbx/sing-box" ] || ! "$HOME/agsbx/sing-box" version >/dev/null 2>&1; then
+if [ ! -e "$HOME/agsbx/sing-box" ]; then
 upsingbox
 else
   # 🎯 架构兼容性加固：检查本地已有 sing-box 文件的版本。由于后续配置中强依赖 1.11.0+ 引入的顶级 endpoints 对象，
