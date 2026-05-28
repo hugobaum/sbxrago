@@ -299,49 +299,93 @@ pub=""
       upxray
     fi
     if [ -f "$HOME/agsbx/xray" ]; then
-      xkey=$("$HOME/agsbx/xray" x25519 2>/dev/null)
+      xkey_err=$(mktemp)
+      xkey=$("$HOME/agsbx/xray" x25519 2> "$xkey_err")
       pvk=$(echo "$xkey" | awk '/Private key:/{print $3}')
       pub=$(echo "$xkey" | awk '/Public key:/{print $3}')
+      if [ -z "$pvk" ] || [ -z "$pub" ]; then
+        echo "--------------------------------------------------------"
+        echo "[诊断提示] 步骤 1.1：尝试调用 Xray 内核生成 x25519 密钥对失败！"
+        echo "-> 执行命令: \$HOME/agsbx/xray x25519"
+        echo "-> 物理错误输出: $(cat "$xkey_err" 2>/dev/null)"
+        echo "--------------------------------------------------------"
+      fi
+      rm -f "$xkey_err"
     fi
     # 智能双核补位：若 Xray 生成密钥失败或提取为空，立即在后台自动调用 Sing-box 生成并解析，实现 100% 成功提取
     if [ -z "$pvk" ] || [ -z "$pub" ]; then
       if [ -f "$HOME/agsbx/sing-box" ]; then
-        xkey=$("$HOME/agsbx/sing-box" generate x25519 2>/dev/null)
+        sbkey_err=$(mktemp)
+        xkey=$("$HOME/agsbx/sing-box" generate x25519 2> "$sbkey_err")
         pvk=$(echo "$xkey" | awk -F':' '/PrivateKey/ {print $2}' | xargs)
         pub=$(echo "$xkey" | awk -F':' '/PublicKey/ {print $2}' | xargs)
+        if [ -z "$pvk" ] || [ -z "$pub" ]; then
+          echo "--------------------------------------------------------"
+          echo "[诊断提示] 步骤 1.2：尝试调起 Sing-box 补位内核生成 x25519 密钥对同样失败！"
+          echo "-> 执行命令: \$HOME/agsbx/sing-box generate x25519"
+          echo "-> 物理错误输出: $(cat "$sbkey_err" 2>/dev/null)"
+          echo "--------------------------------------------------------"
+        fi
+        rm -f "$sbkey_err"
       fi
     fi
-if [ -z "$pvk" ] || [ -z "$pub" ]; then
-echo "警告：无法生成有效的 WARP 密钥对。系统正在自动退避降级为直连出站，以防安装中断..."
-wap=warpargo
-pvk="dummy"; pub="dummy"; res="[0, 0, 0]"; wpv6="2606:4700:d0::a29f:c001"
-fi
 
-if [ "$wap" = yes ]; then
-# 2. 直接向 Cloudflare 官方 API 注册，不经过任何第三方（确保私钥不泄露）
-reg_json=$( (command -v curl >/dev/null 2>&1 && curl -sL "https://api.cloudflareclient.com/v0a2158/reg" -H "User-Agent: okhttp/3.12.1" -H "Content-Type: application/json" -d "{\"key\":\"$pub\",\"install_id\":\"\",\"fcm_token\":\"\",\"tos\":\"$(date -u +%FT%T.000Z)\",\"model\":\"Linux\",\"serial_number\":\"\",\"locale\":\"en_US\"}") || echo "")
-c_id=$(echo "$reg_json" | awk -F '"client_id":"' '{print $2}' | awk -F '"' '{print $1}')
-if [ -n "$c_id" ]; then
-wpv6='2606:4700:d0::a29f:c001'
-# 从 client_id 解码提取前3个字节作为 reserved 绕过拦截
-res=$(echo "$c_id" | base64 -d 2>/dev/null | od -v -An -t u1 | head -n1 | awk '{print "["$1", "$2", "$3"]"}')
-if [ -z "$res" ]; then
-echo "警告：无法解析 WARP reserved 字段。系统正在自动退避降级为直连出站，以防安装中断..."
-wap=warpargo
-pvk="dummy"; pub="dummy"; res="[0, 0, 0]"; wpv6="2606:4700:d0::a29f:c001"
-fi
-else
-echo "警告：Cloudflare WARP 官方 API 注册失败！网络可能受限。"
-echo "系统正在自适应降级为直连 (direct) 出站，以保证其他代理服务能成功安装..."
-wap=warpargo
-pvk="dummy"; pub="dummy"; res="[0, 0, 0]"; wpv6="2606:4700:d0::a29f:c001"
-fi
-fi
-else
-pvk="dummy"
-pub="dummy"
-res="[0, 0, 0]"
-wpv6="2606:4700:d0::a29f:c001"
+  if [ -n "$pvk" ] && [ -n "$pub" ]; then
+    # 2. 直接向 Cloudflare 官方 API 注册，不经过任何第三方（确保私钥不泄露）
+    reg_err=$(mktemp)
+    reg_json=""
+    if command -v curl >/dev/null 2>&1; then
+      reg_json=$(curl -sSL -w "\nHTTP_CODE:%{http_code}" "https://api.cloudflareclient.com/v0a2158/reg" \
+        -H "User-Agent: okhttp/3.12.1" \
+        -H "Content-Type: application/json" \
+        -d "{\"key\":\"$pub\",\"install_id\":\"\",\"fcm_token\":\"\",\"tos\":\"$(date -u +%FT%T.000Z)\",\"model\":\"Linux\",\"serial_number\":\"\",\"locale\":\"en_US\"}" \
+        2> "$reg_err")
+    else
+      reg_json=$(timeout 10 wget -qO- --save-headers --post-data="{\"key\":\"$pub\",\"install_id\":\"\",\"fcm_token\":\"\",\"tos\":\"$(date -u +%FT%T.000Z)\",\"model\":\"Linux\",\"serial_number\":\"\",\"locale\":\"en_US\"}" \
+        --header="User-Agent: okhttp/3.12.1" \
+        --header="Content-Type: application/json" \
+        "https://api.cloudflareclient.com/v0a2158/reg" 2> "$reg_err")
+    fi
+
+    # 分离 HTTP 状态码与响应体
+    http_code=$(echo "$reg_json" | grep "HTTP_CODE" | cut -d: -f2)
+    response_body=$(echo "$reg_json" | grep -v "HTTP_CODE")
+
+    c_id=$(echo "$response_body" | awk -F '"client_id":"' '{print $2}' | awk -F '"' '{print $1}')
+    if [ -n "$c_id" ]; then
+      wpv6='2606:4700:d0::a29f:c001'
+      res=$(echo "$c_id" | base64 -d 2>/dev/null | od -v -An -t u1 | head -n1 | awk '{print "["$1", "$2", "$3"]"}')
+      if [ -z "$res" ]; then
+        echo "--------------------------------------------------------"
+        echo "[诊断提示] 步骤 3：解析 Cloudflare 返回数据失败！"
+        echo "-> 错误详情: 无法从 client_id 解码提取 Reserved 字段（base64 或 od 解码异常）"
+        echo "-> 原始 client_id: $c_id"
+        echo "--------------------------------------------------------"
+        wap=warpargo
+        pvk="dummy"; pub="dummy"; res="[0, 0, 0]"; wpv6="2606:4700:d0::a29f:c001"
+      fi
+    else
+      echo "--------------------------------------------------------"
+      echo "[诊断提示] 步骤 2：Cloudflare WARP 官方 API 注册连接失败！"
+      echo "-> 请求接口: https://api.cloudflareclient.com/v0a2158/reg"
+      [ -n "$http_code" ] && echo "-> 接口返回 HTTP 状态码: $http_code"
+      echo "-> 物理连接错误信息: $(cat "$reg_err" 2>/dev/null)"
+      echo "-> 接口返回原始数据: $response_body"
+      echo "-> 常见原因: 您的 VPS 物理网络出站受阻，api.cloudflareclient.com 被防火墙屏蔽或连接超时。"
+      echo "--------------------------------------------------------"
+      wap=warpargo
+      pvk="dummy"; pub="dummy"; res="[0, 0, 0]"; wpv6="2606:4700:d0::a29f:c001"
+    fi
+    rm -f "$reg_err"
+  else
+    echo "--------------------------------------------------------"
+    echo "[诊断提示] 步骤 1：物理双核密钥生成失败！"
+    echo "-> 无论是 Xray 还是 Sing-box 补位内核，均无法在当前 VPS 下执行并成功生成 x25519 密钥对。"
+    echo "-> 系统已自动执行退避防护，降级为直连出站，以防安装中断。"
+    echo "--------------------------------------------------------"
+    wap=warpargo
+    pvk="dummy"; pub="dummy"; res="[0, 0, 0]"; wpv6="2606:4700:d0::a29f:c001"
+  fi
 fi
 if [ -n "$name" ]; then
 sxname=$name-
