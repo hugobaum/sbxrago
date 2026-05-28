@@ -304,9 +304,12 @@ pvk=$(echo "$xkey" | awk '/Private key:/{print $3}')
 pub=$(echo "$xkey" | awk '/Public key:/{print $3}')
 fi
 if [ -z "$pvk" ] || [ -z "$pub" ]; then
-echo "错误：无法生成有效的 WARP 密钥对，终止安装。"
-exit 1
+echo "警告：无法生成有效的 WARP 密钥对。系统正在自动退避降级为直连出站，以防安装中断..."
+wap=warpargo
+pvk="dummy"; pub="dummy"; res="[0, 0, 0]"; wpv6="2606:4700:d0::a29f:c001"
 fi
+
+if [ "$wap" = yes ]; then
 # 2. 直接向 Cloudflare 官方 API 注册，不经过任何第三方（确保私钥不泄露）
 reg_json=$( (command -v curl >/dev/null 2>&1 && curl -sL "https://api.cloudflareclient.com/v0a2158/reg" -H "User-Agent: okhttp/3.12.1" -H "Content-Type: application/json" -d "{\"key\":\"$pub\",\"install_id\":\"\",\"fcm_token\":\"\",\"tos\":\"$(date -u +%FT%T.000Z)\",\"model\":\"Linux\",\"serial_number\":\"\",\"locale\":\"en_US\"}") || echo "")
 c_id=$(echo "$reg_json" | awk -F '"client_id":"' '{print $2}' | awk -F '"' '{print $1}')
@@ -315,12 +318,16 @@ wpv6='2606:4700:d0::a29f:c001'
 # 从 client_id 解码提取前3个字节作为 reserved 绕过拦截
 res=$(echo "$c_id" | base64 -d 2>/dev/null | od -v -An -t u1 | head -n1 | awk '{print "["$1", "$2", "$3"]"}')
 if [ -z "$res" ]; then
-echo "错误：无法解析 WARP reserved 字段，终止安装。"
-exit 1
+echo "警告：无法解析 WARP reserved 字段。系统正在自动退避降级为直连出站，以防安装中断..."
+wap=warpargo
+pvk="dummy"; pub="dummy"; res="[0, 0, 0]"; wpv6="2606:4700:d0::a29f:c001"
 fi
 else
 echo "警告：Cloudflare WARP 官方 API 注册失败！网络可能受限。"
-exit 1
+echo "系统正在自适应降级为直连 (direct) 出站，以保证其他代理服务能成功安装..."
+wap=warpargo
+pvk="dummy"; pub="dummy"; res="[0, 0, 0]"; wpv6="2606:4700:d0::a29f:c001"
+fi
 fi
 else
 pvk="dummy"
@@ -1603,6 +1610,23 @@ echo
 echo "=========启用sing-box内核========="
 if [ ! -e "$HOME/agsbx/sing-box" ]; then
 upsingbox
+else
+  # 🎯 架构兼容性加固：检查本地已有 sing-box 文件的版本。由于后续配置中强依赖 1.11.0+ 引入的顶级 endpoints 对象，
+  # 如果本地内核版本低于 1.11.0，则必须自动触发无人值守升级，否则新配置会导致内核因 unknown field 报错崩溃。
+  local_sb_ver=$("$HOME/agsbx/sing-box" version 2>/dev/null | awk '/version/{print $NF}' | tr -d 'v')
+  sb_major=$(echo "$local_sb_ver" | cut -d. -f1)
+  sb_minor=$(echo "$local_sb_ver" | cut -d. -f2)
+  if [ -n "$sb_major" ] && [ -n "$sb_minor" ]; then
+    if [ "$sb_major" -lt 1 ] || { [ "$sb_major" -eq 1 ] && [ "$sb_minor" -lt 11 ]; }; then
+      echo "检测到本地已有的 Sing-box 版本为 v$local_sb_ver（低于 1.11.0 架构需求）。"
+      echo "系统正在自动执行无人值守的平滑升级，以确保完美兼容 endpoints 顶层配置..."
+      upsingbox
+    fi
+  else
+    echo "无法识别本地已有的 Sing-box 版本信息。"
+    echo "系统正在自动执行无人值守的平滑升级，以确保完美兼容 endpoints 顶层配置..."
+    upsingbox
+  fi
 fi
 cat > "$HOME/agsbx/sb.json" <<EOF
 {
