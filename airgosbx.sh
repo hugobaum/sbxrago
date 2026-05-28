@@ -301,11 +301,11 @@ pub=""
     if [ -f "$HOME/agsbx/xray" ]; then
       xkey_err=$(mktemp)
       xkey=$("$HOME/agsbx/xray" x25519 2> "$xkey_err")
-      pvk=$(echo "$xkey" | grep -i "private" | awk -F':' '{print $2}' | tr -d '[:space:]' | head -n 1)
+      pvk=$(echo "$xkey" | grep -i "private" | awk '{for(i=1;i<=NF;i++) if($i ~ /^[A-Za-z0-9+\/=]{43,44}$/) print $i}' | head -n 1)
       if echo "$xkey" | grep -qi "password"; then
-        pub=$(echo "$xkey" | grep -i "password" | awk -F':' '{print $2}' | tr -d '[:space:]' | head -n 1)
+        pub=$(echo "$xkey" | grep -i "password" | awk '{for(i=1;i<=NF;i++) if($i ~ /^[A-Za-z0-9+\/=]{43,44}$/) print $i}' | head -n 1)
       else
-        pub=$(echo "$xkey" | grep -i "public" | awk -F':' '{print $2}' | tr -d '[:space:]' | head -n 1)
+        pub=$(echo "$xkey" | grep -i "public" | awk '{for(i=1;i<=NF;i++) if($i ~ /^[A-Za-z0-9+\/=]{43,44}$/) print $i}' | head -n 1)
       fi
       if [ -z "$pvk" ] || [ -z "$pub" ]; then
         echo "--------------------------------------------------------"
@@ -321,8 +321,8 @@ pub=""
       if [ -f "$HOME/agsbx/sing-box" ]; then
         sbkey_err=$(mktemp)
         xkey=$("$HOME/agsbx/sing-box" generate x25519 2> "$sbkey_err")
-        pvk=$(echo "$xkey" | grep -i "private" | awk -F':' '{print $2}' | tr -d '[:space:]' | head -n 1)
-        pub=$(echo "$xkey" | grep -i "public" | awk -F':' '{print $2}' | tr -d '[:space:]' | head -n 1)
+        pvk=$(echo "$xkey" | grep -i "private" | awk '{for(i=1;i<=NF;i++) if($i ~ /^[A-Za-z0-9+\/=]{43,44}$/) print $i}' | head -n 1)
+        pub=$(echo "$xkey" | grep -i "public" | awk '{for(i=1;i<=NF;i++) if($i ~ /^[A-Za-z0-9+\/=]{43,44}$/) print $i}' | head -n 1)
         if [ -z "$pvk" ] || [ -z "$pub" ]; then
           echo "--------------------------------------------------------"
           echo "[诊断提示] 步骤 1.2：尝试调起 Sing-box 补位内核生成 x25519 密钥对同样失败！"
