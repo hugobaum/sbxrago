@@ -366,7 +366,13 @@ pub=""
 
     c_id=$(echo "$response_body" | awk -F '"client_id":"' '{print $2}' | awk -F '"' '{print $1}')
     if [ -n "$c_id" ]; then
-      wpv6='2606:4700:d0::a29f:c001'
+      # 从 WARP 注册 API 响应中动态提取客户端专属虚拟 IPv6 地址（config.interface.addresses.v6）
+      # 提取策略：先截取 "addresses" 之后的 JSON 片段，避开前面出现的 peers.endpoint.v6
+      wpv6=$(printf '%s' "$response_body" | sed 's/.*"addresses"://' | awk -F'"v6":"' '{split($2,a,"\""  );print a[1]}')
+      if [ -z "$wpv6" ]; then
+        echo "[诊断提示] 未能从 WARP API 响应中提取客户端专属虚拟 IPv6 地址，WARP IPv6 隧道可能不可用。"
+        wpv6='2606:4700:110::1'
+      fi
       res=$(echo "$c_id" | base64 -d 2>/dev/null | od -v -An -t u1 | head -n1 | awk '{print "["$1", "$2", "$3"]"}')
       if [ -z "$res" ]; then
         echo "--------------------------------------------------------"
@@ -375,7 +381,7 @@ pub=""
         echo "-> 原始 client_id: $c_id"
         echo "--------------------------------------------------------"
         wap=warpargo
-        pvk="dummy"; pub="dummy"; res="[0, 0, 0]"; wpv6="2606:4700:d0::a29f:c001"
+        pvk="dummy"; pub="dummy"; res="[0, 0, 0]"; wpv6="2606:4700:110::1"
       fi
     else
       echo "--------------------------------------------------------"
@@ -396,7 +402,7 @@ pub=""
       fi
       echo "--------------------------------------------------------"
       wap=warpargo
-      pvk="dummy"; pub="dummy"; res="[0, 0, 0]"; wpv6="2606:4700:d0::a29f:c001"
+      pvk="dummy"; pub="dummy"; res="[0, 0, 0]"; wpv6="2606:4700:110::1"
     fi
     rm -f "$reg_err"
   else
@@ -407,7 +413,7 @@ pub=""
     echo "-> 系统已自动降级为直连出站，以防安装中断。"
     echo "--------------------------------------------------------"
     wap=warpargo
-    pvk="dummy"; pub="dummy"; res="[0, 0, 0]"; wpv6="2606:4700:d0::a29f:c001"
+    pvk="dummy"; pub="dummy"; res="[0, 0, 0]"; wpv6="2606:4700:110::1"
   fi
 fi
 if [ -n "$name" ]; then
