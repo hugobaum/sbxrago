@@ -59,13 +59,23 @@ enable_system_bbr() {
 
   echo "正在为您检测并开启系统级 TCP BBR 拥塞控制加速..."
   
+  # 确保 /etc/sysctl.conf 文件存在，防止 sed 报 can't read 错误
+  [ -f /etc/sysctl.conf ] || touch /etc/sysctl.conf
+
   if sysctl net.ipv4.tcp_available_congestion_control 2>/dev/null | grep -q "bbr"; then
     sed -i '/net.core.default_qdisc/d' /etc/sysctl.conf
     sed -i '/net.ipv4.tcp_congestion_control/d' /etc/sysctl.conf
     echo "net.core.default_qdisc = fq" >> /etc/sysctl.conf
     echo "net.ipv4.tcp_congestion_control = bbr" >> /etc/sysctl.conf
     sysctl -p >/dev/null 2>&1
-    echo "TCP BBR 拥塞控制加速已成功开启！🚀"
+    
+    # 再次读取系统实时拥塞控制算法以验证是否真正启用成功
+    current_congestion_control=$(sysctl net.ipv4.tcp_congestion_control 2>/dev/null | awk '{print $3}')
+    if [ "${current_congestion_control}" = "bbr" ]; then
+      echo "TCP BBR 拥塞控制加速已成功开启！🚀"
+    else
+      echo "警告：BBR 配置已写入，但系统实时加载失败，可能处于受限虚拟化环境。😿"
+    fi
   else
     modprobe tcp_bbr >/dev/null 2>&1
     if sysctl net.ipv4.tcp_available_congestion_control 2>/dev/null | grep -q "bbr"; then
@@ -74,7 +84,13 @@ enable_system_bbr() {
       echo "net.core.default_qdisc = fq" >> /etc/sysctl.conf
       echo "net.ipv4.tcp_congestion_control = bbr" >> /etc/sysctl.conf
       sysctl -p >/dev/null 2>&1
-      echo "TCP BBR 拥塞控制加速已成功开启！🚀"
+      
+      current_congestion_control=$(sysctl net.ipv4.tcp_congestion_control 2>/dev/null | awk '{print $3}')
+      if [ "${current_congestion_control}" = "bbr" ]; then
+        echo "TCP BBR 拥塞控制加速已成功开启！🚀"
+      else
+        echo "警告：BBR 配置已写入，但系统实时加载失败，可能处于受限虚拟化环境。😿"
+      fi
     else
       echo "警告：当前 VPS 系统内核版本较低，不支持 BBR 模块。建议您升级内核后再开启网络加速。😿"
     fi
