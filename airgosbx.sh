@@ -713,9 +713,13 @@ fi
 
   # 检查本地是否已存在有效的、未过期的同域名证书（有效期大于30天），免于重复申请风控。
   if [ -s "$acme_cert_file" ] && [ -s "$acme_key_file" ]; then
-    if [ "$(cat "$HOME/agsbx/sni.txt" 2>/dev/null)" = "$acme_domain" ]; then
+    # 优先提取真实证书中的 CN 域名进行比对，防止 sni.txt 被自签逻辑覆写导致误判
+    local cert_cn
+    cert_cn=$(openssl x509 -noout -subject -in "$acme_cert_file" 2>/dev/null | sed -n 's/.*CN=\([^,]*\).*/\1/p' | tr -d '[:space:]')
+    if [ "${cert_cn}" = "$acme_domain" ] || [ "$(cat "$HOME/agsbx/sni.txt" 2>/dev/null)" = "$acme_domain" ]; then
       if openssl x509 -checkend 2592000 -noout -in "$acme_cert_file" >/dev/null 2>&1; then
         echo "检测到本地已存在有效的 $acme_domain 证书（剩余有效期大于30天），直接复用，免于重复申请风控。💎"
+        echo "$acme_domain" > "$HOME/agsbx/sni.txt"
         echo "ca" > "$HOME/agsbx/cert_mode"
         record_tls_cert_paths "$acme_cert_file" "$acme_key_file"
         tls_cert_source="本地已有 CA/ACME 证书"
@@ -766,7 +770,7 @@ acme_mail=${acmem:-"admin@$acme_domain"}
 bash "$acme_script" --home "$acme_home" --set-default-ca --server letsencrypt >/dev/null 2>&1
 bash "$acme_script" --home "$acme_home" --register-account -m "$acme_mail" --server letsencrypt >/dev/null 2>&1
 bash "$acme_script" --home "$acme_home" --issue --standalone -d "$acme_domain" --keylength ec-256 --server letsencrypt >/dev/null 2>&1 || return 1
-local reload_cmd="if pidof systemd >/dev/null 2>&1; then systemctl restart xr sb >/dev/null 2>&1; elif command -v rc-service >/dev/null 2>&1; then rc-service xray restart >/dev/null 2>&1; rc-service sing-box restart >/dev/null 2>&1; else kill -15 \$(pgrep -f 'agsbx/xray') \$(pgrep -f 'agsbx/sing-box') 2>/dev/null; sleep 2; nohup $HOME/agsbx/xray run -c $HOME/agsbx/xr.json > $HOME/agsbx/xray.log 2>&1 & nohup $HOME/agsbx/sing-box run -c $HOME/agsbx/sb.json > $HOME/agsbx/sing-box.log 2>&1 &; fi"
+local reload_cmd="if pidof systemd >/dev/null 2>&1; then systemctl restart xr sb >/dev/null 2>&1 || true; elif command -v rc-service >/dev/null 2>&1; then rc-service xray restart >/dev/null 2>&1 || true; rc-service sing-box restart >/dev/null 2>&1 || true; else kill -15 \$(pgrep -f 'agsbx/xray') \$(pgrep -f 'agsbx/sing-box') 2>/dev/null; sleep 2; nohup $HOME/agsbx/xray run -c $HOME/agsbx/xr.json > $HOME/agsbx/xray.log 2>&1 & nohup $HOME/agsbx/sing-box run -c $HOME/agsbx/sb.json > $HOME/agsbx/sing-box.log 2>&1 &; fi"
 bash "$acme_script" --home "$acme_home" --install-cert -d "$acme_domain" --ecc --fullchain-file "$acme_cert_file" --key-file "$acme_key_file" --reloadcmd "$reload_cmd" >/dev/null 2>&1 || return 1
 [ -s "$acme_cert_file" ] && [ -s "$acme_key_file" ] || return 1
 
