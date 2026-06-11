@@ -1,8 +1,10 @@
-#!/bin/sh
+#!/usr/bin/env bash
+# 说明：脚本使用了花括号展开、echo 转义等 Bash 语法，且安装后的 agsbx 快捷方式会按 shebang 执行；
+# 固定使用 bash 可避免在以 dash 作为 /bin/sh 的系统（如 Debian/Ubuntu）上 `agsbx rep` 等命令静默失效。
 #============================================================
 # Airgosbx - 安全加固版一键代理部署脚本
-# 基于 yonggekkk/argosbx 二次开发
-# 仓库：github.com/hugobaum/mimic
+# 基于 yonggekkk/argosbx
+# 仓库：github.com/hugobaum/sbxrago
 #============================================================
 
 #============================================================
@@ -17,6 +19,24 @@ fi
 is_root(){
   [ "$(id -u 2>/dev/null)" = "0" ]
 }
+
+# 进程探测助手：判断 agsbx 管理的 sing-box / xray 内核是否在运行。
+# 此前该长管道在第 1/8/12 段被逐字复制三次，现统一收敛为单一函数，杜绝逻辑漂移与维护遗漏。
+agsbx_running(){
+  find /proc/*/exe -type l 2>/dev/null | grep -E '/proc/[0-9]+/exe' | xargs -r readlink 2>/dev/null | grep -Eq 'agsbx/(sing-box|xray)' \
+    || pgrep -f 'agsbx/sing-box' >/dev/null 2>&1 \
+    || pgrep -f 'agsbx/xray' >/dev/null 2>&1
+}
+
+# 终端配色：仅在交互式 TTY 且未设置 NO_COLOR 时启用；输出被重定向到文件/管道时自动留空，
+# 避免 ANSI 转义码污染订阅文件（jh.txt / clmi.yaml）。
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+  C_RESET=$(printf '\033[0m');   C_BOLD=$(printf '\033[1m')
+  C_RED=$(printf '\033[31m');    C_GREEN=$(printf '\033[32m')
+  C_YELLOW=$(printf '\033[33m'); C_CYAN=$(printf '\033[36m')
+else
+  C_RESET=''; C_BOLD=''; C_RED=''; C_GREEN=''; C_YELLOW=''; C_CYAN=''
+fi
 
 if ! is_root; then
   echo "安全保护：部署 airgosbx 脚本需要 root 系统权限以注册系统服务（systemd/openrc）或执行依赖项更新！请使用 sudo 或以 root 身份运行本脚本。"
@@ -184,7 +204,7 @@ export LANG=en_US.UTF-8
 [ -z "${xvargopt+x}" ] || xvargo=yes
 [ -z "${subpt+x}" ] || sub=yes
 [ -z "${subid+x}" ] || sub=yes
-if find /proc/*/exe -type l 2>/dev/null | grep -E '/proc/[0-9]+/exe' | xargs -r readlink 2>/dev/null | grep -Eq 'agsbx/(sing-box|xray)' || pgrep -f 'agsbx/sing-box' >/dev/null 2>&1 || pgrep -f 'agsbx/xray' >/dev/null 2>&1; then
+if agsbx_running; then
 if [ "$1" = "rep" ]; then
 [ "$vwp" = yes ] || [ "$sop" = yes ] || [ "$vxp" = yes ] || [ "$ssp" = yes ] || [ "$vlp" = yes ] || [ "$vmp" = yes ] || [ "$hyp" = yes ] || [ "$tup" = yes ] || [ "$xhp" = yes ] || [ "$anp" = yes ] || [ "$arp" = yes ] || [ "$xhyp" = yes ] || [ "$xdns" = yes ] || [ "$xicp" = yes ] || [ "$xvcdn" = yes ] || [ "$xvargo" = yes ] || { echo "提示：rep重置协议时，请在脚本前至少设置一个协议变量哦! 💣"; exit; }
 fi
@@ -244,9 +264,9 @@ fi
 # - 关联性：由第 12 段（主入口流程决策）在检测到已有安装或用户输入无效协议时调用以展示帮助说明。
 #============================================================
 v46url="https://icanhazip.com"
-agsbxurl="https://raw.githubusercontent.com/hugobaum/mimic/main/airgosbx.sh"
+agsbxurl="https://raw.githubusercontent.com/hugobaum/sbxrago/main/airgosbx.sh"
 showmode(){
-echo "主脚本：bash <(curl -Ls https://raw.githubusercontent.com/hugobaum/mimic/main/airgosbx.sh) 或 bash <(wget -qO- https://raw.githubusercontent.com/hugobaum/mimic/main/airgosbx.sh)"
+echo "主脚本：bash <(curl -Ls https://raw.githubusercontent.com/hugobaum/sbxrago/main/airgosbx.sh) 或 bash <(wget -qO- https://raw.githubusercontent.com/hugobaum/sbxrago/main/airgosbx.sh)"
 echo "显示节点信息命令：agsbx list 【或者】 主脚本 list"
 echo "重置变量组命令：自定义各种协议变量组 agsbx rep 【或者】 自定义各种协议变量组 主脚本 rep"
 echo "更新脚本命令：原已安装的自定义各种协议变量组 主脚本 rep"
@@ -265,12 +285,12 @@ echo
 # - 本大段处理启动的控制台文字渲染、自适应 VPS 架构识别 (amd64/arm64) 以及无人值守依赖静默补全。
 # - 关联性：为后续第 4 段 (ACME证书 socat 依赖) 和第 10 段 (Web订阅 busybox httpd 依赖) 奠定系统级环境基础。
 #============================================================
-echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+printf '%s\n' "${C_CYAN}~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~${C_RESET}"
+printf '%s\n' "${C_BOLD}Airgosbx 一键无交互小钢炮脚本 💣${C_RESET}"
 echo "项目地址：github.com/hugobaum/sbxrago"
-echo "基于 yonggekkk/argosbx 二次开发，已加固安全"
-echo "Airgosbx一键无交互小钢炮脚本💣"
-echo "当前版本：V26.5.25"
-echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+echo "基于 yonggekkk/argosbx, 已加固安全"
+printf '%s\n' "当前版本：${C_GREEN}V26.06.09${C_RESET}"
+printf '%s\n' "${C_CYAN}~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~${C_RESET}"
 hostname=$(uname -a | awk '{print $2}')
 op=$(cat /etc/redhat-release 2>/dev/null || cat /etc/os-release 2>/dev/null | grep -i pretty_name | cut -d \" -f2)
 [ -z "$(systemd-detect-virt 2>/dev/null)" ] && vi=$(virt-what 2>/dev/null) || vi=$(systemd-detect-virt 2>/dev/null)
@@ -467,16 +487,10 @@ esac
 fi
 fi
 case "$warp" in *x4*) wxryx='ForceIPv4' ;; *x6*) wxryx='ForceIPv6' ;; *) wxryx='ForceIPv6v4' ;; esac
-if command -v curl >/dev/null 2>&1; then
-curl -s4m5 "$v46url" >/dev/null 2>&1 && v4_ok=true
-elif command -v wget >/dev/null 2>&1; then
-timeout 3 wget -4 --tries=2 -qO- "$v46url" >/dev/null 2>&1 && v4_ok=true
-fi
-if command -v curl >/dev/null 2>&1; then
-curl -s6m5 "$v46url" >/dev/null 2>&1 && v6_ok=true
-elif command -v wget >/dev/null 2>&1; then
-timeout 3 wget -6 --tries=2 -qO- "$v46url" >/dev/null 2>&1 && v6_ok=true
-fi
+# 复用本函数开头 v4v6() 已探测到的结果，避免再发起两次 icanhazip 探测（每次最多阻塞 5 秒）。
+# $v4 / $v6 非空即代表对应协议栈的出站连通性已确认。
+[ -n "$v4" ] && v4_ok=true
+[ -n "$v6" ] && v6_ok=true
 if [ "$v4_ok" = true ] && [ "$v6_ok" = true ]; then
 case "$warp" in *s4*) sbyx='prefer_ipv4' ;; *) sbyx='prefer_ipv6' ;; esac
 case "$warp" in *x4*) xryx='ForceIPv4v6' ;; *x*) xryx='ForceIPv6v4' ;; *) xryx='ForceIPv4v6' ;; esac
@@ -725,12 +739,13 @@ fi
         tls_cert_source="本地已有 CA/ACME 证书"
         
         # 补全每日定时自动续期 crontab 定时任务
-        crontab -l 2>/dev/null > /tmp/crontab.tmp 2>/dev/null
-        if ! grep -q "acme.sh --cron" /tmp/crontab.tmp; then
-          echo "30 2 * * * /bin/bash $HOME/agsbx/acme.sh --cron --home $HOME/agsbx/acme > /dev/null 2>&1" >> /tmp/crontab.tmp
-          crontab /tmp/crontab.tmp >/dev/null 2>&1
+        cron_tmp=$(mktemp)
+        crontab -l 2>/dev/null > "$cron_tmp" 2>/dev/null
+        if ! grep -q "acme.sh --cron" "$cron_tmp"; then
+          echo "30 2 * * * /bin/bash $HOME/agsbx/acme.sh --cron --home $HOME/agsbx/acme > /dev/null 2>&1" >> "$cron_tmp"
+          crontab "$cron_tmp" >/dev/null 2>&1
         fi
-        rm -f /tmp/crontab.tmp
+        rm -f "$cron_tmp"
         return 0
       fi
     fi
@@ -750,7 +765,7 @@ fi
 
   if [ "$port_80_in_use" = "true" ]; then
     echo ""
-    echo -e "\033[33m警告：检测到本机的 80 端口已被其他服务占用！\033[0m"
+    printf '%s\n' "${C_YELLOW}警告：检测到本机的 80 端口已被其他服务占用！${C_RESET}"
     echo "ACME Standalone 模式自动申请证书必须独占 80 端口。"
     echo "如果直接继续，ACME 申请大概率会失败并自动退回到【自签证书】模式。"
     echo "建议在继续之前，暂时停止占用 80 端口的服务（例如：systemctl stop nginx 或 caddy/apache2）。"
@@ -770,17 +785,18 @@ acme_mail=${acmem:-"admin@$acme_domain"}
 bash "$acme_script" --home "$acme_home" --set-default-ca --server letsencrypt >/dev/null 2>&1
 bash "$acme_script" --home "$acme_home" --register-account -m "$acme_mail" --server letsencrypt >/dev/null 2>&1
 bash "$acme_script" --home "$acme_home" --issue --standalone -d "$acme_domain" --keylength ec-256 --server letsencrypt >/dev/null 2>&1 || return 1
-local reload_cmd="if pidof systemd >/dev/null 2>&1; then if systemctl list-unit-files 2>/dev/null | grep -qE '^(xr|sb)\.service'; then systemctl restart xr sb; fi; elif command -v rc-service >/dev/null 2>&1; then if [ -f /etc/init.d/xray ] || [ -f /etc/init.d/sing-box ]; then rc-service xray restart; rc-service sing-box restart; fi; else kill -15 \$(pgrep -f 'agsbx/xray') \$(pgrep -f 'agsbx/sing-box') 2>/dev/null; sleep 2; nohup $HOME/agsbx/xray run -c $HOME/agsbx/xr.json > $HOME/agsbx/xray.log 2>&1 & nohup $HOME/agsbx/sing-box run -c $HOME/agsbx/sb.json > $HOME/agsbx/sing-box.log 2>&1 &; fi"
+local reload_cmd="if pidof systemd >/dev/null 2>&1; then if systemctl list-unit-files 2>/dev/null | grep -qE '^(xr|sb)\.service'; then systemctl restart xr sb; fi; elif command -v rc-service >/dev/null 2>&1; then if [ -f /etc/init.d/xray ] || [ -f /etc/init.d/sing-box ]; then rc-service xray restart; rc-service sing-box restart; fi; else kill -15 \$(pgrep -f 'agsbx/xray') \$(pgrep -f 'agsbx/sing-box') 2>/dev/null; sleep 2; nohup $HOME/agsbx/xray run -c $HOME/agsbx/xr.json > $HOME/agsbx/xray.log 2>&1 & nohup $HOME/agsbx/sing-box run -c $HOME/agsbx/sb.json > $HOME/agsbx/sing-box.log 2>&1 & fi"
 bash "$acme_script" --home "$acme_home" --install-cert -d "$acme_domain" --ecc --fullchain-file "$acme_cert_file" --key-file "$acme_key_file" --reloadcmd "$reload_cmd" >/dev/null 2>&1 || return 1
 [ -s "$acme_cert_file" ] && [ -s "$acme_key_file" ] || return 1
 
 # 注册每日凌晨 2:30 的自动续期 crontab 定时任务，实现到期前 100% 自动签发并重载
-crontab -l 2>/dev/null > /tmp/crontab.tmp 2>/dev/null
-if ! grep -q "acme.sh --cron" /tmp/crontab.tmp; then
-  echo "30 2 * * * /bin/bash $acme_script --cron --home $acme_home > /dev/null 2>&1" >> /tmp/crontab.tmp
-  crontab /tmp/crontab.tmp >/dev/null 2>&1
+cron_tmp=$(mktemp)
+crontab -l 2>/dev/null > "$cron_tmp" 2>/dev/null
+if ! grep -q "acme.sh --cron" "$cron_tmp"; then
+  echo "30 2 * * * /bin/bash $acme_script --cron --home $acme_home > /dev/null 2>&1" >> "$cron_tmp"
+  crontab "$cron_tmp" >/dev/null 2>&1
 fi
-rm -f /tmp/crontab.tmp
+rm -f "$cron_tmp"
 
 echo "$acme_domain" > "$HOME/agsbx/sni.txt"
 echo "ca" > "$HOME/agsbx/cert_mode"
@@ -1733,7 +1749,7 @@ cat > "$HOME/agsbx/sb.json" <<EOF
 {
   "log": {
     "disabled": false,
-    "level": "info",
+    "level": "warn",
     "timestamp": true
   },
   "inbounds": [
@@ -2450,7 +2466,7 @@ fi
 fi
 sleep 5
 echo
-if find /proc/*/exe -type l 2>/dev/null | grep -E '/proc/[0-9]+/exe' | xargs -r readlink 2>/dev/null | grep -Eq 'agsbx/(sing-box|xray)' || pgrep -f 'agsbx/sing-box' >/dev/null 2>&1 || pgrep -f 'agsbx/xray' >/dev/null 2>&1 ; then
+if agsbx_running ; then
 [ -f ~/.bashrc ] || touch ~/.bashrc
 sed -i '/agsbx/d' ~/.bashrc
 SCRIPT_PATH="$HOME/bin/agsbx"
@@ -2463,29 +2479,30 @@ sed -i '/export PATH="\$PATH:\$HOME\/bin"/d' ~/.bashrc
 echo 'export PATH="$PATH:$HOME/bin"' >> "$HOME/.bashrc"
 grep -qxF 'source ~/.bashrc' ~/.bash_profile 2>/dev/null || echo 'source ~/.bashrc' >> ~/.bash_profile
 . ~/.bashrc 2>/dev/null
-crontab -l > /tmp/crontab.tmp 2>/dev/null
+cron_tmp=$(mktemp)
+crontab -l > "$cron_tmp" 2>/dev/null
 if ! pidof systemd >/dev/null 2>&1 && ! command -v rc-service >/dev/null 2>&1; then
-sed -i '/agsbx\/sing-box/d' /tmp/crontab.tmp
-sed -i '/agsbx\/xray/d' /tmp/crontab.tmp
+sed -i '/agsbx\/sing-box/d' "$cron_tmp"
+sed -i '/agsbx\/xray/d' "$cron_tmp"
 if find /proc/*/exe -type l 2>/dev/null | grep -E '/proc/[0-9]+/exe' | xargs -r readlink 2>/dev/null | grep -q 'agsbx/sing-box' || pgrep -f 'agsbx/sing-box' >/dev/null 2>&1 ; then
-echo '@reboot sleep 10 && /bin/sh -c "nohup $HOME/agsbx/sing-box run -c $HOME/agsbx/sb.json > $HOME/agsbx/sing-box.log 2>&1 &"' >> /tmp/crontab.tmp
+echo '@reboot sleep 10 && /bin/sh -c "nohup $HOME/agsbx/sing-box run -c $HOME/agsbx/sb.json > $HOME/agsbx/sing-box.log 2>&1 &"' >> "$cron_tmp"
 fi
 if find /proc/*/exe -type l 2>/dev/null | grep -E '/proc/[0-9]+/exe' | xargs -r readlink 2>/dev/null | grep -q 'agsbx/xray' || pgrep -f 'agsbx/xray' >/dev/null 2>&1 ; then
-echo '@reboot sleep 10 && /bin/sh -c "nohup $HOME/agsbx/xray run -c $HOME/agsbx/xr.json > $HOME/agsbx/xray.log 2>&1 &"' >> /tmp/crontab.tmp
+echo '@reboot sleep 10 && /bin/sh -c "nohup $HOME/agsbx/xray run -c $HOME/agsbx/xr.json > $HOME/agsbx/xray.log 2>&1 &"' >> "$cron_tmp"
 fi
 fi
-sed -i '/agsbx\/cloudflared/d' /tmp/crontab.tmp
+sed -i '/agsbx\/cloudflared/d' "$cron_tmp"
 if [ -n "$argo" ] && [ -n "$vmag" ]; then
 if [ -n "${ARGO_DOMAIN}" ] && [ -n "${ARGO_AUTH}" ]; then
 if ! pidof systemd >/dev/null 2>&1 && ! command -v rc-service >/dev/null 2>&1; then
-echo '@reboot sleep 10 && /bin/sh -c "nohup $HOME/agsbx/cloudflared tunnel --no-autoupdate --edge-ip-version auto --protocol http2 run --token $(cat $HOME/agsbx/sbargotoken.log 2>/dev/null) > $HOME/agsbx/argo.log 2>&1 &"' >> /tmp/crontab.tmp
+echo '@reboot sleep 10 && /bin/sh -c "nohup $HOME/agsbx/cloudflared tunnel --no-autoupdate --edge-ip-version auto --protocol http2 run --token $(cat $HOME/agsbx/sbargotoken.log 2>/dev/null) > $HOME/agsbx/argo.log 2>&1 &"' >> "$cron_tmp"
 fi
 else
-echo '@reboot sleep 10 && /bin/sh -c "nohup $HOME/agsbx/cloudflared tunnel --url http://localhost:$(cat $HOME/agsbx/argoport.log) --edge-ip-version auto --no-autoupdate --protocol http2 > $HOME/agsbx/argo.log 2>&1 &"' >> /tmp/crontab.tmp
+echo '@reboot sleep 10 && /bin/sh -c "nohup $HOME/agsbx/cloudflared tunnel --url http://localhost:$(cat $HOME/agsbx/argoport.log) --edge-ip-version auto --no-autoupdate --protocol http2 > $HOME/agsbx/argo.log 2>&1 &"' >> "$cron_tmp"
 fi
 fi
-crontab /tmp/crontab.tmp >/dev/null 2>&1
-rm /tmp/crontab.tmp
+crontab "$cron_tmp" >/dev/null 2>&1
+rm -f "$cron_tmp"
 echo "Airgosbx脚本进程启动成功，安装完毕" && sleep 2
 else
 echo "Airgosbx脚本进程未启动，安装失败" && exit
@@ -2499,22 +2516,22 @@ fi
 # - 关联性: 由第 12 段 (主入口) 在初始化完毕或第 11 段 (upx/ups内核更新/list查看) 时调用，是负责对用户渲染输出的最强表现层。
 #============================================================
 airgosbxstatus(){
-echo "=========当前三大内核运行状态========="
+printf '%s\n' "${C_CYAN}========= 当前三大内核运行状态 =========${C_RESET}"
 procs=$(find /proc/*/exe -type l 2>/dev/null | grep -E '/proc/[0-9]+/exe' | xargs -r readlink 2>/dev/null)
 if echo "$procs" | grep -Eq 'agsbx/sing-box' || pgrep -f 'agsbx/sing-box' >/dev/null 2>&1; then
-echo "Sing-box (版本V$("$HOME/agsbx/sing-box" version 2>/dev/null | awk '/version/{print $NF}'))：运行中"
+printf '%s\n' "Sing-box (版本V$("$HOME/agsbx/sing-box" version 2>/dev/null | awk '/version/{print $NF}'))：${C_GREEN}运行中${C_RESET}"
 else
-echo "Sing-box：未启用"
+printf '%s\n' "Sing-box：${C_RED}未启用${C_RESET}"
 fi
 if echo "$procs" | grep -Eq 'agsbx/xray' || pgrep -f 'agsbx/xray' >/dev/null 2>&1; then
-echo "Xray (版本V$("$HOME/agsbx/xray" version 2>/dev/null | awk '/^Xray/{print $2}'))：运行中"
+printf '%s\n' "Xray (版本V$("$HOME/agsbx/xray" version 2>/dev/null | awk '/^Xray/{print $2}'))：${C_GREEN}运行中${C_RESET}"
 else
-echo "Xray：未启用"
+printf '%s\n' "Xray：${C_RED}未启用${C_RESET}"
 fi
 if echo "$procs" | grep -Eq 'agsbx/cloudflared' || pgrep -f 'agsbx/cloudflared' >/dev/null 2>&1; then
-echo "Argo (版本V$("$HOME/agsbx/cloudflared" version 2>/dev/null | awk '{print $3}'))：运行中"
+printf '%s\n' "Argo (版本V$("$HOME/agsbx/cloudflared" version 2>/dev/null | awk '{print $3}'))：${C_GREEN}运行中${C_RESET}"
 else
-echo "Argo：未启用"
+printf '%s\n' "Argo：${C_RED}未启用${C_RESET}"
 fi
 }
 cip(){
@@ -2591,7 +2608,6 @@ case "$server_ip" in
 esac
 echo
 ym_vl_re=$(cat "$HOME/agsbx/ym_vl_re" 2>/dev/null)
-cfip() { echo $((RANDOM % 13 + 1)); }
 if [ -e "$HOME/agsbx/xray" ]; then
 private_key_x=$(cat "$HOME/agsbx/xrk/private_key" 2>/dev/null)
 public_key_x=$(cat "$HOME/agsbx/xrk/public_key" 2>/dev/null)
@@ -3211,9 +3227,10 @@ get_func() {
     [ -n "$out" ] && printf "%s\n" "$out"
   fi
 }
-clxy="$(get_func clvlpt; get_func clsspt; get_func clvmpt; get_func clvmcdnpt; get_func clxhpt; get_func clxvcdnpt; get_func clvxpt; get_func clvxcdnpt; get_func clvwpt; get_func clvwcdnpt; get_func clhypt; get_func clxhypt; get_func cltupt; get_func clvmargopt; get_func clvlargopt; get_func clxvargopt)"
-clgz="$({ get_func clvlpt1; get_func clsspt1; get_func clvmpt1; get_func clvmcdnpt1; get_func clxhpt1; get_func clxvcdnpt1; get_func clvxpt1; get_func clvxcdnpt1; get_func clvwpt1; get_func clvwcdnpt1; get_func clhypt1; get_func clxhypt1; get_func cltupt1; get_func clvmargopt1; get_func clvlargopt1; get_func clxvargopt1; } | sed '2,$s/^/    /')"
-sbgz="$({ get_func clvlpt1; get_func clsspt1; get_func clvmpt1; get_func clvmcdnpt1; get_func clxhpt1; get_func clxvcdnpt1; get_func clvxpt1; get_func clvxcdnpt1; get_func clvwpt1; get_func clvwcdnpt1; get_func clhypt1; get_func clxhypt1; get_func cltupt1; get_func clvmargopt1; get_func clvlargopt1; get_func clxvargopt1; } | sed '$ s/,$//')"
+# 注：vless-xhttp(vxp) 与 vless-ws(vwp) 为 vlessenc 裸协议，mihomo 暂不支持其 ENC 加密，
+# 因此不导出到 Clash 订阅（此前这里引用的 clvxpt/clvwpt 系列函数从未定义，等同空操作，已移除）。
+clxy="$(get_func clvlpt; get_func clsspt; get_func clvmpt; get_func clvmcdnpt; get_func clxhpt; get_func clxvcdnpt; get_func clhypt; get_func clxhypt; get_func cltupt; get_func clvmargopt; get_func clvlargopt; get_func clxvargopt)"
+clgz="$({ get_func clvlpt1; get_func clsspt1; get_func clvmpt1; get_func clvmcdnpt1; get_func clxhpt1; get_func clxvcdnpt1; get_func clhypt1; get_func clxhypt1; get_func cltupt1; get_func clvmargopt1; get_func clvlargopt1; get_func clxvargopt1; } | sed '2,$s/^/    /')"
 cat > "$HOME/agsbx/clmi.yaml" <<EOF
 port: 7890
 allow-lan: true
@@ -3337,11 +3354,12 @@ EOF
   rc-update add local default >/dev/null 2>&1
 else
   busybox httpd -f -p $subport_real -h "$HOME/websbx" > /dev/null 2>&1 &
-  crontab -l 2>/dev/null > /tmp/crontab.tmp
-  sed -i '/websbx/d' /tmp/crontab.tmp
-  echo "@reboot sleep 10 && /bin/bash -c \"busybox httpd -f -p $subport_real -h $HOME/websbx > /dev/null 2>&1 &\"" >> /tmp/crontab.tmp
-  crontab /tmp/crontab.tmp >/dev/null 2>&1
-  rm /tmp/crontab.tmp
+  cron_tmp=$(mktemp)
+  crontab -l 2>/dev/null > "$cron_tmp"
+  sed -i '/websbx/d' "$cron_tmp"
+  echo "@reboot sleep 10 && /bin/bash -c \"busybox httpd -f -p $subport_real -h $HOME/websbx > /dev/null 2>&1 &\"" >> "$cron_tmp"
+  crontab "$cron_tmp" >/dev/null 2>&1
+  rm -f "$cron_tmp"
 fi
 
 subdomain=$(cat "$HOME/agsbx/cdnym" 2>/dev/null)
@@ -3358,7 +3376,7 @@ echo "$clash_sub_info"
 echo "聚合协议本地订阅地址：${suburl}/jhsub.txt"
 if [ "$(cat "$HOME/agsbx/cert_mode" 2>/dev/null)" = "selfsigned" ]; then
 echo "----------------------------------------------------------"
-echo "⚠️  安全加密提示 (自签证书模式)："
+printf '%s\n' "${C_YELLOW}⚠️  安全加密提示 (自签证书模式)：${C_RESET}"
 echo "   由于您当前未使用域名或 ACME 证书，系统已自动启用本地自签 TLS 强加密。"
 echo "   客户端（Clash/Mihomo/Shadowrocket）拉取订阅时，请务必勾选："
 echo "   -> [ 允许不安全证书 / 跳过证书验证 (skip-cert-verify: true) ]"
@@ -3393,13 +3411,14 @@ sed -i '/agsbx/d' ~/.bashrc
 sed -i '/export PATH="\$HOME\/bin:\$PATH"/d' ~/.bashrc
 sed -i '/export PATH="\$PATH:\$HOME\/bin"/d' ~/.bashrc
 . ~/.bashrc 2>/dev/null
-crontab -l > /tmp/crontab.tmp 2>/dev/null
-sed -i '/agsbx\/sing-box/d' /tmp/crontab.tmp
-sed -i '/agsbx\/xray/d' /tmp/crontab.tmp
-sed -i '/agsbx\/cloudflared/d' /tmp/crontab.tmp
-sed -i '/websbx/d' /tmp/crontab.tmp
-crontab /tmp/crontab.tmp >/dev/null 2>&1
-rm /tmp/crontab.tmp
+cron_tmp=$(mktemp)
+crontab -l > "$cron_tmp" 2>/dev/null
+sed -i '/agsbx\/sing-box/d' "$cron_tmp"
+sed -i '/agsbx\/xray/d' "$cron_tmp"
+sed -i '/agsbx\/cloudflared/d' "$cron_tmp"
+sed -i '/websbx/d' "$cron_tmp"
+crontab "$cron_tmp" >/dev/null 2>&1
+rm -f "$cron_tmp"
 rm -rf  "$HOME/bin/agsbx" "$HOME/websbx"
 if pidof systemd >/dev/null 2>&1; then
 for svc in xr sb argo; do
@@ -3445,7 +3464,9 @@ fi
 #============================================================
 if [ "$1" = "del" ]; then
 cleandel
-rm -rf sbx_update "$HOME/agsbx" "$HOME/agsb"
+# 注：sbx_update 标记文件位于 $HOME/agsbx 内，随该目录一并删除；此前裸写的相对路径 sbx_update
+# 指向当前工作目录，既删不到目标又有误删同名文件的风险，已移除。$HOME/agsb 为旧版本遗留目录，保留以清理历史安装。
+rm -rf "$HOME/agsbx" "$HOME/agsb"
 echo "卸载完成"
 echo "欢迎继续使用Airgosbx一键无交互小钢炮脚本💣" && sleep 2
 echo
@@ -3511,7 +3532,7 @@ fi
 # - 本段为脚本的物理大门。校验系统当前是否已安装 agsbx，如果未安装则校验协议变量合法性后拉起 ins() 安装编排；如果已存在安装，则进入交互式节点状态卡片。
 # - 关联性: 必须置于脚本最尾部，以确保其调用前面所有段落声明的工具函数与安装函数时已由 Shell 完全预加载完毕。
 #============================================================
-if ! find /proc/*/exe -type l 2>/dev/null | grep -E '/proc/[0-9]+/exe' | xargs -r readlink 2>/dev/null | grep -Eq 'agsbx/(sing-box|xray)' && ! pgrep -f 'agsbx/sing-box' >/dev/null 2>&1 && ! pgrep -f 'agsbx/xray' >/dev/null 2>&1; then
+if ! agsbx_running; then
 for P in /proc/[0-9]*; do if [ -L "$P/exe" ]; then TARGET=$(readlink -f "$P/exe" 2>/dev/null); if echo "$TARGET" | grep -qE '/agsbx/cloudflared|/agsbx/sing-box|/agsbx/xray'; then PID=$(basename "$P"); kill "$PID" 2>/dev/null && echo "Killed $PID ($TARGET)" || echo "Could not kill $PID ($TARGET)"; fi; fi; done
 kill -15 $(pgrep -f 'agsbx/sing-box' 2>/dev/null) $(pgrep -f 'agsbx/cloudflared' 2>/dev/null) $(pgrep -f 'agsbx/xray' 2>/dev/null) >/dev/null 2>&1
 
