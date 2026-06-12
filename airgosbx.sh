@@ -50,6 +50,83 @@ section(){
 }
 node_title(){ printf '%s\n' "${C_BOLD}${C_CYAN}$1${C_RESET}"; }
 
+# 变量速查表：按功能分组打印所有可用环境变量，解决"功能多→变量多→记不住/易混淆"的痛点。
+# vg() 打印分组小标题，vrow() 打印对齐的"变量 — 说明"行（变量名为 ASCII，%-11s 列对齐稳定）。
+vg(){ echo; printf '%s\n' "${C_GREEN}${C_BOLD}$1${C_RESET}"; }
+vrow(){ printf "  ${C_YELLOW}%-11s${C_RESET} %s\n" "$1" "$2"; }
+showvars(){
+printf '%s\n' "${C_CYAN}~~~~~~~~~~~~~~~~~~~~ Airgosbx 变量速查表 ~~~~~~~~~~~~~~~~~~~~${C_RESET}"
+printf '%s\n' "${C_BOLD}用法：在脚本前以「变量=值」空格分隔传入，可任意组合${C_RESET}"
+echo "示例：xhpt=2087 warp=s4x4 sub bash <(curl -Ls $agsbxurl)"
+echo "说明：端口类变量留空(如 vlpt)即自动随机分配；带 pt 后缀的为可指定端口版"
+
+vg "① Xray 内核协议（端口留空＝自动分配）"
+vrow "xhpt"     "Vlessenc-xhttp-reality-vision-fm（旗舰·自带ENC加密）"
+vrow "vlpt"     "Vless-tcp-reality-vision-fm（经典抗封锁主力）"
+vrow "vxpt"     "Vlessenc-xhttp-vision（裸ENC，配 cdnym 走CDN）"
+vrow "vwpt"     "Vlessenc-ws-vision（裸ENC，配 cdnym 走CDN）"
+vrow "xhypt"    "Xray-Hysteria2（QUIC，需TLS证书）"
+vrow "xdns"     "Vless-kcp-xdns-fm（备用DNS隧道，需配 xdnsym=域名）"
+vrow "xicmp"    "Vless-kcp-xicmp-fm（特种L3 Ping隧道，独占ICMP）"
+
+vg "② Sing-box 内核协议（端口留空＝自动分配）"
+vrow "shypt"    "Hysteria2（QUIC暴力传输，需TLS证书）"
+vrow "tupt"     "Tuic v5（QUIC，需TLS证书）"
+vrow "anpt"     "AnyTLS（需TLS证书）"
+vrow "arpt"     "Any-Reality（AnyTLS over Reality）"
+vrow "sspt"     "Shadowsocks-2022（blake3-aes-128-gcm）"
+
+vg "③ 通用协议（落在当前激活的内核上）"
+vrow "vmpt"     "Vmess-ws（Xray或Sing-box，可走 Argo/CDN）"
+vrow "sopt"     "Socks5（仅供本地应用内置代理，勿直连）"
+
+vg "④ Cloudflare WARP 出站（解锁/隐藏真实出口IP）"
+vrow "warp"     "出站经WARP，值选：s/x/sx 或 s4x4/s6x6 等"
+echo "             s=sing-box核走WARP  x=xray核走WARP  4/6=锁IPv4/IPv6"
+
+vg "⑤ Cloudflare Argo 隧道（纯出站，VPS无需开放端口）"
+vrow "argo"     "指定哪个协议走隧道：vmpt / vwpt / xvargopt"
+vrow "xvargopt" "Vlessenc-xhttp-tls-vision-fm-argo（旗舰隧道节点）"
+vrow "agn"      "固定隧道域名（留空＝临时trycloudflare隧道）"
+vrow "agk"      "固定隧道 Token（与 agn 配对使用）"
+
+vg "⑥ Cloudflare CDN 回源 / 优选"
+vrow "xvcdnpt"  "Vlessenc-xhttp-tls-vision-fm-cdn（旗舰CDN节点）"
+vrow "cdnym"    "CDN host域名/优选IP域名（须已解析到CF）"
+
+vg "⑦ TLS 证书（留空＝自动自签，100年有效期）"
+vrow "certym"   "申请ACME域名证书的域名（需解析到本机）"
+vrow "certcrt"  "外部导入：证书(fullchain)文件路径"
+vrow "certkey"  "外部导入：私钥文件路径"
+vrow "acmem"    "ACME 注册邮箱（可选）"
+
+vg "⑧ Web 订阅分发（Clash/聚合，强制TLS加密）"
+vrow "subpt"    "订阅服务对外端口（留空自动分配）"
+vrow "subid"    "订阅访问 token（留空＝复用 uuid）"
+
+vg "⑨ Hysteria2 端口跳跃（抗QoS限速）"
+vrow "hyjpt"    "全局跳跃端口，自动分配给激活的hy2核"
+vrow "shyjpt"   "专属：Sing-box Hysteria2 跳跃端口"
+vrow "xhyjpt"   "专属：Xray Hysteria2 跳跃端口"
+
+vg "⑩ 通用 / 全局选项"
+vrow "uuid"     "自定义UUID/密码（留空＝自动生成）"
+vrow "name"     "所有节点名称前缀"
+vrow "reym"     "自定义 Reality 伪装域名（留空＝按地区智能选）"
+vrow "obfs_pass" "Hysteria2 混淆密码（留空＝自动生成）"
+vrow "ippz"     "list时只显示指定栈：4 或 6（双栈VPS用）"
+echo
+hr
+echo "命令类：list 查看节点 ｜ rep 重置 ｜ upx/ups 更新内核 ｜ res 重启 ｜ del 卸载"
+hr
+echo
+}
+
+# 早退分发：vars/help 为纯文本速查，无需 root、无需联网安装，提前响应避免空跑整套启动流程
+case "$1" in
+  vars|help|--help|-h) showvars; exit 0 ;;
+esac
+
 if ! is_root; then
   echo "安全保护：部署 airgosbx 脚本需要 root 系统权限以注册系统服务（systemd/openrc）或执行依赖项更新！请使用 sudo 或以 root 身份运行本脚本。"
   exit 1
@@ -232,7 +309,9 @@ export LANG=en_US.UTF-8
 [ -z "${xicmp+x}" ] || xicp=yes
 [ -z "${xicmppt+x}" ] || xicp=yes
 [ -z "${xvcdnpt+x}" ] || xvcdn=yes
-[ -z "${xvargopt+x}" ] || xvargo=yes
+# vmag 是"存在可走 Argo 隧道的协议"总开关，决定第8段是否拉起 cloudflared。
+# 此前仅 vmpt/vwpt 置位，导致单独设 xvargopt+argo=xvargopt 时隧道被静默跳过；补齐 xvargo。
+[ -z "${xvargopt+x}" ] || { xvargo=yes; vmag=yes; }
 [ -z "${subpt+x}" ] || sub=yes
 [ -z "${subid+x}" ] || sub=yes
 if agsbx_running; then
@@ -300,6 +379,7 @@ showmode(){
 printf '%s\n' "${C_BOLD}常用命令速查：${C_RESET}"
 echo "  · 主脚本：bash <(curl -Ls $agsbxurl)"
 echo "         或 bash <(wget -qO- $agsbxurl)"
+echo "  · 变量速查表：agsbx vars 【或者】 主脚本 vars （记不住变量时随手查）"
 echo "  · 显示节点信息：agsbx list 【或者】 主脚本 list"
 echo "  · 重置变量组：自定义各种协议变量组 agsbx rep 【或者】 自定义各种协议变量组 主脚本 rep"
 echo "  · 更新脚本：原已安装的自定义各种协议变量组 主脚本 rep"
@@ -2051,6 +2131,9 @@ cat >> "$HOME/agsbx/xr.json" <<EOF
      }
     }
 EOF
+# WARP 隧道两端 (xr/sb) 均显式锁定 mtu=1280（官方 WARP 客户端取值）：
+# 内核默认 1420/1408 在 IPv6 外层封装下逼近 1500 上限，途经 PMTUD 黑洞时大包静默丢失，
+# 表现为"能握手、小流量正常、大流量卡死"，内层 IPv6 (s6/x6) 模式受害最深。
 if [ "$wap" = warp ]; then
 cat >> "$HOME/agsbx/xr.json" <<EOF
     ,
@@ -2059,6 +2142,7 @@ cat >> "$HOME/agsbx/xr.json" <<EOF
       "protocol": "wireguard",
       "settings": {
         "secretKey": "${pvk}",
+        "mtu": 1280,
         "address": [
           "172.16.0.2/32",
           "${wpv6}/128"
@@ -2196,6 +2280,7 @@ cat >> "$HOME/agsbx/sb.json" <<EOF
     {
       "type": "wireguard",
       "tag": "warp-out",
+      "mtu": 1280,
       "address": [
         "172.16.0.2/32",
         "${wpv6}/128"
@@ -2340,6 +2425,10 @@ url="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudfla
 chmod +x "$HOME/agsbx/cloudflared"
 fi
 if [ "$argo" = "vmpt" ]; then argoport=$(cat "$HOME/agsbx/port_vm_ws" 2>/dev/null); echo "Vmess" > "$HOME/agsbx/vlvm"; elif [ "$argo" = "vwpt" ]; then argoport=$(cat "$HOME/agsbx/port_vw" 2>/dev/null); echo "Vless" > "$HOME/agsbx/vlvm"; elif [ "$argo" = "xvargopt" ]; then argoport=$(cat "$HOME/agsbx/port_xvargo" 2>/dev/null); echo "Vlessenc-xhttp-tls-vision-fm" > "$HOME/agsbx/vlvm"; fi; echo "$argoport" > "$HOME/agsbx/argoport.log"
+# Argo 隧道本地回源协议自适应：vmess-ws / vless-ws 入站为明文，回源走 http；
+# xvargo (Vlessenc-xhttp-tls) 入站自带 TLS 层，cloudflared 必须以 https 回源并跳过本地证书校验，
+# 否则明文 HTTP 打到 TLS 监听端口，握手直接失败（Argo 为纯出站隧道，与防火墙端口无关）。
+if [ "$argo" = "xvargopt" ]; then argoscheme="https"; argoxtls="--no-tls-verify "; else argoscheme="http"; argoxtls=""; fi
 if [ -n "${ARGO_DOMAIN}" ] && [ -n "${ARGO_AUTH}" ]; then
 argoname='固定'
 if pidof systemd >/dev/null 2>&1 && is_root; then
@@ -2380,9 +2469,10 @@ nohup "$HOME/agsbx/cloudflared" tunnel --no-autoupdate --edge-ip-version auto --
 fi
 echo "${ARGO_DOMAIN}" > "$HOME/agsbx/sbargoym.log"
 echo "${ARGO_AUTH}" > "$HOME/agsbx/sbargotoken.log"
+[ "$argo" = "xvargopt" ] && echo "提示：xvargo 为 TLS 入站，固定隧道请在 CF 仪表盘将服务指向 https://localhost:${argoport} 并开启 noTLSVerify。"
 else
 argoname='临时'
-nohup "$HOME/agsbx/cloudflared" tunnel --url http://localhost:$(cat $HOME/agsbx/argoport.log) --edge-ip-version auto --no-autoupdate --protocol http2 > $HOME/agsbx/argo.log 2>&1 &
+nohup "$HOME/agsbx/cloudflared" tunnel --url ${argoscheme}://localhost:$(cat $HOME/agsbx/argoport.log) ${argoxtls}--edge-ip-version auto --no-autoupdate --protocol http2 > $HOME/agsbx/argo.log 2>&1 &
 fi
 echo "申请Argo$argoname隧道中……请稍等"
 sleep 2
@@ -2438,7 +2528,7 @@ if ! pidof systemd >/dev/null 2>&1 && ! command -v rc-service >/dev/null 2>&1; t
 echo '@reboot sleep 10 && /bin/sh -c "nohup $HOME/agsbx/cloudflared tunnel --no-autoupdate --edge-ip-version auto --protocol http2 run --token $(cat $HOME/agsbx/sbargotoken.log 2>/dev/null) > $HOME/agsbx/argo.log 2>&1 &"' >> "$cron_tmp"
 fi
 else
-echo '@reboot sleep 10 && /bin/sh -c "nohup $HOME/agsbx/cloudflared tunnel --url http://localhost:$(cat $HOME/agsbx/argoport.log) --edge-ip-version auto --no-autoupdate --protocol http2 > $HOME/agsbx/argo.log 2>&1 &"' >> "$cron_tmp"
+echo '@reboot sleep 10 && /bin/sh -c "nohup $HOME/agsbx/cloudflared tunnel --url '"$argoscheme"'://localhost:$(cat $HOME/agsbx/argoport.log) '"$argoxtls"'--edge-ip-version auto --no-autoupdate --protocol http2 > $HOME/agsbx/argo.log 2>&1 &"' >> "$cron_tmp"
 fi
 fi
 crontab "$cron_tmp" >/dev/null 2>&1
@@ -3443,7 +3533,10 @@ if ! pidof systemd >/dev/null 2>&1 && ! command -v rc-service >/dev/null 2>&1; t
 nohup $HOME/agsbx/cloudflared tunnel --no-autoupdate --edge-ip-version auto --protocol http2 run --token $(cat $HOME/agsbx/sbargotoken.log 2>/dev/null) > "$HOME/agsbx/argo.log" 2>&1 &
 fi
 else
-nohup $HOME/agsbx/cloudflared tunnel --url http://localhost:$(cat $HOME/agsbx/argoport.log 2>/dev/null) --edge-ip-version auto --no-autoupdate --protocol http2 > $HOME/agsbx/argo.log 2>&1 &
+# res 为全新一次脚本调用，$argo 变量已不在作用域，从持久化的 vlvm 文件还原回源协议
+argoscheme="http"; argoxtls=""
+[ "$(cat "$HOME/agsbx/vlvm" 2>/dev/null)" = "Vlessenc-xhttp-tls-vision-fm" ] && { argoscheme="https"; argoxtls="--no-tls-verify "; }
+nohup $HOME/agsbx/cloudflared tunnel --url ${argoscheme}://localhost:$(cat $HOME/agsbx/argoport.log 2>/dev/null) ${argoxtls}--edge-ip-version auto --no-autoupdate --protocol http2 > $HOME/agsbx/argo.log 2>&1 &
 fi
 fi
 ;;
@@ -3463,12 +3556,16 @@ if ! agsbx_running; then
 for P in /proc/[0-9]*; do if [ -L "$P/exe" ]; then TARGET=$(readlink -f "$P/exe" 2>/dev/null); if echo "$TARGET" | grep -qE '/agsbx/cloudflared|/agsbx/sing-box|/agsbx/xray'; then PID=$(basename "$P"); kill "$PID" 2>/dev/null && echo "Killed $PID ($TARGET)" || echo "Could not kill $PID ($TARGET)"; fi; fi; done
 kill -15 $(pgrep -f 'agsbx/sing-box' 2>/dev/null) $(pgrep -f 'agsbx/cloudflared' 2>/dev/null) $(pgrep -f 'agsbx/xray' 2>/dev/null) >/dev/null 2>&1
 
-if [ -n "$( (command -v curl >/dev/null 2>&1 && curl -s6m5 "$v46url" 2>/dev/null) || (command -v wget >/dev/null 2>&1 && timeout 3 wget -6 -qO- --tries=2 "$v46url" 2>/dev/null) )" ]; then
-sendip="2606:4700:d0::a29f:c001"
-xendip="[2606:4700:d0::a29f:c001]"
-else
+# WARP 对端 (engage.cloudflareclient.com) 出口协议栈选择：
+# 双栈 VPS 优先走 IPv4 外层封装（外层包头比 IPv6 少 20 字节、UDP 路径质量普遍更稳），
+# 仅在纯 IPv6 VPS（无 IPv4 出站）时才回退 IPv6 对端。
+# 此前无条件优先 IPv6 对端，叠加未设 MTU，是 warp=s6x6 等内层 IPv6 模式"连接不通畅"的主要诱因。
+if [ -n "$( (command -v curl >/dev/null 2>&1 && curl -s4m5 "$v46url" 2>/dev/null) || (command -v wget >/dev/null 2>&1 && timeout 3 wget -4 -qO- --tries=2 "$v46url" 2>/dev/null) )" ]; then
 sendip="162.159.192.1"
 xendip="162.159.192.1"
+else
+sendip="2606:4700:d0::a29f:c001"
+xendip="[2606:4700:d0::a29f:c001]"
 fi
 echo "VPS系统：$op"
 echo "CPU架构：$cpu"
