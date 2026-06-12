@@ -38,6 +38,18 @@ else
   C_RESET=''; C_BOLD=''; C_RED=''; C_GREEN=''; C_YELLOW=''; C_CYAN=''
 fi
 
+# 终端排版助手：统一全脚本的分隔线、区块标题与节点卡片标题样式，
+# 取代此前手敲长短不一的星号/横线/等号分隔串。仅作用于控制台展示输出，
+# 订阅文件 (jh.txt / clmi.yaml) 均为显式重定向写入，不受影响。
+hr(){ printf '%s\n' "${C_CYAN}---------------------------------------------------------${C_RESET}"; }
+hr2(){ printf '%s\n' "${C_CYAN}=========================================================${C_RESET}"; }
+section(){
+  hr2
+  printf '%s\n' "${C_BOLD}$1${C_RESET}"
+  hr2
+}
+node_title(){ printf '%s\n' "${C_BOLD}${C_CYAN}$1${C_RESET}"; }
+
 if ! is_root; then
   echo "安全保护：部署 airgosbx 脚本需要 root 系统权限以注册系统服务（systemd/openrc）或执行依赖项更新！请使用 sudo 或以 root 身份运行本脚本。"
   exit 1
@@ -50,7 +62,12 @@ safe_base64() {
 get_free_port() {
   local allocated_port
   while true; do
-    allocated_port=$(shuf -i 15000-60000 -n 1)
+    if command -v shuf >/dev/null 2>&1; then
+      allocated_port=$(shuf -i 15000-60000 -n 1)
+    else
+      # 极精简系统无 shuf 时回退到 awk 内置随机数
+      allocated_port=$(awk 'BEGIN{srand();print int(rand()*45001)+15000}')
+    fi
     if command -v ss >/dev/null 2>&1; then
       if ! ss -tuln 2>/dev/null | grep -q ":${allocated_port} "; then
         echo "${allocated_port}"
@@ -68,6 +85,32 @@ get_free_port() {
   done
 }
 
+# 端口分配与持久化助手：统一收敛此前在各协议装配段逐字复制十余次的同构逻辑。
+# 规则：用户显式指定值（$1 非空）优先并落盘覆盖；否则复用历史落盘值；首次安装才随机分配。
+# 用法：port_xh=$(init_port "$port_xh" port_xh)
+init_port() {
+  local port_file="$HOME/agsbx/$2"
+  if [ -n "$1" ]; then
+    echo "$1" > "$port_file"
+  elif [ ! -e "$port_file" ]; then
+    get_free_port > "$port_file"
+  fi
+  cat "$port_file"
+}
+
+# 订阅回源端口专用助手：随机分配时需避开与外部订阅端口 ($1) 撞车
+init_subport_real() {
+  local port_file="$HOME/agsbx/subport_real.log" p
+  if [ ! -e "$port_file" ]; then
+    p=$(get_free_port)
+    while [ "$p" -eq "$1" ]; do
+      p=$(get_free_port)
+    done
+    echo "$p" > "$port_file"
+  fi
+  cat "$port_file"
+}
+
 enable_system_bbr() {
   # 自动检测并开启 Linux 系统内核的 TCP BBR 拥塞控制加速
   local current_congestion_control
@@ -82,13 +125,17 @@ enable_system_bbr() {
   # 确保 /etc/sysctl.conf 文件存在，防止 sed 报 can't read 错误
   [ -f /etc/sysctl.conf ] || touch /etc/sysctl.conf
 
+  # 内核未内置 bbr 时先尝试加载模块，再统一做一次可用性判定与写入，避免两段重复逻辑
+  if ! sysctl net.ipv4.tcp_available_congestion_control 2>/dev/null | grep -q "bbr"; then
+    modprobe tcp_bbr >/dev/null 2>&1
+  fi
   if sysctl net.ipv4.tcp_available_congestion_control 2>/dev/null | grep -q "bbr"; then
     sed -i '/net.core.default_qdisc/d' /etc/sysctl.conf
     sed -i '/net.ipv4.tcp_congestion_control/d' /etc/sysctl.conf
     echo "net.core.default_qdisc = fq" >> /etc/sysctl.conf
     echo "net.ipv4.tcp_congestion_control = bbr" >> /etc/sysctl.conf
     sysctl -p >/dev/null 2>&1
-    
+
     # 再次读取系统实时拥塞控制算法以验证是否真正启用成功
     current_congestion_control=$(sysctl net.ipv4.tcp_congestion_control 2>/dev/null | awk '{print $3}')
     if [ "${current_congestion_control}" = "bbr" ]; then
@@ -97,23 +144,7 @@ enable_system_bbr() {
       echo "警告：BBR 配置已写入，但系统实时加载失败，可能处于受限虚拟化环境。😿"
     fi
   else
-    modprobe tcp_bbr >/dev/null 2>&1
-    if sysctl net.ipv4.tcp_available_congestion_control 2>/dev/null | grep -q "bbr"; then
-      sed -i '/net.core.default_qdisc/d' /etc/sysctl.conf
-      sed -i '/net.ipv4.tcp_congestion_control/d' /etc/sysctl.conf
-      echo "net.core.default_qdisc = fq" >> /etc/sysctl.conf
-      echo "net.ipv4.tcp_congestion_control = bbr" >> /etc/sysctl.conf
-      sysctl -p >/dev/null 2>&1
-      
-      current_congestion_control=$(sysctl net.ipv4.tcp_congestion_control 2>/dev/null | awk '{print $3}')
-      if [ "${current_congestion_control}" = "bbr" ]; then
-        echo "TCP BBR 拥塞控制加速已成功开启！🚀"
-      else
-        echo "警告：BBR 配置已写入，但系统实时加载失败，可能处于受限虚拟化环境。😿"
-      fi
-    else
-      echo "警告：当前 VPS 系统内核版本较低，不支持 BBR 模块。建议您升级内核后再开启网络加速。😿"
-    fi
+    echo "警告：当前 VPS 系统内核版本较低，不支持 BBR 模块。建议您升级内核后再开启网络加速。😿"
   fi
 }
 
@@ -266,16 +297,19 @@ fi
 v46url="https://icanhazip.com"
 agsbxurl="https://raw.githubusercontent.com/hugobaum/sbxrago/main/airgosbx.sh"
 showmode(){
-echo "主脚本：bash <(curl -Ls https://raw.githubusercontent.com/hugobaum/sbxrago/main/airgosbx.sh) 或 bash <(wget -qO- https://raw.githubusercontent.com/hugobaum/sbxrago/main/airgosbx.sh)"
-echo "显示节点信息命令：agsbx list 【或者】 主脚本 list"
-echo "重置变量组命令：自定义各种协议变量组 agsbx rep 【或者】 自定义各种协议变量组 主脚本 rep"
-echo "更新脚本命令：原已安装的自定义各种协议变量组 主脚本 rep"
-echo "更新Xray或Singbox内核命令：agsbx upx或ups 【或者】 主脚本 upx或ups"
-echo "重启脚本命令：agsbx res 【或者】 主脚本 res"
-echo "卸载脚本命令：agsbx del 【或者】 主脚本 del"
-echo "双栈VPS显示IPv4/IPv6节点配置命令：ippz=4或6 agsbx list 【或者】 ippz=4或6 主脚本 list"
-echo "域名证书变量：certym=你的域名（空值或不写则使用自签证书）；可选 certcrt=证书路径 certkey=私钥路径 acmem=邮箱"
-echo "---------------------------------------------------------"
+printf '%s\n' "${C_BOLD}常用命令速查：${C_RESET}"
+echo "  · 主脚本：bash <(curl -Ls $agsbxurl)"
+echo "         或 bash <(wget -qO- $agsbxurl)"
+echo "  · 显示节点信息：agsbx list 【或者】 主脚本 list"
+echo "  · 重置变量组：自定义各种协议变量组 agsbx rep 【或者】 自定义各种协议变量组 主脚本 rep"
+echo "  · 更新脚本：原已安装的自定义各种协议变量组 主脚本 rep"
+echo "  · 更新Xray或Singbox内核：agsbx upx或ups 【或者】 主脚本 upx或ups"
+echo "  · 重启脚本：agsbx res 【或者】 主脚本 res"
+echo "  · 卸载脚本：agsbx del 【或者】 主脚本 del"
+echo "  · 双栈VPS显示IPv4/IPv6节点配置：ippz=4或6 agsbx list 【或者】 ippz=4或6 主脚本 list"
+echo "  · 域名证书变量：certym=你的域名（空值或不写则使用自签证书）"
+echo "                可选 certcrt=证书路径 certkey=私钥路径 acmem=邮箱"
+hr
 echo
 }
 #============================================================
@@ -289,11 +323,10 @@ printf '%s\n' "${C_CYAN}~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 printf '%s\n' "${C_BOLD}Airgosbx 一键无交互小钢炮脚本 💣${C_RESET}"
 echo "项目地址：github.com/hugobaum/sbxrago"
 echo "基于 yonggekkk/argosbx, 已加固安全"
-printf '%s\n' "当前版本：${C_GREEN}V26.06.09${C_RESET}"
+printf '%s\n' "当前版本：${C_GREEN}V26.06.11${C_RESET}"
 printf '%s\n' "${C_CYAN}~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~${C_RESET}"
-hostname=$(uname -a | awk '{print $2}')
+hostname=$(uname -n)
 op=$(cat /etc/redhat-release 2>/dev/null || cat /etc/os-release 2>/dev/null | grep -i pretty_name | cut -d \" -f2)
-[ -z "$(systemd-detect-virt 2>/dev/null)" ] && vi=$(virt-what 2>/dev/null) || vi=$(systemd-detect-virt 2>/dev/null)
 case $(uname -m) in
 arm64|aarch64) cpu=arm64;;
 amd64|x86_64) cpu=amd64;;
@@ -320,6 +353,11 @@ fi
 # - 关联性：探测并取得的真实公网 IP `$server_ip` 将作为后续第 9 段（卡片打印）和第 10 段（Web 订阅链接拼接）的数据基础。
 #============================================================
 v4v6(){
+# 结果缓存：同一次运行内 IP 与归属地不会变化，避免重复发起最多 4 次外网探测（每次最长阻塞 5 秒）
+if [ "$v4v6_probed" = yes ]; then
+return
+fi
+v4v6_probed=yes
 v4=$( (command -v curl >/dev/null 2>&1 && curl -s4m5 "$v46url" 2>/dev/null) || (command -v wget >/dev/null 2>&1 && timeout 3 wget -4 --tries=2 -qO- "$v46url" 2>/dev/null) )
 v6=$( (command -v curl >/dev/null 2>&1 && curl -s6m5 "$v46url" 2>/dev/null) || (command -v wget >/dev/null 2>&1 && timeout 3 wget -6 --tries=2 -qO- "$v46url" 2>/dev/null) )
 v4dq=$( (command -v curl >/dev/null 2>&1 && curl -s4m5 https://ip.fm | sed -n 's/.*Location: //p' 2>/dev/null) || (command -v wget >/dev/null 2>&1 && timeout 3 wget -4 --tries=2 -qO- https://ip.fm | grep '<span class="has-text-grey-light">Location:' | tail -n1 | sed -E 's/.*>Location: <\/span>([^<]+)<.*/\1/' 2>/dev/null) )
@@ -411,16 +449,16 @@ pub=""
       fi
       res=$(echo "$c_id" | base64 -d 2>/dev/null | od -v -An -t u1 | head -n1 | awk '{print "["$1", "$2", "$3"]"}')
       if [ -z "$res" ]; then
-        echo "--------------------------------------------------------"
+hr
         echo "[诊断提示] 步骤 3：解析 Cloudflare 返回数据失败！"
         echo "-> 错误详情: 无法从 client_id 解码提取 Reserved 字段（base64 或 od 解码异常）"
         echo "-> 原始 client_id: $c_id"
-        echo "--------------------------------------------------------"
+hr
         wap=warpargo
         pvk="dummy"; pub="dummy"; res="[0, 0, 0]"; wpv6="2606:4700:110::1"
       fi
     else
-      echo "--------------------------------------------------------"
+hr
       echo "[诊断提示] 步骤 2：Cloudflare WARP 官方 API 注册失败！"
       echo "-> 请求接口: https://api.cloudflareclient.com/v0a2158/reg"
       [ -n "$http_code" ] && echo "-> 接口返回 HTTP 状态码: $http_code"
@@ -436,18 +474,18 @@ pub=""
           echo "-> 常见原因: Cloudflare API 拒绝了请求，请检查请求参数是否有效。"
         fi
       fi
-      echo "--------------------------------------------------------"
+hr
       wap=warpargo
       pvk="dummy"; pub="dummy"; res="[0, 0, 0]"; wpv6="2606:4700:110::1"
     fi
     rm -f "$reg_err"
   else
-    echo "--------------------------------------------------------"
+hr
     echo "[诊断提示] 步骤 1：WireGuard 密钥生成失败！"
     echo "-> wg 工具和 openssl 均无法在当前系统下成功生成 WireGuard Curve25519 密钥对。"
     echo "-> 建议: 安装 wireguard-tools (apt install wireguard-tools) 或升级 openssl >= 1.1.0。"
     echo "-> 系统已自动降级为直连出站，以防安装中断。"
-    echo "--------------------------------------------------------"
+hr
     wap=warpargo
     pvk="dummy"; pub="dummy"; res="[0, 0, 0]"; wpv6="2606:4700:110::1"
   fi
@@ -500,6 +538,10 @@ case "$warp" in *x4*) xryx='ForceIPv4' ;; *x*) xryx='ForceIPv6v4' ;; *) xryx='Fo
 elif [ "$v4_ok" != true ] && [ "$v6_ok" = true ]; then
 case "$warp" in *s6*) sbyx='ipv6_only' ;; *) sbyx='prefer_ipv4' ;; esac
 case "$warp" in *x6*) xryx='ForceIPv6' ;; *x*) xryx='ForceIPv4v6' ;; *) xryx='ForceIPv6v4' ;; esac
+else
+# 双栈探测均失败（如临时断网）时兜底默认值，避免向内核配置写入空的 domainStrategy 导致启动失败
+sbyx='prefer_ipv4'
+xryx='ForceIPv4v6'
 fi
 }
 #============================================================
@@ -676,7 +718,7 @@ cert_not_before=$(openssl x509 -noout -startdate -in "$cert_file" 2>/dev/null | 
 cert_not_after=$(openssl x509 -noout -enddate -in "$cert_file" 2>/dev/null | sed 's/^notAfter=//')
 cert_serial=$(openssl x509 -noout -serial -in "$cert_file" 2>/dev/null | sed 's/^serial=//')
 cert_fingerprint=$(openssl x509 -noout -fingerprint -sha256 -in "$cert_file" 2>/dev/null | awk -F= '{print $2}')
-echo "========== TLS 证书信息 =========="
+printf '%s\n' "${C_CYAN}========== TLS 证书信息 ==========${C_RESET}"
 echo "证书结果：$cert_result"
 [ -n "$cert_domain" ] && echo "申请域名：$cert_domain"
 [ -n "$cert_sni" ] && echo "SNI/CN：$cert_sni"
@@ -691,7 +733,7 @@ echo "证书文件：$cert_file"
 echo "私钥文件：$key_file"
 echo "指纹文件：$HOME/agsbx/cert_sha256.txt"
 [ "$cert_mode_now" = "ca" ] && echo "ACME工作目录：$HOME/agsbx/acme"
-echo "=================================="
+printf '%s\n' "${C_CYAN}==================================${C_RESET}"
 }
 setup_selfsigned_certificate(){
 mkdir -p "$HOME/agsbx/openssl"
@@ -804,6 +846,11 @@ record_tls_cert_paths "$acme_cert_file" "$acme_key_file"
 tls_cert_source="ACME 自动申请成功"
 }
 setup_tls_certificate(){
+  # 运行期幂等保护：本函数会被多个 TLS 协议装配段（xhyp/xvcdn/xvargo/sub 等）各自调用，
+  # 证书在同一次运行内只需准备一次，二次调用直接复用，避免反复生成自签证书或触发 ACME 流程。
+  if [ "$tls_cert_ready" = yes ]; then
+    return 0
+  fi
   # 智能安全网关拦截：当前没有任何启用 TLS 的节点，且未启用订阅分发时，直接静默退出，避免无意义的证书生成和定时任务注册
   if [ "$sub" != "yes" ] && [ "$hyp" != "yes" ] && [ "$xhyp" != "yes" ] && [ "$tup" != "yes" ] && [ "$ssp" != "yes" ] && [ "$xvcdn" != "yes" ] && [ "$xvargo" != "yes" ]; then
     return 0
@@ -821,6 +868,7 @@ echo "检测到域名证书变量 certym=$cert_domain，开始准备 ACME/CA 证
 if setup_acme_certificate "$cert_domain" && write_cert_fingerprint; then
 echo "TLS证书模式：CA/ACME 域名证书 ($cert_domain)"
 show_tls_cert_summary "${tls_cert_source:-ACME/CA 证书可用}" "$cert_domain"
+tls_cert_ready=yes
 return 0
 fi
 echo "ACME证书申请失败：$cert_domain"
@@ -833,6 +881,7 @@ fi
 if setup_selfsigned_certificate; then
 echo "TLS证书模式：自签证书 ($(cat "$HOME/agsbx/sni.txt" 2>/dev/null))"
 show_tls_cert_summary "OpenSSL 自签证书可用" "$(cat "$HOME/agsbx/sni.txt" 2>/dev/null)"
+tls_cert_ready=yes
 else
 echo "错误：TLS 证书生成失败，终止安装。"
 exit 1
@@ -923,7 +972,7 @@ restore_xicmp_state(){
 }
 installxray(){
 echo
-echo "=========启用xray内核========="
+printf '%s\n' "${C_CYAN}=========启用xray内核=========${C_RESET}"
 mkdir -p "$HOME/agsbx/xrk"
 if [ ! -e "$HOME/agsbx/xray" ]; then
 upxray
@@ -977,13 +1026,7 @@ fi
 
 if [ -n "$xhp" ]; then
 xhp=xhpt
-if [ -z "$port_xh" ] && [ ! -e "$HOME/agsbx/port_xh" ]; then
-port_xh=$(get_free_port)
-echo "$port_xh" > "$HOME/agsbx/port_xh"
-elif [ -n "$port_xh" ]; then
-echo "$port_xh" > "$HOME/agsbx/port_xh"
-fi
-port_xh=$(cat "$HOME/agsbx/port_xh")
+port_xh=$(init_port "$port_xh" port_xh)
 echo "Vlessenc-xhttp-reality-vision-fm端口：$port_xh"
 cat >> "$HOME/agsbx/xr.json" <<EOF
     {
@@ -1086,13 +1129,7 @@ xhp=xhptargo
 fi
 if [ -n "$vxp" ]; then
 vxp=vxpt
-if [ -z "$port_vx" ] && [ ! -e "$HOME/agsbx/port_vx" ]; then
-port_vx=$(get_free_port)
-echo "$port_vx" > "$HOME/agsbx/port_vx"
-elif [ -n "$port_vx" ]; then
-echo "$port_vx" > "$HOME/agsbx/port_vx"
-fi
-port_vx=$(cat "$HOME/agsbx/port_vx")
+port_vx=$(init_port "$port_vx" port_vx)
 echo "Vlessenc-xhttp-vision端口：$port_vx"
 if [ -n "$cdnym" ]; then
 echo "$cdnym" > "$HOME/agsbx/cdnym"
@@ -1163,13 +1200,7 @@ vxp=vxptargo
 fi
 if [ -n "$vwp" ]; then
 vwp=vwpt
-if [ -z "$port_vw" ] && [ ! -e "$HOME/agsbx/port_vw" ]; then
-port_vw=$(get_free_port)
-echo "$port_vw" > "$HOME/agsbx/port_vw"
-elif [ -n "$port_vw" ]; then
-echo "$port_vw" > "$HOME/agsbx/port_vw"
-fi
-port_vw=$(cat "$HOME/agsbx/port_vw")
+port_vw=$(init_port "$port_vw" port_vw)
 echo "Vlessenc-ws-vision端口：$port_vw"
 if [ -n "$cdnym" ]; then
 echo "$cdnym" > "$HOME/agsbx/cdnym"
@@ -1208,13 +1239,7 @@ vwp=vwptargo
 fi
 if [ -n "$vlp" ]; then
 vlp=vlpt
-if [ -z "$port_vl_re" ] && [ ! -e "$HOME/agsbx/port_vl_re" ]; then
-port_vl_re=$(get_free_port)
-echo "$port_vl_re" > "$HOME/agsbx/port_vl_re"
-elif [ -n "$port_vl_re" ]; then
-echo "$port_vl_re" > "$HOME/agsbx/port_vl_re"
-fi
-port_vl_re=$(cat "$HOME/agsbx/port_vl_re")
+port_vl_re=$(init_port "$port_vl_re" port_vl_re)
 echo "Vless-tcp-reality-vision-fm端口：$port_vl_re"
 cat >> "$HOME/agsbx/xr.json" <<EOF
         {
@@ -1277,13 +1302,7 @@ fi
 if [ -n "$xhyp" ]; then
 xhyp=xhypt
 setup_tls_certificate
-if [ -z "$port_xhy2" ] && [ ! -e "$HOME/agsbx/port_xhy2" ]; then
-port_xhy2=$(get_free_port)
-echo "$port_xhy2" > "$HOME/agsbx/port_xhy2"
-elif [ -n "$port_xhy2" ]; then
-echo "$port_xhy2" > "$HOME/agsbx/port_xhy2"
-fi
-port_xhy2=$(cat "$HOME/agsbx/port_xhy2")
+port_xhy2=$(init_port "$port_xhy2" port_xhy2)
 echo "Xray-Hysteria2端口：$port_xhy2"
 if [ -n "$xhyjpt" ]; then
 cat >> "$HOME/agsbx/xr.json" <<EOF
@@ -1460,13 +1479,7 @@ EOF
 fi
 if [ "$xvcdn" = yes ]; then
 setup_tls_certificate
-if [ -z "$port_xvcdn" ] && [ ! -e "$HOME/agsbx/port_xvcdn" ]; then
-port_xvcdn=$(get_free_port)
-echo "$port_xvcdn" > "$HOME/agsbx/port_xvcdn"
-elif [ -n "$port_xvcdn" ]; then
-echo "$port_xvcdn" > "$HOME/agsbx/port_xvcdn"
-fi
-port_xvcdn=$(cat "$HOME/agsbx/port_xvcdn")
+port_xvcdn=$(init_port "$port_xvcdn" port_xvcdn)
 echo "Vlessenc-xhttp-tls-vision-fm-cdn端口：$port_xvcdn"
 cat >> "$HOME/agsbx/xr.json" <<EOF
     {
@@ -1562,13 +1575,7 @@ EOF
 fi
 if [ "$xvargo" = yes ]; then
 setup_tls_certificate
-if [ -z "$port_xvargo" ] && [ ! -e "$HOME/agsbx/port_xvargo" ]; then
-port_xvargo=$(get_free_port)
-echo "$port_xvargo" > "$HOME/agsbx/port_xvargo"
-elif [ -n "$port_xvargo" ]; then
-echo "$port_xvargo" > "$HOME/agsbx/port_xvargo"
-fi
-port_xvargo=$(cat "$HOME/agsbx/port_xvargo")
+port_xvargo=$(init_port "$port_xvargo" port_xvargo)
 echo "Vlessenc-xhttp-tls-vision-fm-argo端口：$port_xvargo"
 cat >> "$HOME/agsbx/xr.json" <<EOF
     {
@@ -1673,21 +1680,8 @@ fi
 if [ "$sub" = yes ]; then
 setup_tls_certificate
 if [ -f "$tls_cert_file" ] && [ -f "$tls_key_file" ]; then
-if [ -z "$subpt" ] && [ ! -e "$HOME/agsbx/subport.log" ]; then
-subport=$(get_free_port)
-echo "$subport" > "$HOME/agsbx/subport.log"
-elif [ -n "$subpt" ]; then
-echo "$subpt" > "$HOME/agsbx/subport.log"
-fi
-subport=$(cat "$HOME/agsbx/subport.log")
-if [ ! -e "$HOME/agsbx/subport_real.log" ]; then
-subport_real=$(get_free_port)
-while [ "$subport_real" -eq "$subport" ]; do
-subport_real=$(get_free_port)
-done
-echo "$subport_real" > "$HOME/agsbx/subport_real.log"
-fi
-subport_real=$(cat "$HOME/agsbx/subport_real.log")
+subport=$(init_port "$subpt" subport.log)
+subport_real=$(init_subport_real "$subport")
 echo "Xray-core TLS 卸载订阅服务端口：$subport (内部回源端口：$subport_real)"
 cat >> "$HOME/agsbx/xr.json" <<EOF
     {
@@ -1724,7 +1718,7 @@ fi
 
 installsb(){
 echo
-echo "=========启用sing-box内核========="
+printf '%s\n' "${C_CYAN}=========启用sing-box内核=========${C_RESET}"
 if [ ! -e "$HOME/agsbx/sing-box" ]; then
 upsingbox
 else
@@ -1759,13 +1753,7 @@ setup_tls_certificate
 if [ -n "$hyp" ]; then
 hyp=hypt
 insobfspass
-if [ -z "$port_hy2" ] && [ ! -e "$HOME/agsbx/port_hy2" ]; then
-port_hy2=$(get_free_port)
-echo "$port_hy2" > "$HOME/agsbx/port_hy2"
-elif [ -n "$port_hy2" ]; then
-echo "$port_hy2" > "$HOME/agsbx/port_hy2"
-fi
-port_hy2=$(cat "$HOME/agsbx/port_hy2")
+port_hy2=$(init_port "$port_hy2" port_hy2)
 echo "Hysteria2端口：$port_hy2"
 cat >> "$HOME/agsbx/sb.json" <<EOF
     {
@@ -1798,13 +1786,7 @@ hyp=hyptargo
 fi
 if [ -n "$tup" ]; then
 tup=tupt
-if [ -z "$port_tu" ] && [ ! -e "$HOME/agsbx/port_tu" ]; then
-port_tu=$(get_free_port)
-echo "$port_tu" > "$HOME/agsbx/port_tu"
-elif [ -n "$port_tu" ]; then
-echo "$port_tu" > "$HOME/agsbx/port_tu"
-fi
-port_tu=$(cat "$HOME/agsbx/port_tu")
+port_tu=$(init_port "$port_tu" port_tu)
 echo "Tuic端口：$port_tu"
 cat >> "$HOME/agsbx/sb.json" <<EOF
         {
@@ -1834,13 +1816,7 @@ tup=tuptargo
 fi
 if [ -n "$anp" ]; then
 anp=anpt
-if [ -z "$port_an" ] && [ ! -e "$HOME/agsbx/port_an" ]; then
-port_an=$(get_free_port)
-echo "$port_an" > "$HOME/agsbx/port_an"
-elif [ -n "$port_an" ]; then
-echo "$port_an" > "$HOME/agsbx/port_an"
-fi
-port_an=$(cat "$HOME/agsbx/port_an")
+port_an=$(init_port "$port_an" port_an)
 echo "Anytls端口：$port_an"
 cat >> "$HOME/agsbx/sb.json" <<EOF
         {
@@ -1884,13 +1860,7 @@ fi
 private_key_s=$(cat "$HOME/agsbx/sbk/private_key")
 public_key_s=$(cat "$HOME/agsbx/sbk/public_key")
 short_id_s=$(cat "$HOME/agsbx/sbk/short_id")
-if [ -z "$port_ar" ] && [ ! -e "$HOME/agsbx/port_ar" ]; then
-port_ar=$(get_free_port)
-echo "$port_ar" > "$HOME/agsbx/port_ar"
-elif [ -n "$port_ar" ]; then
-echo "$port_ar" > "$HOME/agsbx/port_ar"
-fi
-port_ar=$(cat "$HOME/agsbx/port_ar")
+port_ar=$(init_port "$port_ar" port_ar)
 echo "Any-Reality端口：$port_ar"
 cat >> "$HOME/agsbx/sb.json" <<EOF
         {
@@ -1928,14 +1898,8 @@ if [ ! -e "$HOME/agsbx/sskey" ]; then
 sskey=$("$HOME/agsbx/sing-box" generate rand 16 --base64)
 echo "$sskey" > "$HOME/agsbx/sskey"
 fi
-if [ -z "$port_ss" ] && [ ! -e "$HOME/agsbx/port_ss" ]; then
-port_ss=$(get_free_port)
-echo "$port_ss" > "$HOME/agsbx/port_ss"
-elif [ -n "$port_ss" ]; then
-echo "$port_ss" > "$HOME/agsbx/port_ss"
-fi
+port_ss=$(init_port "$port_ss" port_ss)
 sskey=$(cat "$HOME/agsbx/sskey")
-port_ss=$(cat "$HOME/agsbx/port_ss")
 echo "Shadowsocks-2022端口：$port_ss"
 cat >> "$HOME/agsbx/sb.json" <<EOF
         {
@@ -1962,13 +1926,7 @@ fi
 xrsbvm(){
 if [ -n "$vmp" ]; then
 vmp=vmpt
-if [ -z "$port_vm_ws" ] && [ ! -e "$HOME/agsbx/port_vm_ws" ]; then
-port_vm_ws=$(get_free_port)
-echo "$port_vm_ws" > "$HOME/agsbx/port_vm_ws"
-elif [ -n "$port_vm_ws" ]; then
-echo "$port_vm_ws" > "$HOME/agsbx/port_vm_ws"
-fi
-port_vm_ws=$(cat "$HOME/agsbx/port_vm_ws")
+port_vm_ws=$(init_port "$port_vm_ws" port_vm_ws)
 echo "Vmess-ws端口：$port_vm_ws"
 if [ -n "$cdnym" ]; then
 echo "$cdnym" > "$HOME/agsbx/cdnym"
@@ -2032,13 +1990,7 @@ fi
 xrsbso(){
 if [ -n "$sop" ]; then
 sop=sopt
-if [ -z "$port_so" ] && [ ! -e "$HOME/agsbx/port_so" ]; then
-port_so=$(get_free_port)
-echo "$port_so" > "$HOME/agsbx/port_so"
-elif [ -n "$port_so" ]; then
-echo "$port_so" > "$HOME/agsbx/port_so"
-fi
-port_so=$(cat "$HOME/agsbx/port_so")
+port_so=$(init_port "$port_so" port_so)
 echo "Socks5端口：$port_so"
 if [ -e "$HOME/agsbx/xr.json" ]; then
 cat >> "$HOME/agsbx/xr.json" <<EOF
@@ -2206,21 +2158,8 @@ if [ -e "$HOME/agsbx/sb.json" ]; then
 if [ "$sub" = yes ] && [ ! -f "$HOME/agsbx/xray" ]; then
 setup_tls_certificate
 if [ -f "$tls_cert_file" ] && [ -f "$tls_key_file" ]; then
-if [ -z "$subpt" ] && [ ! -e "$HOME/agsbx/subport.log" ]; then
-subport=$(get_free_port)
-echo "$subport" > "$HOME/agsbx/subport.log"
-elif [ -n "$subpt" ]; then
-echo "$subpt" > "$HOME/agsbx/subport.log"
-fi
-subport=$(cat "$HOME/agsbx/subport.log")
-if [ ! -e "$HOME/agsbx/subport_real.log" ]; then
-subport_real=$(get_free_port)
-while [ "$subport_real" -eq "$subport" ]; do
-subport_real=$(get_free_port)
-done
-echo "$subport_real" > "$HOME/agsbx/subport_real.log"
-fi
-subport_real=$(cat "$HOME/agsbx/subport_real.log")
+subport=$(init_port "$subpt" subport.log)
+subport_real=$(init_subport_real "$subport")
 echo "Sing-box TLS 卸载订阅服务端口：$subport (内部回源端口：$subport_real)"
 cat >> "$HOME/agsbx/sb.json" <<EOF
   ,
@@ -2392,11 +2331,12 @@ fi
 
 if [ -n "$argo" ] && [ -n "$vmag" ]; then
 echo
-echo "=========启用Cloudflared-argo内核========="
+printf '%s\n' "${C_CYAN}=========启用Cloudflared-argo内核=========${C_RESET}"
 if [ ! -e "$HOME/agsbx/cloudflared" ]; then
 argocore=$({ command -v curl >/dev/null 2>&1 && curl -Ls https://data.jsdelivr.com/v1/package/gh/cloudflare/cloudflared || wget -qO- https://data.jsdelivr.com/v1/package/gh/cloudflare/cloudflared; } | grep -Eo '"[0-9.]+"' | sed -n 1p | tr -d '",')
 echo "下载Cloudflared-argo最新正式版内核：$argocore"
-url="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-$cpu"; out="$HOME/agsbx/cloudflared"; (command -v curl>/dev/null 2>&1 && curl -Lo "$out" -# --retry 2 "$url") || (command -v wget>/dev/null 2>&1 && timeout 3 wget -O "$out" --tries=2 "$url")
+# 注意：此处下载的是数十 MB 的二进制文件，不可像 IP 探测那样套用 timeout 3，否则 wget 必然被中途掐断
+url="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-$cpu"; out="$HOME/agsbx/cloudflared"; (command -v curl >/dev/null 2>&1 && curl -Lo "$out" -# --retry 2 "$url") || (command -v wget >/dev/null 2>&1 && wget -O "$out" --tries=2 "$url")
 chmod +x "$HOME/agsbx/cloudflared"
 fi
 if [ "$argo" = "vmpt" ]; then argoport=$(cat "$HOME/agsbx/port_vm_ws" 2>/dev/null); echo "Vmess" > "$HOME/agsbx/vlvm"; elif [ "$argo" = "vwpt" ]; then argoport=$(cat "$HOME/agsbx/port_vw" 2>/dev/null); echo "Vless" > "$HOME/agsbx/vlvm"; elif [ "$argo" = "xvargopt" ]; then argoport=$(cat "$HOME/agsbx/port_xvargo" 2>/dev/null); echo "Vlessenc-xhttp-tls-vision-fm" > "$HOME/agsbx/vlvm"; fi; echo "$argoport" > "$HOME/agsbx/argoport.log"
@@ -2536,14 +2476,15 @@ fi
 }
 cip(){
 ipbest(){
-serip=$( (command -v curl >/dev/null 2>&1 && (curl -s4m5 "$v46url" 2>/dev/null || curl -s6m5 "$v46url" 2>/dev/null) ) || (command -v wget >/dev/null 2>&1 && (timeout 3 wget -4 -qO- --tries=2 "$v46url" 2>/dev/null || timeout 3 wget -6 -qO- --tries=2 "$v46url" 2>/dev/null) ) )
+# 优先复用 v4v6() 已探测到的地址，两者皆空时才重新发起外网探测
+serip="${v4:-$v6}"
+[ -z "$serip" ] && serip=$( (command -v curl >/dev/null 2>&1 && (curl -s4m5 "$v46url" 2>/dev/null || curl -s6m5 "$v46url" 2>/dev/null) ) || (command -v wget >/dev/null 2>&1 && (timeout 3 wget -4 -qO- --tries=2 "$v46url" 2>/dev/null || timeout 3 wget -6 -qO- --tries=2 "$v46url" 2>/dev/null) ) )
 if echo "$serip" | grep -q ':'; then
 server_ip="[$serip]"
-echo "$server_ip" > "$HOME/agsbx/server_ip.log"
 else
 server_ip="$serip"
-echo "$server_ip" > "$HOME/agsbx/server_ip.log"
 fi
+echo "$server_ip" > "$HOME/agsbx/server_ip.log"
 }
 ipchange(){
 v4v6
@@ -2569,7 +2510,7 @@ fi
 echo
 airgosbxstatus
 echo
-echo "=========当前服务器本地IP情况========="
+printf '%s\n' "${C_CYAN}=========当前服务器本地IP情况=========${C_RESET}"
 echo "本地IPV4地址：$vps_ipv4 $w4"
 echo "本地IPV6地址：$vps_ipv6 $w6"
 echo "服务器地区：$location"
@@ -2599,9 +2540,7 @@ uuid=$(cat "$HOME/agsbx/uuid")
 server_ip=$(cat "$HOME/agsbx/server_ip.log")
 sxname=$(cat "$HOME/agsbx/name" 2>/dev/null)
 xvvmcdnym=$(cat "$HOME/agsbx/cdnym" 2>/dev/null)
-echo "*********************************************************"
-echo "*********************************************************"
-echo "Airgosbx脚本输出节点配置如下："
+section "Airgosbx 脚本输出节点配置如下"
 echo
 case "$server_ip" in
 104.28*|\[2a09*) echo "检测到有WARP的IP作为客户端地址 (104.28或者2a09开头的IP)，请把客户端地址上的WARP的IP手动更换为VPS本地IPV4或者IPV6地址" && sleep 3 ;;
@@ -2629,8 +2568,8 @@ fm_tcp_encoded=$(printf '%s' "$fm_tcp_config" | sed 's/{/%7B/g;s/}/%7D/g;s/"/%22
 # 构建 XHTTP 专属 Finalmask JSON 并 URL 编码（TCP 用 sudoku，UDP 使用 noise）
 fm_xh_config="{\"tcp\":[{\"type\":\"sudoku\",\"settings\":{\"password\":\"$uuid\",\"paddingMin\":16,\"paddingMax\":64}}],\"udp\":[{\"type\":\"noise\",\"settings\":{\"reset\":\"30-60\",\"noise\":[{\"rand\":\"32-128\",\"randRange\":\"0-255\",\"delay\":\"10-20\"}]}}]}"
 fm_xh_encoded=$(printf '%s' "$fm_xh_config" | sed 's/{/%7B/g;s/}/%7D/g;s/"/%22/g;s/:/%3A/g;s/,/%2C/g;s/ //g;s/\[/%5B/g;s/\]/%5D/g')
-if grep xhttp-reality "$HOME/agsbx/xr.json" >/dev/null 2>&1; then
-echo "💣【 Vlessenc-xhttp-reality-vision-fm 】支持ENC加密，节点信息如下："
+if grep -q xhttp-reality "$HOME/agsbx/xr.json" 2>/dev/null; then
+node_title "💣【 Vlessenc-xhttp-reality-vision-fm 】支持ENC加密，节点信息如下："
 port_xh=$(cat "$HOME/agsbx/port_xh")
 vl_xh_link="vless://$uuid@$server_ip:$port_xh?encryption=$enkey&flow=xtls-rprx-vision&security=reality&sni=$ym_vl_re&fp=chrome&pbk=$public_key_x&sid=$short_id_x&type=xhttp&path=/$uuid-xh&mode=auto&extra=$xh_extra_encoded&fm=$fm_xh_encoded#${sxname}vlessenc-xhttp-reality-vision-fm-$hostname"
 echo "$vl_xh_link" >> "$HOME/agsbx/jh.txt"
@@ -2662,8 +2601,8 @@ echo "- ${sxname}vlessenc-xhttp-reality-vision-fm-$hostname"
 }
 fi
 fi
-if grep vlessenc-xhttp-cdn "$HOME/agsbx/xr.json" >/dev/null 2>&1; then
-echo "💣【 Vlessenc-xhttp-tls-vision-fm-cdn 】支持ENC/FM双端混淆与回源TLS加密，节点信息如下："
+if grep -q vlessenc-xhttp-cdn "$HOME/agsbx/xr.json" 2>/dev/null; then
+node_title "💣【 Vlessenc-xhttp-tls-vision-fm-cdn 】支持ENC/FM双端混淆与回源TLS加密，节点信息如下："
 port_xvcdn=$(cat "$HOME/agsbx/port_xvcdn")
 xvvmcdnym=$(cat "$HOME/agsbx/cdnym" 2>/dev/null)
 if [ -z "$xvvmcdnym" ]; then
@@ -2698,15 +2637,15 @@ echo "- ${sxname}vlessenc-xhttp-tls-vision-fm-cdn-$hostname"
 }
 fi
 fi
-if grep vless-xhttp "$HOME/agsbx/xr.json" >/dev/null 2>&1; then
-echo "💣【 Vlessenc-xhttp-vision 】支持ENC加密，节点信息如下："
+if grep -q vless-xhttp "$HOME/agsbx/xr.json" 2>/dev/null; then
+node_title "💣【 Vlessenc-xhttp-vision 】支持ENC加密，节点信息如下："
 port_vx=$(cat "$HOME/agsbx/port_vx")
 vl_vx_link="vless://$uuid@$server_ip:$port_vx?encryption=$enkey&flow=xtls-rprx-vision&type=xhttp&path=$uuid-vx&mode=auto&extra=$xh_extra_encoded#${sxname}vlessenc-xhttp-vision-$hostname"
 echo "$vl_vx_link" >> "$HOME/agsbx/jh.txt"
 echo "$vl_vx_link"
 echo
 if [ -f "$HOME/agsbx/cdnym" ]; then
-echo "💣【 Vlessenc-xhttp-vision-cdn 】支持ENC加密，节点信息如下："
+node_title "💣【 Vlessenc-xhttp-vision-cdn 】支持ENC加密，节点信息如下："
 echo "注：默认地址 icook.hk 可自行更换优选IP域名，如是回源端口需手动修改443或者80系端口"
 vl_vx_cdn_link="vless://$uuid@icook.hk:$port_vx?encryption=$enkey&flow=xtls-rprx-vision&type=xhttp&host=$xvvmcdnym&path=$uuid-vx&mode=auto&extra=$xh_extra_encoded#${sxname}vlessenc-xhttp-vision-cdn-$hostname"
 echo "$vl_vx_cdn_link" >> "$HOME/agsbx/jh.txt"
@@ -2714,15 +2653,15 @@ echo "$vl_vx_cdn_link"
 echo
 fi
 fi
-if grep vless-ws "$HOME/agsbx/xr.json" >/dev/null 2>&1; then
-echo "💣【 Vlessenc-ws-vision 】支持ENC加密，节点信息如下："
+if grep -q vless-ws "$HOME/agsbx/xr.json" 2>/dev/null; then
+node_title "💣【 Vlessenc-ws-vision 】支持ENC加密，节点信息如下："
 port_vw=$(cat "$HOME/agsbx/port_vw")
 vl_vw_link="vless://$uuid@$server_ip:$port_vw?encryption=$enkey&flow=xtls-rprx-vision&type=ws&path=$uuid-vw#${sxname}vlessenc-ws-vision-$hostname"
 echo "$vl_vw_link" >> "$HOME/agsbx/jh.txt"
 echo "$vl_vw_link"
 echo
 if [ -f "$HOME/agsbx/cdnym" ]; then
-echo "💣【 Vlessenc-ws-vision-cdn 】支持ENC加密，节点信息如下："
+node_title "💣【 Vlessenc-ws-vision-cdn 】支持ENC加密，节点信息如下："
 echo "注：默认地址 icook.hk 可自行更换优选IP域名，如是回源端口需手动修改443或者80系端口"
 vl_vw_cdn_link="vless://$uuid@icook.hk:$port_vw?encryption=$enkey&flow=xtls-rprx-vision&type=ws&host=$xvvmcdnym&path=$uuid-vw#${sxname}vlessenc-ws-vision-cdn-$hostname"
 echo "$vl_vw_cdn_link" >> "$HOME/agsbx/jh.txt"
@@ -2730,8 +2669,8 @@ echo "$vl_vw_cdn_link"
 echo
 fi
 fi
-if grep reality-vision "$HOME/agsbx/xr.json" >/dev/null 2>&1; then
-echo "💣【 Vless-tcp-reality-vision-fm 】节点信息如下："
+if grep -q reality-vision "$HOME/agsbx/xr.json" 2>/dev/null; then
+node_title "💣【 Vless-tcp-reality-vision-fm 】节点信息如下："
 port_vl_re=$(cat "$HOME/agsbx/port_vl_re")
 vl_link="vless://$uuid@$server_ip:$port_vl_re?encryption=none&flow=xtls-rprx-vision&security=reality&sni=$ym_vl_re&fp=chrome&pbk=$public_key_x&sid=$short_id_x&type=tcp&headerType=none&fm=$fm_tcp_encoded#${sxname}vl-reality-vision-fm-$hostname"
 echo "$vl_link" >> "$HOME/agsbx/jh.txt"
@@ -2761,8 +2700,8 @@ echo "- ${sxname}vl-reality-vision-fm-$hostname"
 }
 fi
 fi
-if grep vless-kcp-xdns "$HOME/agsbx/xr.json" >/dev/null 2>&1; then
-echo "💣【 Vless-kcp-xdns-fm 】备用DNS隧道，节点信息如下："
+if grep -q vless-kcp-xdns "$HOME/agsbx/xr.json" 2>/dev/null; then
+node_title "💣【 Vless-kcp-xdns-fm 】备用DNS隧道，节点信息如下："
 port_xdns=$(cat "$HOME/agsbx/port_xdns")
 xdns_fm="{\"udp\":[{\"type\":\"xdns\",\"settings\":{\"domains\":[\"$xdnsym\"]}}]}"
 xdns_fm_encoded=$(printf '%s' "$xdns_fm" | sed 's/{/%7B/g;s/}/%7D/g;s/"/%22/g;s/:/%3A/g;s/,/%2C/g;s/ //g;s/\[/%5B/g;s/\]/%5D/g')
@@ -2771,8 +2710,8 @@ echo "$vl_xdns_link" >> "$HOME/agsbx/jh.txt"
 echo "$vl_xdns_link"
 echo
 fi
-if grep vless-kcp-xicmp "$HOME/agsbx/xr.json" >/dev/null 2>&1; then
-echo "💣【 Vless-kcp-xicmp-fm 】特种L3 Ping隧道，节点信息如下："
+if grep -q vless-kcp-xicmp "$HOME/agsbx/xr.json" 2>/dev/null; then
+node_title "💣【 Vless-kcp-xicmp-fm 】特种L3 Ping隧道，节点信息如下："
 xicmp_fm="{\"udp\":[{\"type\":\"xicmp\",\"settings\":{\"listenIp\":\"0.0.0.0\",\"id\":0}}]}"
 xicmp_fm_encoded=$(printf '%s' "$xicmp_fm" | sed 's/{/%7B/g;s/}/%7D/g;s/"/%22/g;s/:/%3A/g;s/,/%2C/g;s/ //g;s/\[/%5B/g;s/\]/%5D/g')
 vl_xicmp_link="vless://$uuid@$server_ip:0?encryption=none&flow=&type=kcp&headerType=none&fm=$xicmp_fm_encoded#${sxname}vless-kcp-xicmp-fm-$hostname"
@@ -2780,8 +2719,8 @@ echo "$vl_xicmp_link" >> "$HOME/agsbx/jh.txt"
 echo "$vl_xicmp_link"
 echo
 fi
-if grep ss-2022 "$HOME/agsbx/sb.json" >/dev/null 2>&1; then
-echo "💣【 Shadowsocks-2022 】节点信息如下："
+if grep -q ss-2022 "$HOME/agsbx/sb.json" 2>/dev/null; then
+node_title "💣【 Shadowsocks-2022 】节点信息如下："
 port_ss=$(cat "$HOME/agsbx/port_ss")
 ss_link="ss://$(echo -n "2022-blake3-aes-128-gcm:$sskey@$server_ip:$port_ss" | safe_base64)#${sxname}Shadowsocks-2022-$hostname"
 echo "$ss_link" >> "$HOME/agsbx/jh.txt"
@@ -2806,8 +2745,8 @@ echo "- ${sxname}Shadowsocks-2022-$hostname"
 }
 fi
 fi
-if grep vmess-xr "$HOME/agsbx/xr.json" >/dev/null 2>&1 || grep vmess-sb "$HOME/agsbx/sb.json" >/dev/null 2>&1; then
-echo "💣【 Vmess-ws 】节点信息如下："
+if grep -q vmess-xr "$HOME/agsbx/xr.json" 2>/dev/null || grep -q vmess-sb "$HOME/agsbx/sb.json" 2>/dev/null; then
+node_title "💣【 Vmess-ws 】节点信息如下："
 port_vm_ws=$(cat "$HOME/agsbx/port_vm_ws")
 vm_link="vmess://$(echo "{ \"v\": \"2\", \"ps\": \"${sxname}vm-ws-$hostname\", \"add\": \"$server_ip\", \"port\": \"$port_vm_ws\", \"id\": \"$uuid\", \"aid\": \"0\", \"scy\": \"auto\", \"net\": \"ws\", \"type\": \"none\", \"host\": \"www.bing.com\", \"path\": \"/$uuid-vm\", \"tls\": \"\"}" | safe_base64)"
 echo "$vm_link" >> "$HOME/agsbx/jh.txt"
@@ -2838,7 +2777,7 @@ echo "- ${sxname}vmess-ws-$hostname"
 }
 fi
 if [ -f "$HOME/agsbx/cdnym" ]; then
-echo "💣【 Vmess-ws-cdn 】节点信息如下："
+node_title "💣【 Vmess-ws-cdn 】节点信息如下："
 echo "注：默认地址 icook.hk 可自行更换优选IP域名，如是回源端口需手动修改443或者80系端口"
 vm_cdn_link="vmess://$(echo "{ \"v\": \"2\", \"ps\": \"${sxname}vm-ws-cdn-$hostname\", \"add\": \"icook.hk\", \"port\": \"$port_vm_ws\", \"id\": \"$uuid\", \"aid\": \"0\", \"scy\": \"auto\", \"net\": \"ws\", \"type\": \"none\", \"host\": \"$xvvmcdnym\", \"path\": \"/$uuid-vm\", \"tls\": \"\"}" | safe_base64)"
 echo "$vm_cdn_link" >> "$HOME/agsbx/jh.txt"
@@ -2870,8 +2809,8 @@ echo "- ${sxname}vmess-ws-cdn-$hostname"
 fi
 fi
 fi
-if grep anytls-sb "$HOME/agsbx/sb.json" >/dev/null 2>&1; then
-echo "💣【 AnyTLS 】节点信息如下："
+if grep -q anytls-sb "$HOME/agsbx/sb.json" 2>/dev/null; then
+node_title "💣【 AnyTLS 】节点信息如下："
 port_an=$(cat "$HOME/agsbx/port_an")
 ran_sni=$(cat "$HOME/agsbx/sni.txt" 2>/dev/null)
 cert_mode=$(cat "$HOME/agsbx/cert_mode" 2>/dev/null)
@@ -2884,16 +2823,16 @@ echo "$an_link" >> "$HOME/agsbx/jh.txt"
 echo "$an_link"
 echo
 fi
-if grep anyreality-sb "$HOME/agsbx/sb.json" >/dev/null 2>&1; then
-echo "💣【 Any-Reality 】节点信息如下："
+if grep -q anyreality-sb "$HOME/agsbx/sb.json" 2>/dev/null; then
+node_title "💣【 Any-Reality 】节点信息如下："
 port_ar=$(cat "$HOME/agsbx/port_ar")
 ar_link="anytls://$uuid@$server_ip:$port_ar?security=reality&sni=$ym_vl_re&fp=chrome&pbk=$public_key_s&sid=$short_id_s&type=tcp&headerType=none#${sxname}any-reality-$hostname"
 echo "$ar_link" >> "$HOME/agsbx/jh.txt"
 echo "$ar_link"
 echo
 fi
-if grep hy2-sb "$HOME/agsbx/sb.json" >/dev/null 2>&1; then
-echo "💣【 Hysteria2 】节点信息如下："
+if grep -q hy2-sb "$HOME/agsbx/sb.json" 2>/dev/null; then
+node_title "💣【 Hysteria2 】节点信息如下："
 port_hy2=$(cat "$HOME/agsbx/port_hy2")
 obfs_pass=$(cat "$HOME/agsbx/obfs_pass" 2>/dev/null)
 cert_hash=$(cat "$HOME/agsbx/cert_sha256.txt" 2>/dev/null)
@@ -2950,8 +2889,8 @@ echo "- ${sxname}hy2-$hostname"
 }
 fi
 fi
-if grep hy2-xr "$HOME/agsbx/xr.json" >/dev/null 2>&1; then
-echo "💣【 Xray-Hysteria2 】节点信息如下："
+if grep -q hy2-xr "$HOME/agsbx/xr.json" 2>/dev/null; then
+node_title "💣【 Xray-Hysteria2 】节点信息如下："
 port_xhy2=$(cat "$HOME/agsbx/port_xhy2")
 cert_hash=$(cat "$HOME/agsbx/cert_sha256.txt" 2>/dev/null)
 ran_sni=$(cat "$HOME/agsbx/sni.txt" 2>/dev/null)
@@ -2996,8 +2935,8 @@ echo "- ${sxname}xray-hy2-$hostname"
 }
 fi
 fi
-if grep tuic5-sb "$HOME/agsbx/sb.json" >/dev/null 2>&1; then
-echo "💣【 Tuic 】节点信息如下："
+if grep -q tuic5-sb "$HOME/agsbx/sb.json" 2>/dev/null; then
+node_title "💣【 Tuic 】节点信息如下："
 port_tu=$(cat "$HOME/agsbx/port_tu")
 ran_sni=$(cat "$HOME/agsbx/sni.txt" 2>/dev/null)
 cert_mode=$(cat "$HOME/agsbx/cert_mode" 2>/dev/null)
@@ -3035,8 +2974,8 @@ echo "- ${sxname}tuic5-$hostname"
 }
 fi
 fi
-if grep socks5-xr "$HOME/agsbx/xr.json" >/dev/null 2>&1 || grep socks5-sb "$HOME/agsbx/sb.json" >/dev/null 2>&1; then
-echo "💣【 Socks5 】客户端信息如下："
+if grep -q socks5-xr "$HOME/agsbx/xr.json" 2>/dev/null || grep -q socks5-sb "$HOME/agsbx/sb.json" 2>/dev/null; then
+node_title "💣【 Socks5 】客户端信息如下："
 port_so=$(cat "$HOME/agsbx/port_so")
 echo "请配合其他应用内置代理使用，勿做节点直接使用"
 echo "客户端地址：$server_ip"
@@ -3320,22 +3259,8 @@ if [ ! -f "$tls_cert_file" ] || [ ! -f "$tls_key_file" ]; then
   setup_selfsigned_certificate
 fi
 
-if [ -z "$subpt" ] && [ ! -e "$HOME/agsbx/subport.log" ]; then
-  subport=$(get_free_port)
-  echo "$subport" > "$HOME/agsbx/subport.log"
-elif [ -n "$subpt" ]; then
-  echo "$subpt" > "$HOME/agsbx/subport.log"
-fi
-subport_show=$(cat "$HOME/agsbx/subport.log")
-
-if [ ! -e "$HOME/agsbx/subport_real.log" ]; then
-  subport_real=$(get_free_port)
-  while [ "$subport_real" -eq "$subport_show" ]; do
-    subport_real=$(get_free_port)
-  done
-  echo "$subport_real" > "$HOME/agsbx/subport_real.log"
-fi
-subport_real=$(cat "$HOME/agsbx/subport_real.log")
+subport_show=$(init_port "$subpt" subport.log)
+subport_real=$(init_subport_real "$subport_show")
 sub_protocol="https"
 
 kill -15 $(pgrep -f 'websbx' 2>/dev/null) >/dev/null 2>&1
@@ -3367,27 +3292,27 @@ subdomain=$(cat "$HOME/agsbx/cdnym" 2>/dev/null)
 suburl="${sub_protocol}://${subdomain}:${subport_show}/${subtoken}"
 clash_sub_info="Clash/Mihomo 本地订阅链接：${suburl}/clmi.yaml"
 fi
-echo "---------------------------------------------------------"
+hr
 echo "$argoshow"
 echo
 if [ "$sub" = yes ]; then
-echo "**********************************************************"
+hr2
 echo "$clash_sub_info"
 echo "聚合协议本地订阅地址：${suburl}/jhsub.txt"
 if [ "$(cat "$HOME/agsbx/cert_mode" 2>/dev/null)" = "selfsigned" ]; then
-echo "----------------------------------------------------------"
+hr
 printf '%s\n' "${C_YELLOW}⚠️  安全加密提示 (自签证书模式)：${C_RESET}"
 echo "   由于您当前未使用域名或 ACME 证书，系统已自动启用本地自签 TLS 强加密。"
 echo "   客户端（Clash/Mihomo/Shadowrocket）拉取订阅时，请务必勾选："
 echo "   -> [ 允许不安全证书 / 跳过证书验证 (skip-cert-verify: true) ]"
 echo "   即可无痛拉取，同时 100% 获得高强度 TLS 传输加密，防御中间人嗅探！"
 fi
-echo "**********************************************************"
+hr2
 echo
 fi
-echo "---------------------------------------------------------"
+hr
 echo "聚合节点信息，请进入 $HOME/agsbx/jh.txt 文件目录查看或者运行 cat $HOME/agsbx/jh.txt 查看"
-echo "========================================================="
+hr2
 # 安全加固：全局收紧敏感文件权限（阻断多用户环境下的未授权文件读取）
 find "$HOME/agsbx" -type d -exec chmod 700 {} + 2>/dev/null
 find "$HOME/agsbx" -type f -exec chmod 600 {} + 2>/dev/null
@@ -3407,10 +3332,12 @@ restore_xicmp_state
 cleanup_port_hopping
 for P in /proc/[0-9]*; do if [ -L "$P/exe" ]; then TARGET=$(readlink -f "$P/exe" 2>/dev/null); if echo "$TARGET" | grep -qE '/agsbx/cloudflared|/agsbx/sing-box|/agsbx/xray'; then PID=$(basename "$P"); kill "$PID" 2>/dev/null; fi; fi; done
 kill -15 $(pgrep -f 'agsbx/sing-box' 2>/dev/null) $(pgrep -f 'agsbx/cloudflared' 2>/dev/null) $(pgrep -f 'agsbx/xray' 2>/dev/null) $(pgrep -f 'websbx' 2>/dev/null) >/dev/null 2>&1
+if [ -f ~/.bashrc ]; then
 sed -i '/agsbx/d' ~/.bashrc
 sed -i '/export PATH="\$HOME\/bin:\$PATH"/d' ~/.bashrc
 sed -i '/export PATH="\$PATH:\$HOME\/bin"/d' ~/.bashrc
 . ~/.bashrc 2>/dev/null
+fi
 cron_tmp=$(mktemp)
 crontab -l > "$cron_tmp" 2>/dev/null
 sed -i '/agsbx\/sing-box/d' "$cron_tmp"
