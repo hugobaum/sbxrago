@@ -117,7 +117,8 @@ vrow "obfs_pass" "Hysteria2 混淆密码（留空＝自动生成）"
 vrow "ippz"     "list时只显示指定栈：4 或 6（双栈VPS用）"
 echo
 hr
-echo "命令类：list 查看节点 ｜ rep 重置 ｜ upx/ups 更新内核 ｜ res 重启 ｜ del 卸载"
+echo "命令类：list 查看节点 ｜ stats 资源流量 ｜ rep 重置 ｜ res 重启 ｜ del 卸载"
+echo "内核类：upx/ups [版本] 升级 ｜ downx/downs <版本> 降级（版本方向用反会提示纠正）"
 hr
 echo
 }
@@ -186,6 +187,17 @@ init_subport_real() {
     echo "$p" > "$port_file"
   fi
   cat "$port_file"
+}
+
+# 版本号比较助手：输出 gt/eq/lt，表示 $1 相对 $2 的 高/同/低。
+# 按 "." 分段做数值比较，自动忽略前导 v，纯 awk 实现（兼容无 sort -V 的 busybox）。
+# 用途：upx/downx 方向校验——升级命令拒绝更低版本、降级命令拒绝更高版本，防止用反命令。
+vercmp() {
+  awk -v a="${1#v}" -v b="${2#v}" 'BEGIN{
+    na=split(a,x,"."); nb=split(b,y,"."); n=(na>nb)?na:nb
+    for(i=1;i<=n;i++){ xi=x[i]+0; yi=y[i]+0; if(xi>yi){print "gt";exit} if(xi<yi){print "lt";exit} }
+    print "eq"
+  }'
 }
 
 enable_system_bbr() {
@@ -383,7 +395,9 @@ echo "  · 变量速查表：agsbx vars 【或者】 主脚本 vars （记不住
 echo "  · 显示节点信息：agsbx list 【或者】 主脚本 list"
 echo "  · 重置变量组：自定义各种协议变量组 agsbx rep 【或者】 自定义各种协议变量组 主脚本 rep"
 echo "  · 更新脚本：原已安装的自定义各种协议变量组 主脚本 rep"
-echo "  · 更新Xray或Singbox内核：agsbx upx或ups 【或者】 主脚本 upx或ups"
+echo "  · 升级内核：agsbx upx [版本] / ups [版本]（不带版本=最新；带版本须高于当前）"
+echo "  · 降级内核：agsbx downx <版本> / downs <版本>（须低于当前，如 downx v26.2.6）"
+echo "  · 资源/流量监控：agsbx stats 【或者】 主脚本 stats"
 echo "  · 重启脚本：agsbx res 【或者】 主脚本 res"
 echo "  · 卸载脚本：agsbx del 【或者】 主脚本 del"
 echo "  · 双栈VPS显示IPv4/IPv6节点配置：ippz=4或6 agsbx list 【或者】 ippz=4或6 主脚本 list"
@@ -633,12 +647,20 @@ fi
 #============================================================
 upxray(){
 # 从 Xray-core 官方仓库下载，并进行 SHA256 完整性校验
-echo "正在从 XTLS/Xray-core 官方仓库下载 Xray 内核……"
+# $1 可选：指定版本号（如 v26.2.6）；留空则取 latest。供 downx 精确锁版使用。
+local want_ver="$1"
 case "$cpu" in
   amd64) xray_file="Xray-linux-64.zip" ;;
   arm64) xray_file="Xray-linux-arm64-v8a.zip" ;;
 esac
-xray_url="https://github.com/XTLS/Xray-core/releases/latest/download/${xray_file}"
+if [ -n "$want_ver" ]; then
+  case "$want_ver" in v*) ;; *) want_ver="v$want_ver" ;; esac
+  echo "正在从 XTLS/Xray-core 官方仓库下载指定版本 Xray 内核：$want_ver ……"
+  xray_url="https://github.com/XTLS/Xray-core/releases/download/${want_ver}/${xray_file}"
+else
+  echo "正在从 XTLS/Xray-core 官方仓库下载最新版 Xray 内核……"
+  xray_url="https://github.com/XTLS/Xray-core/releases/latest/download/${xray_file}"
+fi
 xray_dgst_url="${xray_url}.dgst"
 xray_tmp="$HOME/agsbx/${xray_file}"
 xray_dgst_tmp="${xray_tmp}.dgst"
@@ -657,25 +679,53 @@ if [ -z "$expected_sha256" ] || [ "$expected_sha256" != "$actual_sha256" ]; then
   exit 1
 fi
 echo "SHA256 校验通过 ✓"
-# 解压并安装
-(command -v unzip >/dev/null 2>&1 && unzip -o "$xray_tmp" xray -d "$HOME/agsbx/" >/dev/null 2>&1) || (command -v busybox >/dev/null 2>&1 && busybox unzip -o "$xray_tmp" xray -d "$HOME/agsbx/" >/dev/null 2>&1)
-chmod +x "$HOME/agsbx/xray"
+# 暂存区解压：先在 .stage_xray 里校验，绝不在通过前触碰正在运行的内核。
+# 这是“先验证后落地”，不是“先替换后回滚”——失败时原内核分毫未动，故不存在反复回滚的循环。
+xstage="$HOME/agsbx/.stage_xray"
+rm -rf "$xstage"; mkdir -p "$xstage"
+(command -v unzip >/dev/null 2>&1 && unzip -o "$xray_tmp" xray -d "$xstage/" >/dev/null 2>&1) || (command -v busybox >/dev/null 2>&1 && busybox unzip -o "$xray_tmp" xray -d "$xstage/" >/dev/null 2>&1)
 rm -f "$xray_tmp" "$xray_dgst_tmp"
+if [ ! -s "$xstage/xray" ]; then
+  echo "错误：Xray 解压失败，原内核保持不动。"; rm -rf "$xstage"; return 1
+fi
+chmod +x "$xstage/xray"
+# 配置兼容性预检：用暂存的新内核 -test 现有 xr.json；不通过则丢弃暂存，原内核与服务全程不动、不重启
+if [ -f "$HOME/agsbx/xr.json" ]; then
+  xtest=$("$xstage/xray" run -test -c "$HOME/agsbx/xr.json" 2>&1)
+  if [ $? -ne 0 ]; then
+    echo "错误：该版本 Xray 无法加载当前 xr.json，可能 finalmask/encryption 等字段不兼容："
+    echo "$xtest" | grep -iE 'fail|error|unknown|invalid' | head -3
+    echo "已放弃换版：原内核与服务保持原样、未中断。可先 agsbx rep 重置配置后再换版。"
+    rm -rf "$xstage"; return 1
+  fi
+fi
+# 预检通过，原子替换（Linux 下替换运行中的二进制是安全的：旧进程仍持有已打开的旧 inode）
+mv -f "$xstage/xray" "$HOME/agsbx/xray"
+rm -rf "$xstage"
 sbcore=$("$HOME/agsbx/xray" version 2>/dev/null | awk '/^Xray/{print $2}')
 echo "已安装Xray正式版内核：$sbcore（来源：github.com/XTLS/Xray-core）"
 }
 upsingbox(){
 # 从 Sing-box 官方仓库下载，并进行 SHA256 完整性校验
-echo "正在从 SagerNet/sing-box 官方仓库下载 Sing-box 内核……"
-# 获取最新版本号和 JSON 数据以备校验
-sb_json=$( (command -v curl >/dev/null 2>&1 && curl -Ls "https://api.github.com/repos/SagerNet/sing-box/releases/latest") || (command -v wget >/dev/null 2>&1 && wget -qO- "https://api.github.com/repos/SagerNet/sing-box/releases/latest") )
-sb_ver=$(echo "$sb_json" | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": *"//;s/".*//')
-sb_ver_num=$(echo "$sb_ver" | sed 's/^v//')
+# $1 可选：指定版本号（如 v1.11.0）；留空则查询 latest。供 downs 精确锁版使用。
+local want_ver="$1"
+if [ -n "$want_ver" ]; then
+  case "$want_ver" in v*) ;; *) want_ver="v$want_ver" ;; esac
+  sb_ver="$want_ver"
+  sb_ver_num=$(echo "$sb_ver" | sed 's/^v//')
+  echo "正在从 SagerNet/sing-box 官方仓库下载指定版本 Sing-box 内核：$sb_ver ……"
+else
+  echo "正在从 SagerNet/sing-box 官方仓库下载最新版 Sing-box 内核……"
+  # 获取最新版本号和 JSON 数据以备校验
+  sb_json=$( (command -v curl >/dev/null 2>&1 && curl -Ls "https://api.github.com/repos/SagerNet/sing-box/releases/latest") || (command -v wget >/dev/null 2>&1 && wget -qO- "https://api.github.com/repos/SagerNet/sing-box/releases/latest") )
+  sb_ver=$(echo "$sb_json" | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": *"//;s/".*//')
+  sb_ver_num=$(echo "$sb_ver" | sed 's/^v//')
+fi
 if [ -z "$sb_ver_num" ]; then
-  echo "错误：无法获取 Sing-box 最新版本号"
+  echo "错误：无法获取 Sing-box 版本号"
   exit 1
 fi
-echo "最新版本：$sb_ver"
+echo "目标版本：$sb_ver"
 sb_file="sing-box-${sb_ver_num}-linux-${cpu}.tar.gz"
 sb_url="https://github.com/SagerNet/sing-box/releases/download/${sb_ver}/${sb_file}"
 sb_tmp="$HOME/agsbx/${sb_file}"
@@ -700,15 +750,30 @@ if [ -n "$expected_sha256" ]; then
 else
   echo "警告：未能从 Github 提取到 SHA256，可能解析失败，信任 HTTPS 连接..."
 fi
-# 解压并安装
-tar -xzf "$sb_tmp" -C "$HOME/agsbx/" 2>/dev/null
-# 将解压出来的文件夹里的内核提取出来，避免 tar 的 strip-components 不兼容导致的位置偏移
-if [ -f "$HOME/agsbx/sing-box-${sb_ver_num}-linux-${cpu}/sing-box" ]; then
-    mv -f "$HOME/agsbx/sing-box-${sb_ver_num}-linux-${cpu}/sing-box" "$HOME/agsbx/sing-box"
-    rm -rf "$HOME/agsbx/sing-box-${sb_ver_num}-linux-${cpu}"
-fi
+# 暂存区解压：先校验再落地，绝不在通过前触碰正在运行的内核（失败即放弃，无回滚、无循环）
+sstage="$HOME/agsbx/.stage_sb"
+rm -rf "$sstage"; mkdir -p "$sstage"
+tar -xzf "$sb_tmp" -C "$sstage/" 2>/dev/null
 rm -f "$sb_tmp"
-chmod +x "$HOME/agsbx/sing-box"
+# 兼容官方归档目录结构，取不到再全局兜底查找
+sbnew="$sstage/sing-box-${sb_ver_num}-linux-${cpu}/sing-box"
+[ -f "$sbnew" ] || sbnew=$(find "$sstage" -type f -name sing-box 2>/dev/null | head -1)
+if [ ! -s "$sbnew" ]; then
+  echo "错误：Sing-box 解压失败，原内核保持不动。"; rm -rf "$sstage"; return 1
+fi
+chmod +x "$sbnew"
+# 配置兼容性预检：用暂存的新内核 check 现有 sb.json；不通过则丢弃暂存，原内核与服务全程不动
+if [ -f "$HOME/agsbx/sb.json" ]; then
+  stest=$("$sbnew" check -c "$HOME/agsbx/sb.json" 2>&1)
+  if [ $? -ne 0 ]; then
+    echo "错误：该版本 Sing-box 无法加载当前 sb.json，可能字段不兼容："
+    echo "$stest" | grep -iE 'fail|error|unknown|invalid|decode' | head -3
+    echo "已放弃换版：原内核与服务保持原样、未中断。可先 agsbx rep 重置配置后再换版。"
+    rm -rf "$sstage"; return 1
+  fi
+fi
+mv -f "$sbnew" "$HOME/agsbx/sing-box"
+rm -rf "$sstage"
 sbcore=$("$HOME/agsbx/sing-box" version 2>/dev/null | awk '/version/{print $NF}')
 echo "已安装Sing-box正式版内核：$sbcore（来源：github.com/SagerNet/sing-box）"
 }
@@ -3472,6 +3537,67 @@ nohup $HOME/agsbx/sing-box run -c $HOME/agsbx/sb.json > "$HOME/agsbx/sing-box.lo
 fi
 }
 
+# 内核资源 / 流量监控：纯读 /proc + ss，零依赖、不改动任何配置，兼容 busybox(无 ps -o 的精简系统)。
+# CPU% 用 /proc/<pid>/stat 的 utime+stime 做 1 秒前后采样差；内存取 VmRSS 常驻集；运行时长由 starttime 反推。
+showstats(){
+local clk; clk=$(getconf CLK_TCK 2>/dev/null || echo 100)
+# 字节数转人类可读单位（B/KiB/MiB/GiB）
+human(){ awk -v b="${1:-0}" 'BEGIN{u="B KiB MiB GiB TiB";n=split(u,a," ");i=1;while(b>=1024&&i<n){b/=1024;i++}printf (i==1?"%d %s":"%.2f %s"),b,a[i]}'; }
+section "Airgosbx 内核资源 / 流量监控"
+printf '%s\n' "${C_GREEN}${C_BOLD}【内核进程】${C_RESET}"
+printf "  ${C_CYAN}%-10s %-7s %-7s %-11s %-9s %-6s${C_RESET}\n" Core PID CPU% Mem-RSS Uptime Conn
+local any=0 kv k label pid s b0 st b1 cpu rss up conn
+for kv in "xray:Xray" "sing-box:Sing-box" "cloudflared:Argo"; do
+  k=${kv%%:*}; label=${kv##*:}
+  pid=$(pgrep -f "agsbx/$k" 2>/dev/null | head -1)
+  if [ -z "$pid" ] || [ ! -d "/proc/$pid" ]; then
+    printf "  %-10s ${C_RED}%s${C_RESET}\n" "$label" "未运行"
+    continue
+  fi
+  any=1
+  # 去掉 "pid (comm) " 前缀后，utime/stime/starttime 分别落在第 12/13/20 个字段
+  s=$(sed 's/.*) //' "/proc/$pid/stat" 2>/dev/null); set -- $s
+  b0=$(( ${12:-0} + ${13:-0} )); st=${20:-0}
+  sleep 1
+  s=$(sed 's/.*) //' "/proc/$pid/stat" 2>/dev/null); set -- $s
+  b1=$(( ${12:-0} + ${13:-0} ))
+  cpu=$(awk -v d=$((b1-b0)) -v c="$clk" 'BEGIN{printf "%.1f%%", d*100/c}')
+  rss=$(awk '/^VmRSS/{print $2}' "/proc/$pid/status" 2>/dev/null)
+  rss=$(awk -v kb="${rss:-0}" 'BEGIN{printf "%.1f MiB", kb/1024}')
+  up=$(awk -v su="$(awk '{print $1}' /proc/uptime 2>/dev/null)" -v st="$st" -v c="$clk" 'BEGIN{s=su-st/c;d=int(s/86400);h=int((s%86400)/3600);m=int((s%3600)/60); if(d>0)printf "%dd%dh",d,h; else if(h>0)printf "%dh%dm",h,m; else printf "%dm",m}')
+  conn=$(ss -tnp 2>/dev/null | grep -c "pid=$pid,")
+  printf "  %-10s %-7s %-7s %-11s %-9s %-6s\n" "$label" "$pid" "$cpu" "$rss" "$up" "${conn:-0}"
+done
+[ "$any" = 0 ] && echo "  （三大内核进程均未运行）"
+echo
+printf '%s\n' "${C_GREEN}${C_BOLD}【系统概况】${C_RESET}"
+printf "  负载(1/5/15分)：%s\n" "$(awk '{print $1", "$2", "$3}' /proc/loadavg 2>/dev/null)"
+awk '/^MemTotal/{t=$2}/^MemAvailable/{a=$2}END{if(t)printf "  内存：已用 %.0f MiB / 共 %.0f MiB（可用 %.0f MiB）\n",(t-a)/1024,t/1024,a/1024}' /proc/meminfo 2>/dev/null
+echo
+printf '%s\n' "${C_GREEN}${C_BOLD}【网卡流量】入站=接收(下行)／出站=发送(上行)，自系统开机累计，多数 VPS 据此计费${C_RESET}"
+printf "  ${C_CYAN}%-10s %-16s %-16s${C_RESET}\n" NIC "RX-Inbound↓" "TX-Outbound↑"
+# 逐网卡列出 RX/TX（/proc/net/dev：把 ifname: 的冒号换成空格后重新分列，$2=接收字节 $10=发送字节）。
+# 过滤回环及常见虚拟网卡，避免污染计费口径；awk 内置 h() 直接转人类可读单位，保证对齐。
+awk 'function h(b,  u,a,i,n){u="B KiB MiB GiB TiB";n=split(u,a," ");i=1;while(b>=1024&&i<n){b/=1024;i++}return sprintf((i==1?"%d %s":"%.2f %s"),b,a[i])}
+NR>2{sub(/:/," "); ifc=$1; if(ifc=="lo"||ifc~/^(docker|veth|br-|virbr|tailscale|wg|tun|cni)/)next; printf "  %-10s %-16s %-16s\n",ifc,h($2),h($10); trx+=$2;ttx+=$10;c++}
+END{if(c>1)printf "  %-10s %-16s %-16s\n","Total",h(trx),h(ttx); if(c==0)print "  （未发现可计费网卡）"}' /proc/net/dev 2>/dev/null
+# Cloudflare 互联实时快照：按官方公布 IP 段匹配当前活跃连接的累计收发（含 CDN回源/Argo隧道/WARP出站）
+if command -v ss >/dev/null 2>&1; then
+  cf_ranges="104.16.0.0/13 104.24.0.0/14 172.64.0.0/13 162.158.0.0/15 173.245.48.0/20 141.101.64.0/18 108.162.192.0/18 190.93.240.0/20 188.114.96.0/20 198.41.128.0/17 131.0.72.0/22 103.21.244.0/22 103.22.200.0/22 103.31.4.0/22 197.234.240.0/22 2606:4700::/32 2400:cb00::/32 2803:f800::/32 2405:b500::/32 2405:8100::/32 2a06:98c0::/29 2c0f:f248::/32"
+  cf_filt=""; for r in $cf_ranges; do cf_filt="${cf_filt:+$cf_filt or }dst $r"; done; cf_filt="( $cf_filt )"
+  # bytes_sent=本机发出=出站；bytes_received=本机收到=入站
+  set -- $(ss -tinH state established "$cf_filt" 2>/dev/null | awk '/bytes_sent:/{for(i=1;i<=NF;i++){if($i~/^bytes_sent:/){split($i,a,":");s+=a[2]}if($i~/^bytes_received:/){split($i,a,":");r+=a[2]}}}END{print s+0, r+0}')
+  cf_out="$1"; cf_in="$2"
+  cf_conn=$(ss -tnH state established "$cf_filt" 2>/dev/null | grep -c .)
+  printf "  ${C_YELLOW}↳ 其中 Cloudflare 互联${C_RESET}：活跃 %s 连接，入站↓ %s ／ 出站↑ %s\n" "${cf_conn:-0}" "$(human "${cf_in:-0}")" "$(human "${cf_out:-0}")"
+  echo "    （此行为当前活跃连接的累计快照，非自开机口径；含 CDN回源/Argo/WARP，按 Cloudflare 官方IP段匹配，仅供占比参考）"
+fi
+hr
+echo "口径：网卡累计=自开机起(计费参考)；CPU%=1秒采样瞬时(多核可>100%)；连接=各内核当前 ESTABLISHED 数。"
+hr
+echo
+}
+
 #============================================================
 # [第11段] 命令路由与运行状态分发路由段
 #------------------------------------------------------------
@@ -3497,15 +3623,45 @@ echo
 elif [ "$1" = "list" ]; then
 cip
 exit
-elif [ "$1" = "upx" ]; then
-for P in /proc/[0-9]*; do [ -L "$P/exe" ] || continue; TARGET=$(readlink -f "$P/exe" 2>/dev/null) || continue; case "$TARGET" in *"/agsbx/x"*) kill "$(basename "$P")" 2>/dev/null ;; esac; done
-kill -15 $(pgrep -f 'agsbx/xray' 2>/dev/null) >/dev/null 2>&1
-upxray && xrestart && echo "Xray内核更新完成" && sleep 2 && cip
+elif [ "$1" = "upx" ] || [ "$1" = "downx" ]; then
+# upx [版本]=升级(不带=最新)；downx <版本>=降级。方向校验：升级拒绝更低版本、降级拒绝更高版本，防用反命令。
+reqver="$2"
+if [ "$1" = "downx" ] && [ -z "$reqver" ]; then echo "用法：agsbx downx <版本号>，例如 agsbx downx v26.2.6（升级到最新请用 agsbx upx）"; exit 1; fi
+curver=$("$HOME/agsbx/xray" version 2>/dev/null | awk '/^Xray/{print $2}')
+if [ -n "$reqver" ] && [ -n "$curver" ]; then
+  rel=$(vercmp "$reqver" "$curver")
+  if [ "$1" = "upx" ] && [ "$rel" = "lt" ]; then echo "错误：目标版本 ${reqver#v} 低于当前运行的 v${curver}，这是降级。请改用：agsbx downx ${reqver}"; exit 1; fi
+  if [ "$1" = "downx" ] && [ "$rel" = "gt" ]; then echo "错误：目标版本 ${reqver#v} 高于当前运行的 v${curver}，这是升级。请改用：agsbx upx ${reqver}"; exit 1; fi
+fi
+# 先在暂存区下载+预检；仅当通过、新内核已就位后才停掉旧进程重启。失败则原内核继续运行，全程不中断。
+if upxray "$reqver"; then
+  for P in /proc/[0-9]*; do [ -L "$P/exe" ] || continue; TARGET=$(readlink -f "$P/exe" 2>/dev/null) || continue; case "$TARGET" in *"/agsbx/x"*) kill "$(basename "$P")" 2>/dev/null ;; esac; done
+  kill -15 $(pgrep -f 'agsbx/xray' 2>/dev/null) >/dev/null 2>&1
+  xrestart && echo "Xray 内核已切换并重启完成" && sleep 2 && cip
+else
+  echo "Xray 内核未变更，原版本继续运行（服务未中断）。"
+fi
 exit
-elif [ "$1" = "ups" ]; then
-for P in /proc/[0-9]*; do [ -L "$P/exe" ] || continue; TARGET=$(readlink -f "$P/exe" 2>/dev/null) || continue; case "$TARGET" in *"/agsbx/s"*) kill "$(basename "$P")" 2>/dev/null ;; esac; done
-kill -15 $(pgrep -f 'agsbx/sing-box' 2>/dev/null) >/dev/null 2>&1
-upsingbox && sbrestart && echo "Sing-box内核更新完成" && sleep 2 && cip
+elif [ "$1" = "ups" ] || [ "$1" = "downs" ]; then
+# ups [版本]=升级(不带=最新)；downs <版本>=降级。同样做版本方向校验。
+reqver="$2"
+if [ "$1" = "downs" ] && [ -z "$reqver" ]; then echo "用法：agsbx downs <版本号>，例如 agsbx downs v1.11.0（升级到最新请用 agsbx ups）"; exit 1; fi
+curver=$("$HOME/agsbx/sing-box" version 2>/dev/null | awk '/version/{print $NF}')
+if [ -n "$reqver" ] && [ -n "$curver" ]; then
+  rel=$(vercmp "$reqver" "$curver")
+  if [ "$1" = "ups" ] && [ "$rel" = "lt" ]; then echo "错误：目标版本 ${reqver#v} 低于当前运行的 v${curver}，这是降级。请改用：agsbx downs ${reqver}"; exit 1; fi
+  if [ "$1" = "downs" ] && [ "$rel" = "gt" ]; then echo "错误：目标版本 ${reqver#v} 高于当前运行的 v${curver}，这是升级。请改用：agsbx ups ${reqver}"; exit 1; fi
+fi
+if upsingbox "$reqver"; then
+  for P in /proc/[0-9]*; do [ -L "$P/exe" ] || continue; TARGET=$(readlink -f "$P/exe" 2>/dev/null) || continue; case "$TARGET" in *"/agsbx/s"*) kill "$(basename "$P")" 2>/dev/null ;; esac; done
+  kill -15 $(pgrep -f 'agsbx/sing-box' 2>/dev/null) >/dev/null 2>&1
+  sbrestart && echo "Sing-box 内核已切换并重启完成" && sleep 2 && cip
+else
+  echo "Sing-box 内核未变更，原版本继续运行（服务未中断）。"
+fi
+exit
+elif [ "$1" = "stats" ] || [ "$1" = "top" ]; then
+showstats
 exit
 elif [ "$1" = "res" ]; then
 for P in /proc/[0-9]*; do
