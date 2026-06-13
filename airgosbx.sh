@@ -201,7 +201,28 @@ vercmp() {
 }
 
 enable_system_bbr() {
-  # 自动检测并开启 Linux 系统内核的 TCP BBR 拥塞控制加速
+  # 系统网络加速：① UDP/QUIC 收发缓冲区调优；② 内核 TCP BBR 拥塞控制。
+  # 确保 /etc/sysctl.conf 存在，防止 sed 报 can't read 错误
+  [ -f /etc/sysctl.conf ] || touch /etc/sysctl.conf
+
+  # —— ① UDP/QUIC 缓冲区 —— 内核 BBR 只作用于 TCP；QUIC(Hysteria2/TUIC/HTTP3)跑在 UDP 用户态，吃不到内核 BBR。
+  # UDP 缓冲区太小时 quic-go 会告警并降速，调大上限可显著提升 QUIC 吞吐(sing-box/Hysteria 官方推荐 16MiB)。
+  # 放在 BBR 检测之前，确保即便系统已启用 BBR、提前 return 时，这段也已执行过。
+  local udp_buf=16777216 cur_rmem
+  cur_rmem=$(sysctl -n net.core.rmem_max 2>/dev/null)
+  case "$cur_rmem" in ''|*[!0-9]*) cur_rmem=0 ;; esac
+  if [ "$cur_rmem" -lt "$udp_buf" ]; then
+    sed -i '/net.core.rmem_max/d;/net.core.wmem_max/d' /etc/sysctl.conf
+    echo "net.core.rmem_max = $udp_buf" >> /etc/sysctl.conf
+    echo "net.core.wmem_max = $udp_buf" >> /etc/sysctl.conf
+    sysctl -w net.core.rmem_max=$udp_buf >/dev/null 2>&1
+    sysctl -w net.core.wmem_max=$udp_buf >/dev/null 2>&1
+    echo "已调大 UDP 收发缓冲区至 16MiB，提升 QUIC(Hysteria2/TUIC/HTTP3)吞吐。🚀"
+  else
+    echo "提示：UDP 缓冲区已 ≥16MiB，无需调整。"
+  fi
+
+  # —— ② 内核 TCP BBR 拥塞控制加速 ——
   local current_congestion_control
   current_congestion_control=$(sysctl net.ipv4.tcp_congestion_control 2>/dev/null | awk '{print $3}')
   if [ "${current_congestion_control}" = "bbr" ]; then
@@ -210,9 +231,6 @@ enable_system_bbr() {
   fi
 
   echo "正在为您检测并开启系统级 TCP BBR 拥塞控制加速..."
-  
-  # 确保 /etc/sysctl.conf 文件存在，防止 sed 报 can't read 错误
-  [ -f /etc/sysctl.conf ] || touch /etc/sysctl.conf
 
   # 内核未内置 bbr 时先尝试加载模块，再统一做一次可用性判定与写入，避免两段重复逻辑
   if ! sysctl net.ipv4.tcp_available_congestion_control 2>/dev/null | grep -q "bbr"; then
@@ -2613,21 +2631,29 @@ fi
 airgosbxstatus(){
 printf '%s\n' "${C_CYAN}========= 当前三大内核运行状态 =========${C_RESET}"
 procs=$(find /proc/*/exe -type l 2>/dev/null | grep -E '/proc/[0-9]+/exe' | xargs -r readlink 2>/dev/null)
-if echo "$procs" | grep -Eq 'agsbx/sing-box' || pgrep -f 'agsbx/sing-box' >/dev/null 2>&1; then
-printf '%s\n' "Sing-box (版本V$("$HOME/agsbx/sing-box" version 2>/dev/null | awk '/version/{print $NF}'))：${C_GREEN}运行中${C_RESET}"
-else
-printf '%s\n' "Sing-box：${C_RED}未启用${C_RESET}"
-fi
-if echo "$procs" | grep -Eq 'agsbx/xray' || pgrep -f 'agsbx/xray' >/dev/null 2>&1; then
-printf '%s\n' "Xray (版本V$("$HOME/agsbx/xray" version 2>/dev/null | awk '/^Xray/{print $2}'))：${C_GREEN}运行中${C_RESET}"
-else
-printf '%s\n' "Xray：${C_RED}未启用${C_RESET}"
-fi
-if echo "$procs" | grep -Eq 'agsbx/cloudflared' || pgrep -f 'agsbx/cloudflared' >/dev/null 2>&1; then
-printf '%s\n' "Argo (版本V$("$HOME/agsbx/cloudflared" version 2>/dev/null | awk '{print $3}'))：${C_GREEN}运行中${C_RESET}"
-else
-printf '%s\n' "Argo：${C_RED}未启用${C_RESET}"
-fi
+# 四态判定助手：运行中 / 未下载(二进制缺) / 启用失败(配置在但进程不在) / 未启用(本次未配置该内核)
+# 关键价值：把旧版笼统的"未启用"拆开，让"本应运行却挂了"的内核能被一眼看出并指向日志。
+# $1显示名 $2二进制 $3配置文件(判定本应运行) $4进程匹配 $5版本类型 $6日志路径
+kstat(){
+  local name="$1" bin="$2" cfg="$3" pat="$4" kind="$5" log="$6" ver=""
+  if echo "$procs" | grep -Eq "$pat" || pgrep -f "$pat" >/dev/null 2>&1; then
+    case "$kind" in
+      xray) ver=$("$bin" version 2>/dev/null | awk '/^Xray/{print $2}') ;;
+      sb)   ver=$("$bin" version 2>/dev/null | awk '/version/{print $NF}') ;;
+      argo) ver=$("$bin" version 2>/dev/null | awk '{print $3}') ;;
+    esac
+    printf '%s\n' "${name} (版本V${ver})：${C_GREEN}运行中${C_RESET}"
+  elif [ ! -s "$bin" ]; then
+    printf '%s\n' "${name}：${C_YELLOW}未下载${C_RESET}"
+  elif [ -s "$cfg" ]; then
+    printf '%s\n' "${name}：${C_RED}启用失败/未运行${C_RESET}（配置已生成但进程不在，查日志：$log）"
+  else
+    printf '%s\n' "${name}：未启用（本次未配置该内核）"
+  fi
+}
+kstat "Sing-box" "$HOME/agsbx/sing-box"    "$HOME/agsbx/sb.json"      'agsbx/sing-box'   sb   "$HOME/agsbx/sing-box.log"
+kstat "Xray"     "$HOME/agsbx/xray"        "$HOME/agsbx/xr.json"      'agsbx/xray'       xray "$HOME/agsbx/xray.log"
+kstat "Argo"     "$HOME/agsbx/cloudflared" "$HOME/agsbx/argoport.log" 'agsbx/cloudflared' argo "$HOME/agsbx/argo.log"
 }
 cip(){
 ipbest(){
