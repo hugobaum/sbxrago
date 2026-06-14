@@ -117,15 +117,52 @@ vrow "obfs_pass" "Hysteria2 混淆密码（留空＝自动生成）"
 vrow "ippz"     "list时只显示指定栈：4 或 6（双栈VPS用）"
 echo
 hr
-echo "命令类：list 查看节点 ｜ stats 资源流量 ｜ rep 重置 ｜ res 重启 ｜ del 卸载"
-echo "内核类：upx/ups [版本] 升级 ｜ downx/downs <版本> 降级（版本方向用反会提示纠正）"
+echo "命令速查见 ${C_YELLOW}agsbx cmds${C_RESET} ｜ 完整帮助 ${C_YELLOW}agsbx help${C_RESET}"
+hr
+echo
+}
+
+# 命令速查表：与 vars 同款排版（vg 分组小标题 + vrow 对齐行），把所有子命令按用途分组列清。
+# 与 showvars 配套：agsbx cmds 看命令、agsbx vars 看变量、agsbx help 同时输出两表。
+showcmds(){
+printf '%s\n' "${C_CYAN}~~~~~~~~~~~~~~~~~~~~ Airgosbx 命令速查表 ~~~~~~~~~~~~~~~~~~~~${C_RESET}"
+printf '%s\n' "${C_BOLD}用法：agsbx <命令> [参数]　（已安装后任意目录可直接调用 agsbx）${C_RESET}"
+
+vg "① 脚本管理"
+vrow "update"   "更新脚本自身到最新版（不动配置与内核）"
+vrow "rep"      "重置协议配置（在前面配合协议变量组重新生成）"
+vrow "del"      "卸载 agsbx（清进程/服务/定时任务/文件）"
+
+vg "② 查看 / 信息"
+vrow "list"     "打印所有节点信息卡片（ippz=4或6 可只看单栈）"
+vrow "stats"    "内核资源 + 流量监控（别名 top）"
+vrow "vars"     "变量速查表"
+vrow "cmds"     "命令速查表（本表）"
+vrow "help"     "完整帮助（vars + cmds）"
+
+vg "③ 内核启停（用法：agsbx <动作> [内核]）"
+echo "             内核 = xray ｜ sb ｜ caddy(预留) ｜ all(省略即全部 xray+sb)"
+vrow "start"    "启动内核"
+vrow "stop"     "停止内核（释放其占用的端口）"
+vrow "restart"  "重启内核"
+vrow "reload"   "热重载配置（sb 支持；xray 无热载→自动转 restart）"
+vrow "res"      "一键重启全部内核（含 Argo，等价 restart all）"
+
+vg "④ 内核版本"
+vrow "upx"      "升级 Xray（upx [版本]，不带版本=最新）"
+vrow "ups"      "升级 Sing-box（ups [版本]）"
+vrow "downx"    "降级 Xray（downx <版本>，如 downx v26.2.6）"
+vrow "downs"    "降级 Sing-box（downs <版本>）"
+echo
 hr
 echo
 }
 
 # 早退分发：vars/help 为纯文本速查，无需 root、无需联网安装，提前响应避免空跑整套启动流程
 case "$1" in
-  vars|help|--help|-h) showvars; exit 0 ;;
+  vars)               showvars; exit 0 ;;
+  cmds)               showcmds; exit 0 ;;
+  help|--help|-h)     showvars; showcmds; exit 0 ;;
 esac
 
 if ! is_root; then
@@ -406,21 +443,12 @@ fi
 v46url="https://icanhazip.com"
 agsbxurl="https://raw.githubusercontent.com/hugobaum/sbxrago/main/airgosbx.sh"
 showmode(){
-printf '%s\n' "${C_BOLD}常用命令速查：${C_RESET}"
-echo "  · 主脚本：bash <(curl -Ls $agsbxurl)"
-echo "         或 bash <(wget -qO- $agsbxurl)"
-echo "  · 变量速查表：agsbx vars 【或者】 主脚本 vars （记不住变量时随手查）"
-echo "  · 显示节点信息：agsbx list 【或者】 主脚本 list"
-echo "  · 重置变量组：自定义各种协议变量组 agsbx rep 【或者】 自定义各种协议变量组 主脚本 rep"
-echo "  · 更新脚本：原已安装的自定义各种协议变量组 主脚本 rep"
-echo "  · 升级内核：agsbx upx [版本] / ups [版本]（不带版本=最新；带版本须高于当前）"
-echo "  · 降级内核：agsbx downx <版本> / downs <版本>（须低于当前，如 downx v26.2.6）"
-echo "  · 资源/流量监控：agsbx stats 【或者】 主脚本 stats"
-echo "  · 重启脚本：agsbx res 【或者】 主脚本 res"
-echo "  · 卸载脚本：agsbx del 【或者】 主脚本 del"
-echo "  · 双栈VPS显示IPv4/IPv6节点配置：ippz=4或6 agsbx list 【或者】 ippz=4或6 主脚本 list"
-echo "  · 域名证书变量：certym=你的域名（空值或不写则使用自签证书）"
-echo "                可选 certcrt=证书路径 certkey=私钥路径 acmem=邮箱"
+printf '%s\n' "${C_BOLD}核心命令速查（完整命令 ${C_YELLOW}agsbx cmds${C_RESET}${C_BOLD} ｜ 变量 ${C_YELLOW}agsbx vars${C_RESET}${C_BOLD} ｜ 全部 ${C_YELLOW}agsbx help${C_RESET}${C_BOLD}）：${C_RESET}"
+echo "  · 主脚本：bash <(curl -Ls $agsbxurl)  或  bash <(wget -qO- $agsbxurl)"
+echo "  · 节点信息：agsbx list      ｜ 资源/流量：agsbx stats"
+echo "  · 重置配置：变量组 agsbx rep ｜ 更新脚本：agsbx update ｜ 卸载：agsbx del"
+echo "  · 内核启停：agsbx start｜stop｜restart｜reload [xray｜sb｜all]"
+echo "  · 升级内核：agsbx upx/ups [版本]  ｜ 降级：agsbx downx/downs <版本>"
 hr
 echo
 }
@@ -446,17 +474,59 @@ amd64|x86_64) cpu=amd64;;
 esac
 mkdir -pm 700 "$HOME/agsbx"
 umask 077
+# 依赖自检与按需补全：每次运行先逐个 command -v 检测脚本真正用到的外部命令，仅对缺失项调用系统包管理器安装；
+# 已具备则零操作、不联网。跨发行版覆盖 apt/dnf/yum/pacman/apk/zypper，包名差异(ss/pgrep/crontab)按系映射。
+# 仅在 Debian 这类精简系统上首次补齐工具，coreutils/util-linux 等基础包默认存在故不重复纳入。
+ensure_deps(){
+  local pm="" miss="" cmd pkg
+  if command -v apt-get >/dev/null 2>&1; then pm=apt
+  elif command -v dnf >/dev/null 2>&1; then pm=dnf
+  elif command -v yum >/dev/null 2>&1; then pm=yum
+  elif command -v pacman >/dev/null 2>&1; then pm=pacman
+  elif command -v apk >/dev/null 2>&1; then pm=apk
+  elif command -v zypper >/dev/null 2>&1; then pm=zypper
+  fi
+  # 取某命令在当前包管理器下的包名（差异项分系处理，其余与命令同名）
+  pkg_of(){
+    case "$1" in
+      ss)      case "$pm" in dnf|yum) echo iproute ;; *) echo iproute2 ;; esac ;;
+      pgrep)   case "$pm" in dnf|yum|pacman) echo procps-ng ;; *) echo procps ;; esac ;;
+      crontab) case "$pm" in apt) echo cron ;; dnf|yum|pacman) echo cronie ;; *) echo "" ;; esac ;;
+      *)       echo "$1" ;;
+    esac
+  }
+  # 脚本真正依赖的命令清单（curl/wget 二选一，单独判断）
+  for cmd in openssl socat iptables unzip tar ss pgrep crontab; do
+    command -v "$cmd" >/dev/null 2>&1 && continue
+    pkg=$(pkg_of "$cmd"); [ -z "$pkg" ] && continue
+    case " $miss " in *" $pkg "*) ;; *) miss="$miss $pkg" ;; esac
+  done
+  # curl 与 wget 至少需其一，两者都缺才补 curl
+  if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
+    miss="$miss curl"
+  fi
+  [ -z "$miss" ] && return 0
+  [ -z "$pm" ] && { echo "未识别系统包管理器，请手动安装依赖：$miss"; return 0; }
+  echo "检测到缺失依赖：$miss，正在通过 $pm 自动安装……"
+  case "$pm" in
+    apt)    export DEBIAN_FRONTEND=noninteractive; apt-get update >/dev/null 2>&1; apt-get install -y $miss >/dev/null 2>&1 ;;
+    dnf)    dnf install -y $miss >/dev/null 2>&1 ;;
+    yum)    yum install -y $miss >/dev/null 2>&1 ;;
+    pacman) pacman -Sy --noconfirm $miss >/dev/null 2>&1 ;;
+    apk)    apk add $miss >/dev/null 2>&1 ;;
+    zypper) zypper --non-interactive install $miss >/dev/null 2>&1 ;;
+  esac
+}
 if [ ! -f "$HOME/agsbx/sbx_update" ]; then
 echo "执行脚本中，请稍后"
+# Alpine(musl) 跑官方预编译的 glibc 版 xray/sing-box 需 glibc 兼容层，附带 bash/busybox 扩展，单独保留
 if command -v apk >/dev/null 2>&1; then
 apk update >/dev/null 2>&1
 apk add gcompat libc6-compat bash busybox-extras >/dev/null 2>&1
-elif command -v apt >/dev/null 2>&1; then
-export DEBIAN_FRONTEND=noninteractive
-apt update >/dev/null 2>&1 && apt install coreutils util-linux busybox cron -y >/dev/null 2>&1
 fi
 touch "$HOME/agsbx/sbx_update"
 fi
+ensure_deps
 #============================================================
 # [第4段] 网络检测与 WARP 配置函数
 #------------------------------------------------------------
@@ -2580,18 +2650,23 @@ fi
 sleep 5
 echo
 if agsbx_running ; then
-[ -f ~/.bashrc ] || touch ~/.bashrc
+# 把 agsbx 装进 /usr/local/bin（root 默认 PATH 内）：安装完当前 SSH 会话即可直接用 agsbx，
+# 无需改 PATH、无需退出重连。旧版装在 $HOME/bin 并往 .bashrc 注入 PATH，因子进程改不了父 shell 环境才被迫要重登录。
+# 此处一并清理旧版残留：$HOME/bin/agsbx 文件 + .bashrc 里注入的 PATH 行。
+[ -f ~/.bashrc ] && {
 sed -i '/agsbx/d' ~/.bashrc
-SCRIPT_PATH="$HOME/bin/agsbx"
-mkdir -p "$HOME/bin"
-(command -v curl >/dev/null 2>&1 && curl -sL "$agsbxurl" -o "$SCRIPT_PATH") || (command -v wget >/dev/null 2>&1 && wget -qO "$SCRIPT_PATH" "$agsbxurl")
-chmod +x "$SCRIPT_PATH"
-
 sed -i '/export PATH="\$HOME\/bin:\$PATH"/d' ~/.bashrc
 sed -i '/export PATH="\$PATH:\$HOME\/bin"/d' ~/.bashrc
-echo 'export PATH="$PATH:$HOME/bin"' >> "$HOME/.bashrc"
-grep -qxF 'source ~/.bashrc' ~/.bash_profile 2>/dev/null || echo 'source ~/.bashrc' >> ~/.bash_profile
-. ~/.bashrc 2>/dev/null
+}
+rm -f "$HOME/bin/agsbx"
+if [ -d /usr/local/bin ] || mkdir -p /usr/local/bin 2>/dev/null; then
+SCRIPT_PATH="/usr/local/bin/agsbx"
+else
+SCRIPT_PATH="/usr/bin/agsbx"
+fi
+(command -v curl >/dev/null 2>&1 && curl -sL "$agsbxurl" -o "$SCRIPT_PATH") || (command -v wget >/dev/null 2>&1 && wget -qO "$SCRIPT_PATH" "$agsbxurl")
+# 700：仅 root 可读/执行，非 root 用户连读取或运行 agsbx 都被拒；root 因 /usr/local/bin 在其 PATH 中仍可立即使用。
+chmod 700 "$SCRIPT_PATH"
 cron_tmp=$(mktemp)
 crontab -l > "$cron_tmp" 2>/dev/null
 if ! pidof systemd >/dev/null 2>&1 && ! command -v rc-service >/dev/null 2>&1; then
@@ -3541,7 +3616,7 @@ sed -i '/agsbx\/cloudflared/d' "$cron_tmp"
 sed -i '/websbx/d' "$cron_tmp"
 crontab "$cron_tmp" >/dev/null 2>&1
 rm -f "$cron_tmp"
-rm -rf  "$HOME/bin/agsbx" "$HOME/websbx"
+rm -rf "$HOME/bin/agsbx" /usr/local/bin/agsbx /usr/bin/agsbx "$HOME/websbx"
 if pidof systemd >/dev/null 2>&1; then
 for svc in xr sb argo; do
 systemctl stop "$svc" >/dev/null 2>&1
@@ -3575,6 +3650,54 @@ rc-service sing-box restart >/dev/null 2>&1
 else
 nohup $HOME/agsbx/sing-box run -c $HOME/agsbx/sb.json > "$HOME/agsbx/sing-box.log" 2>&1 &
 fi
+}
+# 内核生命周期统一入口：start / stop / restart / reload，自适应 systemd / openrc / 裸 nohup 三种后端。
+# 用法：kctl <动作> <内核>，内核 ∈ xray｜sb｜caddy（all 由调用方展开为 xray+sb）。
+# 关键约束：
+#   · stop/start 在 systemd/openrc 下必须经服务管理器，否则 Restart 策略会立刻把内核重新拉起，停不掉、端口释放不了。
+#   · reload：sing-box 支持 SIGHUP 热重载（校验后重建实例）；Xray 官方不支持热重载 → 自动改为 restart；caddy 预留。
+kctl(){
+  local action="$1" kernel="$2" name bin cfg pat sd rc log
+  case "$kernel" in
+    xray|x)      name="Xray";     bin="$HOME/agsbx/xray";     cfg="$HOME/agsbx/xr.json"; pat='agsbx/xray';     sd="xr"; rc="xray";     log="$HOME/agsbx/xray.log" ;;
+    sb|sing-box) name="Sing-box"; bin="$HOME/agsbx/sing-box"; cfg="$HOME/agsbx/sb.json"; pat='agsbx/sing-box'; sd="sb"; rc="sing-box"; log="$HOME/agsbx/sing-box.log" ;;
+    caddy)       echo "Caddy 内核尚未集成，待后续版本加入后本命令将自动生效。"; return 0 ;;
+    *)           echo "未知内核：$kernel（可选 xray｜sb｜caddy｜all）"; return 1 ;;
+  esac
+  if [ ! -s "$bin" ]; then echo "${name}：内核未下载，无法执行 ${action}。"; return 1; fi
+  # Xray 无配置热重载，reload 自动降级为 restart
+  if [ "$action" = "reload" ] && [ "$sd" = "xr" ]; then
+    echo "Xray 不支持配置热重载（官方设计），已自动改为 restart。"; action="restart"
+  fi
+  case "$action" in
+    start|restart)
+      if pidof systemd >/dev/null 2>&1; then
+        systemctl "$action" "$sd" >/dev/null 2>&1
+      elif command -v rc-service >/dev/null 2>&1; then
+        rc-service "$rc" "$action" >/dev/null 2>&1
+      else
+        kill -15 $(pgrep -f "$pat" 2>/dev/null) >/dev/null 2>&1
+        nohup "$bin" run -c "$cfg" > "$log" 2>&1 &
+      fi
+      [ "$action" = start ] && echo "${name}：已启动。" || echo "${name}：已重启。" ;;
+    stop)
+      if pidof systemd >/dev/null 2>&1; then
+        systemctl stop "$sd" >/dev/null 2>&1
+      elif command -v rc-service >/dev/null 2>&1; then
+        rc-service "$rc" stop >/dev/null 2>&1
+      else
+        kill -15 $(pgrep -f "$pat" 2>/dev/null) >/dev/null 2>&1
+      fi
+      echo "${name}：已停止（占用端口已释放）。" ;;
+    reload)
+      if pgrep -f "$pat" >/dev/null 2>&1; then
+        kill -HUP $(pgrep -f "$pat" 2>/dev/null) >/dev/null 2>&1
+        echo "${name}：已发送热重载信号（SIGHUP）。"
+      else
+        echo "${name}：进程未运行，无法 reload，请改用 start。"
+      fi ;;
+    *) echo "未知动作：$action（可选 start｜stop｜restart｜reload）"; return 1 ;;
+  esac
 }
 
 # 内核资源 / 流量监控：纯读 /proc + ss，零依赖、不改动任何配置，兼容 busybox(无 ps -o 的精简系统)。
@@ -3739,6 +3862,33 @@ fi
 esac
 done
 sleep 5 && echo "重启完成" && sleep 3 && cip
+exit
+elif [ "$1" = "update" ]; then
+# 仅把 agsbx 自身刷新到最新版，不触碰任何配置与内核（服务保持运行、连接不断）。
+dst=$(command -v agsbx 2>/dev/null); [ -z "$dst" ] && dst="/usr/local/bin/agsbx"
+echo "正在从仓库拉取最新脚本覆盖：$dst ……"
+utmp=$(mktemp)
+if (command -v curl >/dev/null 2>&1 && curl -sL "$agsbxurl" -o "$utmp") || (command -v wget >/dev/null 2>&1 && wget -qO "$utmp" "$agsbxurl"); then
+  if head -1 "$utmp" 2>/dev/null | grep -q '^#!'; then
+    mv -f "$utmp" "$dst" && chmod 700 "$dst"
+    echo "脚本已更新到最新版 ✓（配置与内核未改动；需要应用新逻辑时再按需 agsbx rep / res）。"
+  else
+    rm -f "$utmp"; echo "更新失败：下载内容异常（非脚本），已保留原脚本不动。"
+  fi
+else
+  rm -f "$utmp"; echo "更新失败：网络不可达，已保留原脚本不动。"
+fi
+exit
+elif [ "$1" = "start" ] || [ "$1" = "stop" ] || [ "$1" = "restart" ] || [ "$1" = "reload" ]; then
+# 内核生命周期：agsbx <动作> [内核]，内核省略=all（展开为 xray+sb 两大代理内核；Argo 全量重启请用 res）
+action="$1"; target="${2:-all}"
+case "$target" in
+  all)         kctl "$action" xray; kctl "$action" sb ;;
+  xray|x)      kctl "$action" xray ;;
+  sb|sing-box) kctl "$action" sb ;;
+  caddy)       kctl "$action" caddy ;;
+  *)           echo "未知内核：$target（可选 xray｜sb｜caddy｜all，省略=all）"; exit 1 ;;
+esac
 exit
 fi
 #============================================================
