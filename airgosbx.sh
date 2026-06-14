@@ -971,7 +971,7 @@ cat > "$test_cfg" <<EOF
 {
   order forward_proxy before reverse_proxy
 }
-:443 {
+:8080 {
   forward_proxy {
     probe_resistance
   }
