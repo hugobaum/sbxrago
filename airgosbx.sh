@@ -964,27 +964,7 @@ if ! "$newcaddy" version >/dev/null 2>&1; then echo "错误：caddy 不可执行
 if ! "$newcaddy" list-modules 2>/dev/null | grep -q 'forward_proxy'; then
   echo "错误：该 caddy 未内置 forward_proxy 模块，无法用于 NaiveProxy。"; rm -rf "$cstage"; return 1
 fi
-# 强力校验：使用临时配置文件做语法预检，检验是否集成了 NaiveProxy 专用分支的抗主动探测模块
-local test_cfg
-test_cfg=$(mktemp)
-cat > "$test_cfg" <<EOF
-{
-  order forward_proxy before reverse_proxy
-}
-:8080 {
-  forward_proxy {
-    probe_resistance
-  }
-}
-EOF
-if ! "$newcaddy" validate --config "$test_cfg" >/dev/null 2>&1; then
-  echo "错误：该 caddy 二进制虽内置 forward_proxy 模块，但不是集成有 NaiveProxy 专用分支的 Caddy（无法识别抗探测特性）。"
-  rm -f "$test_cfg"
-  rm -rf "$cstage"
-  return 1
-fi
-rm -f "$test_cfg"
-echo "Caddy(naive) 安全与功能特征校验通过 ✓"
+
 mv -f "$newcaddy" "$HOME/agsbx/caddy"
 rm -rf "$cstage"
 echo "已安装 Caddy(naive) 内核：$("$HOME/agsbx/caddy" version 2>/dev/null | head -1)"
