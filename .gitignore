@@ -1,17 +1,7 @@
-# 忽略系统文件
-.DS_Store
+# 默认忽略所有文件与目录
+*
 
-# 忽略备份和他人脚本的文件夹
-backup/
-fs script/
-yg script/
-
-# 忽略他人及临时的单文件脚本与文档
-sb.sh
-singboxraygo.sh
-singboxDNS.md
-yg_diff.txt
-*.py
-
-# 本地提交历史记录文件
-commit_history.md
+# 显式排除核心文件，确保只有它们能被同步
+!.gitignore
+!LICENSE
+!airgosbx.sh

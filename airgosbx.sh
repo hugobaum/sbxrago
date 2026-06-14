@@ -27,6 +27,12 @@ agsbx_running(){
     || pgrep -f 'agsbx/sing-box' >/dev/null 2>&1 \
     || pgrep -f 'agsbx/xray' >/dev/null 2>&1
 }
+# 安装态探测：只要内核二进制还在磁盘上就视为"已安装"（rep 只重置配置、stop 只停进程，都不删二进制）。
+# 管理类命令(start/stop/restart/reload/list/...)应以"是否已安装"放行，而非"是否正在运行"——
+# 否则 stop 停掉最后一个内核后 agsbx_running 变 false，随后的 start 会被前置守卫误判为"未安装"而拦截。
+agsbx_installed(){
+  [ -s "$HOME/agsbx/sing-box" ] || [ -s "$HOME/agsbx/xray" ]
+}
 
 # 终端配色：仅在交互式 TTY 且未设置 NO_COLOR 时启用；输出被重定向到文件/管道时自动留空，
 # 避免 ANSI 转义码污染订阅文件（jh.txt / clmi.yaml）。
@@ -115,6 +121,13 @@ vrow "name"     "所有节点名称前缀"
 vrow "reym"     "自定义 Reality 伪装域名（留空＝按地区智能选）"
 vrow "obfs_pass" "Hysteria2 混淆密码（留空＝自动生成）"
 vrow "ippz"     "list时只显示指定栈：4 或 6（双栈VPS用）"
+
+vg "⑪ NaiveProxy（Caddy 内核·独立于 xray/sb，需真实域名）"
+vrow "naive"     "启用并指定域名（须已解析到本机，如 naive=p.example.com）"
+vrow "naiveuser" "basic_auth 用户名（留空＝naive）"
+vrow "naivepass" "basic_auth 密码（留空＝自动生成）"
+vrow "naivebuild" "内核获取：dl=下载预编译(仅amd64)／build=现场编译(arm64必走)"
+vrow "naivesite" "reverse_proxy 伪装站域名（留空＝默认公共镜像）"
 echo
 hr
 echo "命令速查见 ${C_YELLOW}agsbx cmds${C_RESET} ｜ 完整帮助 ${C_YELLOW}agsbx help${C_RESET}"
@@ -135,13 +148,13 @@ vrow "del"      "卸载 agsbx（清进程/服务/定时任务/文件）"
 
 vg "② 查看 / 信息"
 vrow "list"     "打印所有节点信息卡片（ippz=4或6 可只看单栈）"
-vrow "stats"    "内核资源 + 流量监控（别名 top）"
+vrow "status"   "内核资源 + 流量监控（别名 stats / top）"
 vrow "vars"     "变量速查表"
 vrow "cmds"     "命令速查表（本表）"
 vrow "help"     "完整帮助（vars + cmds）"
 
 vg "③ 内核启停（用法：agsbx <动作> [内核]）"
-echo "             内核 = xray ｜ sb ｜ caddy(预留) ｜ all(省略即全部 xray+sb)"
+echo "             内核 = xray ｜ sb ｜ caddy ｜ all(省略即全部 xray+sb；caddy 需单独指定)"
 vrow "start"    "启动内核"
 vrow "stop"     "停止内核（释放其占用的端口）"
 vrow "restart"  "重启内核"
@@ -381,7 +394,7 @@ export LANG=en_US.UTF-8
 [ -z "${xvargopt+x}" ] || { xvargo=yes; vmag=yes; }
 [ -z "${subpt+x}" ] || sub=yes
 [ -z "${subid+x}" ] || sub=yes
-if agsbx_running; then
+if agsbx_running || agsbx_installed; then
 if [ "$1" = "rep" ]; then
 [ "$vwp" = yes ] || [ "$sop" = yes ] || [ "$vxp" = yes ] || [ "$ssp" = yes ] || [ "$vlp" = yes ] || [ "$vmp" = yes ] || [ "$hyp" = yes ] || [ "$tup" = yes ] || [ "$xhp" = yes ] || [ "$anp" = yes ] || [ "$arp" = yes ] || [ "$xhyp" = yes ] || [ "$xdns" = yes ] || [ "$xicp" = yes ] || [ "$xvcdn" = yes ] || [ "$xvargo" = yes ] || { echo "提示：rep重置协议时，请在脚本前至少设置一个协议变量哦! 💣"; exit; }
 fi
@@ -445,9 +458,9 @@ agsbxurl="https://raw.githubusercontent.com/hugobaum/sbxrago/main/airgosbx.sh"
 showmode(){
 printf '%s\n' "${C_BOLD}核心命令速查（完整命令 ${C_YELLOW}agsbx cmds${C_RESET}${C_BOLD} ｜ 变量 ${C_YELLOW}agsbx vars${C_RESET}${C_BOLD} ｜ 全部 ${C_YELLOW}agsbx help${C_RESET}${C_BOLD}）：${C_RESET}"
 echo "  · 主脚本：bash <(curl -Ls $agsbxurl)  或  bash <(wget -qO- $agsbxurl)"
-echo "  · 节点信息：agsbx list      ｜ 资源/流量：agsbx stats"
+echo "  · 节点信息：agsbx list      ｜ 资源/流量：agsbx status"
 echo "  · 重置配置：变量组 agsbx rep ｜ 更新脚本：agsbx update ｜ 卸载：agsbx del"
-echo "  · 内核启停：agsbx start｜stop｜restart｜reload [xray｜sb｜all]"
+echo "  · 内核启停：agsbx start｜stop｜restart｜reload [xray｜sb｜caddy｜all]"
 echo "  · 升级内核：agsbx upx/ups [版本]  ｜ 降级：agsbx downx/downs <版本>"
 hr
 echo
@@ -492,11 +505,12 @@ ensure_deps(){
       ss)      case "$pm" in dnf|yum) echo iproute ;; *) echo iproute2 ;; esac ;;
       pgrep)   case "$pm" in dnf|yum|pacman) echo procps-ng ;; *) echo procps ;; esac ;;
       crontab) case "$pm" in apt) echo cron ;; dnf|yum|pacman) echo cronie ;; *) echo "" ;; esac ;;
+      xz)      case "$pm" in apt) echo xz-utils ;; *) echo xz ;; esac ;;
       *)       echo "$1" ;;
     esac
   }
   # 脚本真正依赖的命令清单（curl/wget 二选一，单独判断）
-  for cmd in openssl socat iptables unzip tar ss pgrep crontab; do
+  for cmd in openssl socat iptables unzip tar xz ss pgrep crontab; do
     command -v "$cmd" >/dev/null 2>&1 && continue
     pkg=$(pkg_of "$cmd"); [ -z "$pkg" ] && continue
     case " $miss " in *" $pkg "*) ;; *) miss="$miss $pkg" ;; esac
@@ -865,6 +879,90 @@ rm -rf "$sstage"
 sbcore=$("$HOME/agsbx/sing-box" version 2>/dev/null | awk '/version/{print $NF}')
 echo "已安装Sing-box正式版内核：$sbcore（来源：github.com/SagerNet/sing-box）"
 }
+upcaddy(){
+# NaiveProxy 服务端＝带 forwardproxy@naive 分支的 Caddy。两种获取方式，按 CPU 架构与用户选择决定：
+#   · 官方预编译（仅 amd64，klzgrad/forwardproxy 发布页）——1C1G 小机首选，零编译；
+#   · xcaddy 现场编译（arm64 必走 / amd64 可选）——用 go.dev 官方 tarball 引导唯一标准 Go，全程自包含在暂存区。
+# 锁定 release tag（不取 latest）：供应链可审计、可复现；升级时手动 bump 此默认值或传 NAIVE_VER= 覆盖。
+NAIVE_VER="${NAIVE_VER:-v2.11.2-naive}"
+local method="$naivebuild" ans
+# 未显式指定获取方式时：交互终端按架构给菜单选一次；非交互(管道运行)则 amd64 默认下载、arm64 直接报错给指引。
+if [ -z "$method" ]; then
+  if [ -t 0 ]; then
+    if [ "$cpu" = amd64 ]; then
+      echo "请选择 NaiveProxy(Caddy) 内核获取方式："
+      echo "  [1] 下载官方预编译二进制（推荐，1C1G 小机友好，零编译）"
+      echo "  [2] 用 xcaddy 现场编译（需下载 Go，耗时数分钟）"
+      printf "输入 1 或 2（默认 1）："; read -r ans
+      case "$ans" in 2) method=build ;; *) method=dl ;; esac
+    else
+      echo "检测到 $cpu 架构：官方未提供预编译二进制，只能现场编译。"
+      echo "  [1] 用 xcaddy 现场编译（需下载 Go，arm 性能足够，耗时数分钟）"
+      echo "  [2] 放弃安装 NaiveProxy"
+      printf "输入 1 或 2（默认 1）："; read -r ans
+      case "$ans" in 2) echo "已跳过 NaiveProxy 安装。"; return 1 ;; *) method=build ;; esac
+    fi
+  else
+    if [ "$cpu" = amd64 ]; then
+      method=dl
+    else
+      echo "错误：$cpu 架构无官方预编译 Caddy(naive)，且当前为非交互环境无法选择。"
+      echo "请在交互终端重试，或显式指定 naivebuild=build 启用现场编译。"
+      return 1
+    fi
+  fi
+fi
+# arm64 没有预编译，纵使误选 dl 也强制改为 build
+if [ "$method" = dl ] && [ "$cpu" != amd64 ]; then
+  echo "注意：$cpu 无官方预编译，自动改为现场编译。"; method=build
+fi
+local cstage="$HOME/agsbx/.stage_caddy"
+rm -rf "$cstage"; mkdir -p "$cstage"
+if [ "$method" = dl ]; then
+  echo "正在从 klzgrad/forwardproxy 官方发布页下载预编译 Caddy(naive)：$NAIVE_VER ……"
+  local url="https://github.com/klzgrad/forwardproxy/releases/download/${NAIVE_VER}/caddy-forwardproxy-naive.tar.xz"
+  local tmp="$cstage/caddy.tar.xz"
+  (command -v curl >/dev/null 2>&1 && curl -Lo "$tmp" -# --retry 2 "$url") || (command -v wget >/dev/null 2>&1 && wget -O "$tmp" --tries=2 "$url")
+  if [ ! -s "$tmp" ]; then echo "错误：Caddy 下载失败（网络不可达或该版本资源不存在）。"; rm -rf "$cstage"; return 1; fi
+  # .tar.xz 解压：优先 GNU tar -J，缺则用 xz 管道兜底（兼容 busybox tar）。xz 已在 ensure_deps 中预置。
+  if ! ( tar -xJf "$tmp" -C "$cstage" 2>/dev/null || ( xz -dc "$tmp" 2>/dev/null | tar -xf - -C "$cstage" 2>/dev/null ) ); then
+    echo "错误：解压失败，可能缺少 xz 工具。请确认已安装 xz/xz-utils 后重试。"; rm -rf "$cstage"; return 1
+  fi
+else
+  echo "正在引导 Go 工具链并用 xcaddy 编译 Caddy(naive)（下载约 150MB、耗时数分钟、建议 ≥1G 内存）……"
+  local gover
+  gover=$( (command -v curl >/dev/null 2>&1 && curl -s https://go.dev/VERSION?m=text | head -1) || (command -v wget >/dev/null 2>&1 && wget -qO- https://go.dev/VERSION?m=text | head -1) )
+  if [ -z "$gover" ]; then echo "错误：无法从 go.dev 获取 Go 版本号（网络不可达）。"; rm -rf "$cstage"; return 1; fi
+  local gotar="$cstage/go.tar.gz"
+  echo "下载 Go 官方 tarball：${gover}.linux-${cpu} ……"
+  (command -v curl >/dev/null 2>&1 && curl -Lo "$gotar" -# --retry 2 "https://go.dev/dl/${gover}.linux-${cpu}.tar.gz") || (command -v wget >/dev/null 2>&1 && wget -O "$gotar" --tries=2 "https://go.dev/dl/${gover}.linux-${cpu}.tar.gz")
+  tar -xzf "$gotar" -C "$cstage" 2>/dev/null
+  if [ ! -x "$cstage/go/bin/go" ]; then echo "错误：Go 解压失败。"; rm -rf "$cstage"; return 1; fi
+  # Go 全程关在暂存区子 shell：GOROOT/GOPATH 不外泄、不写 /usr/local、不改 .bashrc，随 cstage 一并清除。
+  if ! ( export GOROOT="$cstage/go" GOPATH="$cstage/gopath" PATH="$cstage/go/bin:$cstage/gopath/bin:$PATH"
+         echo "Go 就绪：$("$cstage/go/bin/go" version 2>/dev/null)"
+         echo "安装 xcaddy 构建器……"
+         "$cstage/go/bin/go" install github.com/caddyserver/xcaddy/cmd/xcaddy@latest &&
+         echo "编译 Caddy + forwardproxy@naive（请耐心等待）……" &&
+         cd "$cstage" &&
+         "$cstage/gopath/bin/xcaddy" build --with github.com/caddyserver/forwardproxy=github.com/klzgrad/forwardproxy@naive ); then
+    echo "错误：Go/xcaddy 编译失败（可看上方报错；网络或内存不足是常见原因）。"; rm -rf "$cstage"; return 1
+  fi
+fi
+# 定位产物：下载包内为 caddy，编译产物在 cstage/caddy
+local newcaddy="$cstage/caddy"
+[ -f "$newcaddy" ] || newcaddy=$(find "$cstage" -maxdepth 2 -type f -name caddy 2>/dev/null | head -1)
+if [ ! -s "$newcaddy" ]; then echo "错误：未找到 caddy 可执行文件。"; rm -rf "$cstage"; return 1; fi
+chmod +x "$newcaddy"
+# 功能性校验（替代 SHA256——该 release 无官方校验文件）：必须可执行且内置 forward_proxy 模块
+if ! "$newcaddy" version >/dev/null 2>&1; then echo "错误：caddy 不可执行（架构不符或文件损坏）。"; rm -rf "$cstage"; return 1; fi
+if ! "$newcaddy" list-modules 2>/dev/null | grep -q 'forward_proxy'; then
+  echo "错误：该 caddy 未内置 forward_proxy 模块，无法用于 NaiveProxy。"; rm -rf "$cstage"; return 1
+fi
+mv -f "$newcaddy" "$HOME/agsbx/caddy"
+rm -rf "$cstage"
+echo "已安装 Caddy(naive) 内核：$("$HOME/agsbx/caddy" version 2>/dev/null | head -1)"
+}
 #============================================================
 # [第6段] UUID 生成 + 协议配置生成函数
 #   insuuid()     - 生成或读取 UUID
@@ -895,6 +993,24 @@ elif [ -n "$obfs_pass" ]; then
 fi
 obfs_pass=$(cat "$HOME/agsbx/obfs_pass")
 echo "Hysteria2 混淆密码：$obfs_pass"
+}
+
+insnaivecred(){
+# NaiveProxy 的 forward_proxy basic_auth 凭据：用户名 + 密码。幂等——已存在则复用，对齐 insobfspass。
+if [ -n "$naiveuser" ]; then
+  echo "$naiveuser" > "$HOME/agsbx/naive_user"
+elif [ ! -e "$HOME/agsbx/naive_user" ]; then
+  echo "naive" > "$HOME/agsbx/naive_user"
+fi
+naiveuser=$(cat "$HOME/agsbx/naive_user")
+if [ -n "$naivepass" ]; then
+  echo "$naivepass" > "$HOME/agsbx/naive_pass"
+elif [ ! -e "$HOME/agsbx/naive_pass" ]; then
+  tr -dc 'a-zA-Z0-9' </dev/urandom | head -c 16 > "$HOME/agsbx/naive_pass"
+fi
+naivepass=$(cat "$HOME/agsbx/naive_pass")
+echo "NaiveProxy 账号：$naiveuser"
+echo "NaiveProxy 密码：$naivepass"
 }
 fetch_file(){
 fetch_url="$1"
@@ -2149,6 +2265,139 @@ ssp=ssptargo
 fi
 }
 
+installcaddy(){
+echo
+printf '%s\n' "${C_CYAN}=========启用 NaiveProxy(Caddy) 内核=========${C_RESET}"
+# 关键参数（域名/伪装站/账号/密码）两种来源任选：环境变量预置，或交互终端按提示输入。
+# naive=<域名> 既是开关也是域名；若传入的不是合法域名(如 naive=on)，交互终端会提示补输。
+# NaiveProxy 必须有真实域名 + DNS 指向本机（不同于 reality 可裸 IP）。
+local interactive_naive=0
+if ! valid_domain "$naive"; then
+if [ -t 0 ]; then
+interactive_naive=1
+while :; do
+printf "请输入 NaiveProxy 域名（须已将 DNS A/AAAA 指向本机，直接回车=放弃）："; read -r naive
+[ -z "$naive" ] && { echo "已放弃 NaiveProxy 安装。"; return 1; }
+valid_domain "$naive" && break
+echo "域名格式不正确，请重输。"
+done
+else
+echo "错误：naive=$naive 不是合法域名。NaiveProxy 需要已解析到本机的真实域名，例如 naive=proxy.example.com。已跳过。"
+return 1
+fi
+fi
+# 交互模式(域名为现场输入)下，继续就伪装站/账号/密码给出可选提示；已用环境变量预置者自动跳过。
+if [ "$interactive_naive" = 1 ]; then
+[ -z "$naivesite" ] && { printf "伪装站域名（直接回车=默认 mirror.us.leaseweb.net）："; read -r naivesite; }
+[ -z "$naiveuser" ] && { printf "basic_auth 用户名（直接回车=默认 naive）："; read -r naiveuser; }
+[ -z "$naivepass" ] && { printf "basic_auth 密码（直接回车=自动随机生成）："; read -r naivepass; }
+fi
+# 获取/编译 caddy 二进制（按架构交互选择）；失败则放弃，不影响其它内核。
+if [ ! -s "$HOME/agsbx/caddy" ]; then
+upcaddy || { echo "NaiveProxy 内核未就位，已跳过 Caddy 配置。"; return 1; }
+fi
+insnaivecred
+# [80端口占用预检] Caddy 自管 ACME 需要 80 端口做 HTTP-01 验证/跳转；占用则告警（不强制中断）。
+if command -v ss >/dev/null 2>&1 && ss -tuln 2>/dev/null | grep -qE '(:80[[:space:]]|:80$)'; then
+printf '%s\n' "${C_YELLOW}警告：检测到 80 端口已被占用，Caddy 自动申请证书可能失败。${C_RESET}"
+echo "如有其它服务占用 80/443（如 nginx 或脚本内 acme.sh），可先停掉再装，或装好后用 agsbx stop caddy 让出端口。"
+fi
+# 生成 Caddyfile（硬化模板：剥离指纹响应头、净化回源请求头、probe_resistance 抗主动探测）
+local naivemail="${acmem:-admin@$naive}"
+local naivesite="${naivesite:-mirror.us.leaseweb.net}"
+# 容错：伪装站允许带或不带 scheme，统一剥离后由模板固定以 https 回源（伪装站须支持 HTTPS）
+naivesite="${naivesite#http://}"; naivesite="${naivesite#https://}"
+# 持久化域名：供后续 agsbx list 渲染节点卡片时读取（彼时 naive 环境变量已不在作用域）
+echo "$naive" > "$HOME/agsbx/naive_domain"
+cat > "$HOME/agsbx/Caddyfile" <<EOF
+{
+  order forward_proxy before reverse_proxy
+  log {
+    exclude http.log.error
+  }
+}
+:443, $naive {
+  tls $naivemail
+  encode
+  header {
+    -Server
+    -X-Powered-By
+  }
+  forward_proxy {
+    basic_auth $naiveuser $naivepass
+    hide_ip
+    hide_via
+    probe_resistance
+  }
+  reverse_proxy https://$naivesite {
+    header_up Host {upstream_hostport}
+    header_up -Forwarded
+    header_up -Via
+    header_up -X-Forwarded-*
+    header_up -X-Real-IP
+    header_up -X-Client-IP
+    header_up -Proxy-Connection
+    header_up -Proxy-Authorization
+    header_up -Cookie
+    header_up -Origin
+    header_up -Referer
+    header_down -Server
+    header_down -X-Powered-By
+    header_down -Set-Cookie
+  }
+}
+EOF
+# 配置落地后语法预检，不过则告警（仍注册服务，便于用户看 journal 定位后 agsbx reload caddy 修正）
+if ! "$HOME/agsbx/caddy" validate --config "$HOME/agsbx/Caddyfile" >/dev/null 2>&1; then
+printf '%s\n' "${C_YELLOW}警告：Caddyfile 校验未通过，请检查域名/邮箱后用 agsbx reload caddy 重载。${C_RESET}"
+fi
+# 服务注册三后端（systemd / openrc / 裸 nohup），对齐 xr/argo 既有写法；root 运行 + NoNewPrivileges 收敛。
+if pidof systemd >/dev/null 2>&1 && is_root; then
+cat > /etc/systemd/system/caddy.service <<EOF
+[Unit]
+Description=caddy naiveproxy service
+After=network.target network-online.target
+Wants=network-online.target
+[Service]
+Type=simple
+NoNewPrivileges=yes
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+TimeoutStartSec=0
+ExecStart=$HOME/agsbx/caddy run --config $HOME/agsbx/Caddyfile
+ExecReload=$HOME/agsbx/caddy reload --config $HOME/agsbx/Caddyfile --force
+Restart=on-failure
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl daemon-reload >/dev/null 2>&1
+systemctl enable caddy >/dev/null 2>&1
+systemctl start caddy >/dev/null 2>&1
+elif command -v rc-service >/dev/null 2>&1 && is_root; then
+cat > /etc/init.d/caddy <<EOF
+#!/sbin/openrc-run
+description="caddy naiveproxy service"
+command="$HOME/agsbx/caddy"
+command_args="run --config $HOME/agsbx/Caddyfile"
+command_background=yes
+pidfile="/run/caddy.pid"
+depend() {
+need net
+}
+EOF
+chmod +x /etc/init.d/caddy >/dev/null 2>&1
+rc-update add caddy default >/dev/null 2>&1
+rc-service caddy start >/dev/null 2>&1
+else
+nohup "$HOME/agsbx/caddy" run --config "$HOME/agsbx/Caddyfile" > "$HOME/agsbx/caddy.log" 2>&1 &
+fi
+echo "NaiveProxy(Caddy) 已部署：https://$naive"
+echo "分享链接：naive+https://$naiveuser:$naivepass@$naive"
+echo "提示：首次启动 Caddy 会自动向 Let's Encrypt 申请证书，约数秒~1 分钟；可用 journalctl -u caddy -f 观察握手。"
+}
+
 #============================================================
 # [第7段] 附加协议与出站/路由配置生成函数
 #------------------------------------------------------------
@@ -2647,6 +2896,10 @@ else
 echo "Argo$argoname隧道申请失败，请稍后再试"
 fi
 fi
+# NaiveProxy（Caddy）增量内核：仅当显式设置 naive=<域名> 时装配，与 xray/sing-box 隔离并存。
+if [ -n "$naive" ]; then
+installcaddy
+fi
 sleep 5
 echo
 if agsbx_running ; then
@@ -2678,6 +2931,10 @@ fi
 if find /proc/*/exe -type l 2>/dev/null | grep -E '/proc/[0-9]+/exe' | xargs -r readlink 2>/dev/null | grep -q 'agsbx/xray' || pgrep -f 'agsbx/xray' >/dev/null 2>&1 ; then
 echo '@reboot sleep 10 && /bin/sh -c "nohup $HOME/agsbx/xray run -c $HOME/agsbx/xr.json > $HOME/agsbx/xray.log 2>&1 &"' >> "$cron_tmp"
 fi
+sed -i '/agsbx\/caddy/d' "$cron_tmp"
+if [ -n "$naive" ] && [ -s "$HOME/agsbx/caddy" ]; then
+echo '@reboot sleep 10 && /bin/sh -c "nohup $HOME/agsbx/caddy run --config $HOME/agsbx/Caddyfile > $HOME/agsbx/caddy.log 2>&1 &"' >> "$cron_tmp"
+fi
 fi
 sed -i '/agsbx\/cloudflared/d' "$cron_tmp"
 if [ -n "$argo" ] && [ -n "$vmag" ]; then
@@ -2704,7 +2961,7 @@ fi
 # - 关联性: 由第 12 段 (主入口) 在初始化完毕或第 11 段 (upx/ups内核更新/list查看) 时调用，是负责对用户渲染输出的最强表现层。
 #============================================================
 airgosbxstatus(){
-printf '%s\n' "${C_CYAN}========= 当前三大内核运行状态 =========${C_RESET}"
+printf '%s\n' "${C_CYAN}========= 当前内核运行状态 =========${C_RESET}"
 procs=$(find /proc/*/exe -type l 2>/dev/null | grep -E '/proc/[0-9]+/exe' | xargs -r readlink 2>/dev/null)
 # 内核状态判定助手：进程是否在跑，叠加"配置 × 二进制"两个独立条件，共五种输出。
 #   运行中        ：进程在（优先级最高，与配置/二进制无关）
@@ -2721,6 +2978,7 @@ kstat(){
       xray) ver=$("$bin" version 2>/dev/null | awk '/^Xray/{print $2}') ;;
       sb)   ver=$("$bin" version 2>/dev/null | awk '/version/{print $NF}') ;;
       argo) ver=$("$bin" version 2>/dev/null | awk '{print $3}') ;;
+      caddy) ver=$("$bin" version 2>/dev/null | awk '{print $1}' | sed 's/^v//') ;;
     esac
     printf '%s\n' "${name} (版本V${ver})：${C_GREEN}运行中${C_RESET}"
     return
@@ -2742,6 +3000,7 @@ kstat(){
 }
 kstat "Sing-box" "$HOME/agsbx/sing-box"    "$HOME/agsbx/sb.json"      'agsbx/sing-box'   sb   "$HOME/agsbx/sing-box.log"
 kstat "Xray"     "$HOME/agsbx/xray"        "$HOME/agsbx/xr.json"      'agsbx/xray'       xray "$HOME/agsbx/xray.log"
+kstat "Caddy"    "$HOME/agsbx/caddy"       "$HOME/agsbx/Caddyfile"    'agsbx/caddy'      caddy "$HOME/agsbx/caddy.log"
 kstat "Argo"     "$HOME/agsbx/cloudflared" "$HOME/agsbx/argoport.log" 'agsbx/cloudflared' argo "$HOME/agsbx/argo.log"
 }
 cip(){
@@ -3254,6 +3513,21 @@ echo "客户端用户名：$uuid"
 echo "客户端密码：$uuid"
 echo
 fi
+# NaiveProxy(Caddy) 节点卡片：独立内核，配置存在即展示。仅打印到控制台，不并入聚合订阅 jh.txt / Clash
+# （naive 客户端生态与 vless/vmess 等不同，混入聚合订阅会被多数客户端解析失败）。
+if [ -s "$HOME/agsbx/naive_domain" ]; then
+naivedomain=$(cat "$HOME/agsbx/naive_domain")
+naiveuser=$(cat "$HOME/agsbx/naive_user" 2>/dev/null)
+naivepass=$(cat "$HOME/agsbx/naive_pass" 2>/dev/null)
+node_title "💣【 NaiveProxy 】Caddy 转发代理（独立客户端），节点信息如下："
+echo "域名(SNI)：$naivedomain"
+echo "端口：443"
+echo "账号：$naiveuser"
+echo "密码：$naivepass"
+echo "分享链接：naive+https://$naiveuser:$naivepass@$naivedomain:443?padding=true#${sxname}naiveproxy-$hostname"
+echo "（请用 NekoBox 等支持 naive 的客户端导入上面链接；未并入 jh.txt / Clash 聚合订阅）"
+echo
+fi
 argodomain=$(cat "$HOME/agsbx/sbargoym.log" 2>/dev/null)
 if [ -z "$argodomain" ]; then
   argodomain=$(grep -oE '[a-zA-Z0-9.-]+\.trycloudflare\.com' "$HOME/agsbx/argo.log" 2>/dev/null | head -n1)
@@ -3600,8 +3874,8 @@ showmode
 cleandel(){
 restore_xicmp_state
 cleanup_port_hopping
-for P in /proc/[0-9]*; do if [ -L "$P/exe" ]; then TARGET=$(readlink -f "$P/exe" 2>/dev/null); if echo "$TARGET" | grep -qE '/agsbx/cloudflared|/agsbx/sing-box|/agsbx/xray'; then PID=$(basename "$P"); kill "$PID" 2>/dev/null; fi; fi; done
-kill -15 $(pgrep -f 'agsbx/sing-box' 2>/dev/null) $(pgrep -f 'agsbx/cloudflared' 2>/dev/null) $(pgrep -f 'agsbx/xray' 2>/dev/null) $(pgrep -f 'websbx' 2>/dev/null) >/dev/null 2>&1
+for P in /proc/[0-9]*; do if [ -L "$P/exe" ]; then TARGET=$(readlink -f "$P/exe" 2>/dev/null); if echo "$TARGET" | grep -qE '/agsbx/cloudflared|/agsbx/sing-box|/agsbx/xray|/agsbx/caddy'; then PID=$(basename "$P"); kill "$PID" 2>/dev/null; fi; fi; done
+kill -15 $(pgrep -f 'agsbx/sing-box' 2>/dev/null) $(pgrep -f 'agsbx/cloudflared' 2>/dev/null) $(pgrep -f 'agsbx/xray' 2>/dev/null) $(pgrep -f 'agsbx/caddy' 2>/dev/null) $(pgrep -f 'websbx' 2>/dev/null) >/dev/null 2>&1
 if [ -f ~/.bashrc ]; then
 sed -i '/agsbx/d' ~/.bashrc
 sed -i '/export PATH="\$HOME\/bin:\$PATH"/d' ~/.bashrc
@@ -3613,22 +3887,23 @@ crontab -l > "$cron_tmp" 2>/dev/null
 sed -i '/agsbx\/sing-box/d' "$cron_tmp"
 sed -i '/agsbx\/xray/d' "$cron_tmp"
 sed -i '/agsbx\/cloudflared/d' "$cron_tmp"
+sed -i '/agsbx\/caddy/d' "$cron_tmp"
 sed -i '/websbx/d' "$cron_tmp"
 crontab "$cron_tmp" >/dev/null 2>&1
 rm -f "$cron_tmp"
 rm -rf "$HOME/bin/agsbx" /usr/local/bin/agsbx /usr/bin/agsbx "$HOME/websbx"
 if pidof systemd >/dev/null 2>&1; then
-for svc in xr sb argo; do
+for svc in xr sb argo caddy; do
 systemctl stop "$svc" >/dev/null 2>&1
 systemctl disable "$svc" >/dev/null 2>&1
 done
-rm -rf /etc/systemd/system/{xr.service,sb.service,argo.service}
+rm -rf /etc/systemd/system/{xr.service,sb.service,argo.service,caddy.service}
 elif command -v rc-service >/dev/null 2>&1; then
-for svc in sing-box xray argo; do
+for svc in sing-box xray argo caddy; do
 rc-service "$svc" stop >/dev/null 2>&1
 rc-update del "$svc" default >/dev/null 2>&1
 done
-rm -rf /etc/init.d/{sing-box,xray,argo} /etc/local.d/alpinesubsbx.start
+rm -rf /etc/init.d/{sing-box,xray,argo,caddy} /etc/local.d/alpinesubsbx.start
 fi
 }
 xrestart(){
@@ -3661,7 +3936,7 @@ kctl(){
   case "$kernel" in
     xray|x)      name="Xray";     bin="$HOME/agsbx/xray";     cfg="$HOME/agsbx/xr.json"; pat='agsbx/xray';     sd="xr"; rc="xray";     log="$HOME/agsbx/xray.log" ;;
     sb|sing-box) name="Sing-box"; bin="$HOME/agsbx/sing-box"; cfg="$HOME/agsbx/sb.json"; pat='agsbx/sing-box'; sd="sb"; rc="sing-box"; log="$HOME/agsbx/sing-box.log" ;;
-    caddy)       echo "Caddy 内核尚未集成，待后续版本加入后本命令将自动生效。"; return 0 ;;
+    caddy)       name="Caddy";     bin="$HOME/agsbx/caddy";     cfg="$HOME/agsbx/Caddyfile"; pat='agsbx/caddy';    sd="caddy"; rc="caddy";    log="$HOME/agsbx/caddy.log" ;;
     *)           echo "未知内核：$kernel（可选 xray｜sb｜caddy｜all）"; return 1 ;;
   esac
   if [ ! -s "$bin" ]; then echo "${name}：内核未下载，无法执行 ${action}。"; return 1; fi
@@ -3669,6 +3944,16 @@ kctl(){
   if [ "$action" = "reload" ] && [ "$sd" = "xr" ]; then
     echo "Xray 不支持配置热重载（官方设计），已自动改为 restart。"; action="restart"
   fi
+  # Caddy：start/restart/reload 前先做配置语法预检，坏配置直接拦截，不推上线、不动正在运行的服务
+  if [ "$sd" = caddy ] && { [ "$action" = start ] || [ "$action" = restart ] || [ "$action" = reload ]; } && [ -s "$cfg" ]; then
+    if ! "$bin" validate --config "$cfg" >/dev/null 2>&1; then
+      echo "Caddy：配置校验未通过，已拦截 ${action}（不影响正在运行的服务）："
+      "$bin" validate --config "$cfg" 2>&1 | grep -iE 'error|invalid' | head -3
+      return 1
+    fi
+  fi
+  # 启动参数：xray/sing-box 用 run -c，caddy 用 run --config
+  local runflag="-c"; [ "$sd" = caddy ] && runflag="--config"
   case "$action" in
     start|restart)
       if pidof systemd >/dev/null 2>&1; then
@@ -3677,9 +3962,19 @@ kctl(){
         rc-service "$rc" "$action" >/dev/null 2>&1
       else
         kill -15 $(pgrep -f "$pat" 2>/dev/null) >/dev/null 2>&1
-        nohup "$bin" run -c "$cfg" > "$log" 2>&1 &
+        nohup "$bin" run "$runflag" "$cfg" > "$log" 2>&1 &
       fi
-      [ "$action" = start ] && echo "${name}：已启动。" || echo "${name}：已重启。" ;;
+      sleep 1
+      if pgrep -f "$pat" >/dev/null 2>&1; then
+        [ "$action" = start ] && echo "${name}：已启动 ✓" || echo "${name}：已重启 ✓"
+      else
+        echo "${name}：${action} 后进程未起来 ✗，请查看日志定位原因："
+        if pidof systemd >/dev/null 2>&1; then
+          echo "    journalctl -u $sd -n 30 --no-pager"
+        else
+          echo "    tail -n 30 $log"
+        fi
+      fi ;;
     stop)
       if pidof systemd >/dev/null 2>&1; then
         systemctl stop "$sd" >/dev/null 2>&1
@@ -3690,7 +3985,15 @@ kctl(){
       fi
       echo "${name}：已停止（占用端口已释放）。" ;;
     reload)
-      if pgrep -f "$pat" >/dev/null 2>&1; then
+      if [ "$sd" = caddy ]; then
+        # caddy 原生热重载（配置已在上方预检通过）：systemd 下走 systemctl reload，否则直接 caddy reload
+        if pidof systemd >/dev/null 2>&1; then
+          systemctl reload "$sd" >/dev/null 2>&1
+        else
+          "$bin" reload --config "$cfg" >/dev/null 2>&1
+        fi
+        echo "Caddy：配置校验通过，已热重载（连接不断）✓"
+      elif pgrep -f "$pat" >/dev/null 2>&1; then
         kill -HUP $(pgrep -f "$pat" 2>/dev/null) >/dev/null 2>&1
         echo "${name}：已发送热重载信号（SIGHUP）。"
       else
@@ -3710,7 +4013,7 @@ section "Airgosbx 内核资源 / 流量监控"
 printf '%s\n' "${C_GREEN}${C_BOLD}【内核进程】${C_RESET}"
 printf "  ${C_CYAN}%-10s %-7s %-7s %-11s %-9s %-6s${C_RESET}\n" Core PID CPU% Mem-RSS Uptime Conn
 local any=0 kv k label pid s b0 st b1 cpu rss up conn
-for kv in "xray:Xray" "sing-box:Sing-box" "cloudflared:Argo"; do
+for kv in "xray:Xray" "sing-box:Sing-box" "caddy:Caddy" "cloudflared:Argo"; do
   k=${kv%%:*}; label=${kv##*:}
   pid=$(pgrep -f "agsbx/$k" 2>/dev/null | head -1)
   if [ -z "$pid" ] || [ ! -d "/proc/$pid" ]; then
@@ -3731,7 +4034,7 @@ for kv in "xray:Xray" "sing-box:Sing-box" "cloudflared:Argo"; do
   conn=$(ss -tnp 2>/dev/null | grep -c "pid=$pid,")
   printf "  %-10s %-7s %-7s %-11s %-9s %-6s\n" "$label" "$pid" "$cpu" "$rss" "$up" "${conn:-0}"
 done
-[ "$any" = 0 ] && echo "  （三大内核进程均未运行）"
+[ "$any" = 0 ] && echo "  （各内核进程均未运行）"
 echo
 printf '%s\n' "${C_GREEN}${C_BOLD}【系统概况】${C_RESET}"
 printf "  负载(1/5/15分)：%s\n" "$(awk '{print $1", "$2", "$3}' /proc/loadavg 2>/dev/null)"
@@ -3823,7 +4126,7 @@ else
   echo "Sing-box 内核未变更，原版本继续运行（服务未中断）。"
 fi
 exit
-elif [ "$1" = "stats" ] || [ "$1" = "top" ]; then
+elif [ "$1" = "status" ] || [ "$1" = "stats" ] || [ "$1" = "top" ]; then
 showstats
 exit
 elif [ "$1" = "res" ]; then
@@ -3839,7 +4142,7 @@ sbrestart
 kill "$(basename "$P")" 2>/dev/null
 xrestart
 ;;
-*"/agsbx/c"*)
+*"/agsbx/cloudflared"*)
 kill "$(basename "$P")" 2>/dev/null
 kill -15 $(pgrep -f 'agsbx/cloudflared' 2>/dev/null) >/dev/null 2>&1
 if pidof systemd >/dev/null 2>&1; then
