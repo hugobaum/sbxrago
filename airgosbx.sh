@@ -968,6 +968,9 @@ fi
 local test_cfg
 test_cfg=$(mktemp)
 cat > "$test_cfg" <<EOF
+{
+  order forward_proxy before reverse_proxy
+}
 :443 {
   forward_proxy {
     probe_resistance
