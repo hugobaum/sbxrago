@@ -892,7 +892,7 @@ NAIVE_VER="${NAIVE_VER:-${latest_tag:-v2.11.2-naive}}"
 local method="$naivebuild" ans
 # 未显式指定获取方式时：交互终端按架构给菜单选一次；非交互(管道运行)则 amd64 默认下载、arm64 直接报错给指引。
 if [ -z "$method" ]; then
-  if [ -t 0 ]; then
+  if [ -t 1 ] || [ -t 2 ]; then
     if [ "$cpu" = amd64 ]; then
       echo "请选择 NaiveProxy(Caddy) 内核获取方式："
       echo "  [1] 下载官方预编译二进制（推荐，1C1G 小机友好，零编译）"
@@ -958,11 +958,30 @@ local newcaddy="$cstage/caddy"
 [ -f "$newcaddy" ] || newcaddy=$(find "$cstage" -maxdepth 2 -type f -name caddy 2>/dev/null | head -1)
 if [ ! -s "$newcaddy" ]; then echo "错误：未找到 caddy 可执行文件。"; rm -rf "$cstage"; return 1; fi
 chmod +x "$newcaddy"
-# 功能性校验（替代 SHA256——该 release 无官方校验文件）：必须可执行且内置 forward_proxy 模块
+# 功能性校验与安全特征审计
+echo "正在对 Caddy(naive) 内核进行可执行性与功能组件校验……"
 if ! "$newcaddy" version >/dev/null 2>&1; then echo "错误：caddy 不可执行（架构不符或文件损坏）。"; rm -rf "$cstage"; return 1; fi
 if ! "$newcaddy" list-modules 2>/dev/null | grep -q 'forward_proxy'; then
   echo "错误：该 caddy 未内置 forward_proxy 模块，无法用于 NaiveProxy。"; rm -rf "$cstage"; return 1
 fi
+# 强力校验：使用临时配置文件做语法预检，检验是否集成了 NaiveProxy 专用分支的抗主动探测模块
+local test_cfg
+test_cfg=$(mktemp)
+cat > "$test_cfg" <<EOF
+:443 {
+  forward_proxy {
+    probe_resistance
+  }
+}
+EOF
+if ! "$newcaddy" validate --config "$test_cfg" >/dev/null 2>&1; then
+  echo "错误：该 caddy 二进制虽内置 forward_proxy 模块，但不是集成有 NaiveProxy 专用分支的 Caddy（无法识别抗探测特性）。"
+  rm -f "$test_cfg"
+  rm -rf "$cstage"
+  return 1
+fi
+rm -f "$test_cfg"
+echo "Caddy(naive) 安全与功能特征校验通过 ✓"
 mv -f "$newcaddy" "$HOME/agsbx/caddy"
 rm -rf "$cstage"
 echo "已安装 Caddy(naive) 内核：$("$HOME/agsbx/caddy" version 2>/dev/null | head -1)"
@@ -1000,17 +1019,32 @@ echo "Hysteria2 混淆密码：$obfs_pass"
 }
 
 insnaivecred(){
-# NaiveProxy 的 forward_proxy basic_auth 凭据：用户名 + 密码。幂等——已存在则复用，对齐 insobfspass。
+# NaiveProxy 凭据：用户名 + 密码。支持环境变量预设、终端交互设置（可自选用户名、密码回车随机）与幂等复用。
+# 交互模式判别使用标准输出/错误 [ -t 1 ] || [ -t 2 ] 以兼容一键拉取管道代换场景
+local can_prompt=0
+if [ -t 1 ] || [ -t 2 ]; then can_prompt=1; fi
+
 if [ -n "$naiveuser" ]; then
   echo "$naiveuser" > "$HOME/agsbx/naive_user"
 elif [ ! -e "$HOME/agsbx/naive_user" ]; then
-  echo "naive" > "$HOME/agsbx/naive_user"
+  if [ "$can_prompt" = 1 ]; then
+    printf "请输入 NaiveProxy 用户名（直接回车=默认 naive）："; read -r naiveuser
+  fi
+  naiveuser="${naiveuser:-naive}"
+  echo "$naiveuser" > "$HOME/agsbx/naive_user"
 fi
 naiveuser=$(cat "$HOME/agsbx/naive_user")
+
 if [ -n "$naivepass" ]; then
   echo "$naivepass" > "$HOME/agsbx/naive_pass"
 elif [ ! -e "$HOME/agsbx/naive_pass" ]; then
-  tr -dc 'a-zA-Z0-9' </dev/urandom | head -c 16 > "$HOME/agsbx/naive_pass"
+  if [ "$can_prompt" = 1 ]; then
+    printf "请输入 NaiveProxy 密码（直接回车=自动随机生成）："; read -r naivepass
+  fi
+  if [ -z "$naivepass" ]; then
+    naivepass=$(tr -dc 'a-zA-Z0-9' </dev/urandom | head -c 16)
+  fi
+  echo "$naivepass" > "$HOME/agsbx/naive_pass"
 fi
 naivepass=$(cat "$HOME/agsbx/naive_pass")
 echo "NaiveProxy 账号：$naiveuser"
@@ -2277,7 +2311,7 @@ printf '%s\n' "${C_CYAN}=========启用 NaiveProxy(Caddy) 内核=========${C_RES
 # NaiveProxy 必须有真实域名 + DNS 指向本机（不同于 reality 可裸 IP）。
 local interactive_naive=0
 if ! valid_domain "$naive"; then
-if [ -t 0 ]; then
+if [ -t 1 ] || [ -t 2 ]; then
 interactive_naive=1
 while :; do
 printf "请输入 NaiveProxy 域名（须已将 DNS A/AAAA 指向本机，直接回车=放弃）："; read -r naive
@@ -2399,19 +2433,22 @@ else
 nohup "$HOME/agsbx/caddy" run --config "$HOME/agsbx/Caddyfile" > "$HOME/agsbx/caddy.log" 2>&1 &
 fi
 # 等待并检测 Caddy 证书生成情况
-local detect_sec=10
+local detect_sec=60
 local caddy_cert=""
 local caddy_key=""
-echo "正在等待 Caddy 自动申请证书并完成握手（限时 10 秒）..."
+printf "正在等待 Caddy 自动托管申请证书（最长 60 秒，签发成功将立刻退出）"
 while [ $detect_sec -gt 0 ]; do
+  printf "."
   caddy_cert=$(find "$HOME/agsbx/caddy_storage/caddy/certificates" -type f -name "$naive.crt" 2>/dev/null | head -1)
   caddy_key=$(find "$HOME/agsbx/caddy_storage/caddy/certificates" -type f -name "$naive.key" 2>/dev/null | head -1)
   if [ -s "$caddy_cert" ] && [ -s "$caddy_key" ]; then
+    echo " [成功]"
     break
   fi
   sleep 1
   detect_sec=$((detect_sec - 1))
 done
+echo
 
 if [ -s "$caddy_cert" ] && [ -s "$caddy_key" ] && openssl x509 -noout -in "$caddy_cert" >/dev/null 2>&1; then
   echo "caddy" > "$HOME/agsbx/cert_mode"
@@ -2421,7 +2458,7 @@ if [ -s "$caddy_cert" ] && [ -s "$caddy_key" ] && openssl x509 -noout -in "$cadd
   # 调用 show_tls_cert_summary 展示详细证书信息并标记来源
   show_tls_cert_summary "Caddy 自动托管申请成功" "$naive"
 else
-  printf '%s\n' "${C_YELLOW}提示：10 秒内未检测到 Caddy 生成的有效 TLS 证书。${C_RESET}"
+  printf '%s\n' "${C_YELLOW}提示：60 秒内未检测到 Caddy 生成的有效 TLS 证书。${C_RESET}"
   echo "Caddy 可能仍在后台获取证书中，或者 80/443 端口被占用/DNS 解析未生效。"
   echo "建议稍后运行 journalctl -u caddy -f 或查看 $HOME/agsbx/caddy.log 查看具体证书申请进度。"
 fi
@@ -2807,27 +2844,34 @@ fi
 #============================================================
 ins(){
 enable_system_bbr
-if [ "$hyp" != yes ] && [ "$tup" != yes ] && [ "$anp" != yes ] && [ "$arp" != yes ] && [ "$ssp" != yes ]; then
-installxray
-xrsbvm
-xrsbso
-warpsx
-xrsbout
-hyp="shyptargo"; tup="tuptargo"; anp="anptargo"; arp="arptargo"; ssp="ssptargo"
-elif [ "$xhp" != yes ] && [ "$vlp" != yes ] && [ "$vxp" != yes ] && [ "$vwp" != yes ] && [ "$xhyp" != yes ] && [ "$xdns" != yes ] && [ "$xicp" != yes ] && [ "$xvcdn" != yes ] && [ "$xvargo" != yes ]; then
-installsb
-xrsbvm
-xrsbso
-warpsx
-xrsbout
-xhp="xhptargo"; vlp="vlptargo"; vxp="vxptargo"; vwp="vwptargo"; xhyp="xhyptargo"; xdns="xdnstargo"; xicp="xicptargo"; xvcdn="xvcdnptargo"; xvargo="xvargoptargo"
-else
-installsb
-installxray
-xrsbvm
-xrsbso
-warpsx
-xrsbout
+local has_xray_sb=no
+if [ "$vwp" = yes ] || [ "$sop" = yes ] || [ "$vxp" = yes ] || [ "$ssp" = yes ] || [ "$vlp" = yes ] || [ "$vmp" = yes ] || [ "$hyp" = yes ] || [ "$tup" = yes ] || [ "$xhp" = yes ] || [ "$anp" = yes ] || [ "$arp" = yes ] || [ "$xhyp" = yes ] || [ "$xdns" = yes ] || [ "$xicp" = yes ] || [ "$xvcdn" = yes ] || [ "$xvargo" = yes ]; then
+  has_xray_sb=yes
+fi
+
+if [ "$has_xray_sb" = yes ]; then
+  if [ "$hyp" != yes ] && [ "$tup" != yes ] && [ "$anp" != yes ] && [ "$arp" != yes ] && [ "$ssp" != yes ]; then
+    installxray
+    xrsbvm
+    xrsbso
+    warpsx
+    xrsbout
+    hyp="shyptargo"; tup="tuptargo"; anp="anptargo"; arp="arptargo"; ssp="ssptargo"
+  elif [ "$xhp" != yes ] && [ "$vlp" != yes ] && [ "$vxp" != yes ] && [ "$vwp" != yes ] && [ "$xhyp" != yes ] && [ "$xdns" != yes ] && [ "$xicp" != yes ] && [ "$xvcdn" != yes ] && [ "$xvargo" != yes ]; then
+    installsb
+    xrsbvm
+    xrsbso
+    warpsx
+    xrsbout
+    xhp="xhptargo"; vlp="vlptargo"; vxp="vxptargo"; vwp="vwptargo"; xhyp="xhyptargo"; xdns="xdnstargo"; xicp="xicptargo"; xvcdn="xvcdnptargo"; xvargo="xvargoptargo"
+  else
+    installsb
+    installxray
+    xrsbvm
+    xrsbso
+    warpsx
+    xrsbout
+  fi
 fi
 
 # 双内核 Hysteria 2 跳跃端口规则解耦挂载
