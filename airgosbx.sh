@@ -1500,7 +1500,7 @@ cat >> "$HOME/agsbx/xr.json" <<EOF
         },
         "finalmask": {
           "quicParams": {
-            "congestion": "force-brutal",
+            "congestion": "brutal",
             "udpHop": {
               "ports": "${xhyjpt}",
               "interval": 15
@@ -2631,11 +2631,16 @@ fi
 airgosbxstatus(){
 printf '%s\n' "${C_CYAN}========= 当前三大内核运行状态 =========${C_RESET}"
 procs=$(find /proc/*/exe -type l 2>/dev/null | grep -E '/proc/[0-9]+/exe' | xargs -r readlink 2>/dev/null)
-# 四态判定助手：运行中 / 未下载(二进制缺) / 启用失败(配置在但进程不在) / 未启用(本次未配置该内核)
-# 关键价值：把旧版笼统的"未启用"拆开，让"本应运行却挂了"的内核能被一眼看出并指向日志。
+# 内核状态判定助手：进程是否在跑，叠加"配置 × 二进制"两个独立条件，共五种输出。
+#   运行中        ：进程在（优先级最高，与配置/二进制无关）
+#   启用失败/未运行：配置在 + 二进制在，但进程不在 → 配置已生成却没跑起来，指向日志
+#   未下载        ：配置在 + 二进制不在 → 本次启用了该内核但下载失败
+#   已下载但未启用：配置不在 + 二进制在 → rep 只重置配置、不删二进制，残留内核本次未配置
+#   未配置        ：配置不在 + 二进制不在 → 本次未启用且无内核，中性提示
 # $1显示名 $2二进制 $3配置文件(判定本应运行) $4进程匹配 $5版本类型 $6日志路径
 kstat(){
   local name="$1" bin="$2" cfg="$3" pat="$4" kind="$5" log="$6" ver=""
+  # ① 进程在 → 运行中
   if echo "$procs" | grep -Eq "$pat" || pgrep -f "$pat" >/dev/null 2>&1; then
     case "$kind" in
       xray) ver=$("$bin" version 2>/dev/null | awk '/^Xray/{print $2}') ;;
@@ -2643,12 +2648,21 @@ kstat(){
       argo) ver=$("$bin" version 2>/dev/null | awk '{print $3}') ;;
     esac
     printf '%s\n' "${name} (版本V${ver})：${C_GREEN}运行中${C_RESET}"
-  elif [ ! -s "$bin" ]; then
-    printf '%s\n' "${name}：${C_YELLOW}未下载${C_RESET}"
-  elif [ -s "$cfg" ]; then
-    printf '%s\n' "${name}：${C_RED}启用失败/未运行${C_RESET}（配置已生成但进程不在，查日志：$log）"
+    return
+  fi
+  # ② 进程不在 → 按"配置是否存在 × 二进制是否存在"四象限细分
+  if [ -s "$cfg" ]; then
+    if [ -s "$bin" ]; then
+      printf '%s\n' "${name}：${C_RED}启用失败/未运行${C_RESET}（配置已生成但进程不在，查日志：$log）"
+    else
+      printf '%s\n' "${name}：${C_YELLOW}未下载（内核下载失败，请重试 upx/ups）${C_RESET}"
+    fi
   else
-    printf '%s\n' "${name}：未启用（本次未配置该内核）"
+    if [ -s "$bin" ]; then
+      printf '%s\n' "${name}：已下载但未启用（内核已存在，本次未配置该协议）"
+    else
+      printf '%s\n' "${name}：未配置（本次未启用且无内核）"
+    fi
   fi
 }
 kstat "Sing-box" "$HOME/agsbx/sing-box"    "$HOME/agsbx/sb.json"      'agsbx/sing-box'   sb   "$HOME/agsbx/sing-box.log"
