@@ -2312,6 +2312,7 @@ echo "$naive" > "$HOME/agsbx/naive_domain"
 cat > "$HOME/agsbx/Caddyfile" <<EOF
 {
   order forward_proxy before reverse_proxy
+  storage file_system "{$HOME}/agsbx/caddy_storage"
   log {
     exclude http.log.error
   }
@@ -2393,9 +2394,36 @@ rc-service caddy start >/dev/null 2>&1
 else
 nohup "$HOME/agsbx/caddy" run --config "$HOME/agsbx/Caddyfile" > "$HOME/agsbx/caddy.log" 2>&1 &
 fi
+# 等待并检测 Caddy 证书生成情况
+local detect_sec=10
+local caddy_cert=""
+local caddy_key=""
+echo "正在等待 Caddy 自动申请证书并完成握手（限时 10 秒）..."
+while [ $detect_sec -gt 0 ]; do
+  caddy_cert=$(find "$HOME/agsbx/caddy_storage/caddy/certificates" -type f -name "$naive.crt" 2>/dev/null | head -1)
+  caddy_key=$(find "$HOME/agsbx/caddy_storage/caddy/certificates" -type f -name "$naive.key" 2>/dev/null | head -1)
+  if [ -s "$caddy_cert" ] && [ -s "$caddy_key" ]; then
+    break
+  fi
+  sleep 1
+  detect_sec=$((detect_sec - 1))
+done
+
+if [ -s "$caddy_cert" ] && [ -s "$caddy_key" ] && openssl x509 -noout -in "$caddy_cert" >/dev/null 2>&1; then
+  echo "caddy" > "$HOME/agsbx/cert_mode"
+  echo "$caddy_cert" > "$HOME/agsbx/cert_file_path"
+  echo "$caddy_key" > "$HOME/agsbx/key_file_path"
+  echo "$naive" > "$HOME/agsbx/sni.txt"
+  # 调用 show_tls_cert_summary 展示详细证书信息并标记来源
+  show_tls_cert_summary "Caddy 自动托管申请成功" "$naive"
+else
+  printf '%s\n' "${C_YELLOW}提示：10 秒内未检测到 Caddy 生成的有效 TLS 证书。${C_RESET}"
+  echo "Caddy 可能仍在后台获取证书中，或者 80/443 端口被占用/DNS 解析未生效。"
+  echo "建议稍后运行 journalctl -u caddy -f 或查看 $HOME/agsbx/caddy.log 查看具体证书申请进度。"
+fi
+
 echo "NaiveProxy(Caddy) 已部署：https://$naive"
 echo "分享链接：naive+https://$naiveuser:$naivepass@$naive"
-echo "提示：首次启动 Caddy 会自动向 Let's Encrypt 申请证书，约数秒~1 分钟；可用 journalctl -u caddy -f 观察握手。"
 }
 
 #============================================================
@@ -4083,7 +4111,7 @@ showmode
 exit
 elif [ "$1" = "rep" ]; then
 cleandel
-rm -rf "$HOME/agsbx"/{sb.json,xr.json,sbargoym.log,sbargotoken.log,argo.log,argoport.log,cdnym,name}
+rm -rf "$HOME/agsbx"/{sb.json,xr.json,sbargoym.log,sbargotoken.log,argo.log,argoport.log,cdnym,name,Caddyfile,naive_user,naive_pass,naive_domain,caddy.log,caddy_storage}
 echo "Airgosbx重置协议完成，开始更新相关协议变量……" && sleep 2
 echo
 elif [ "$1" = "list" ]; then
