@@ -20,18 +20,19 @@ is_root(){
   [ "$(id -u 2>/dev/null)" = "0" ]
 }
 
-# 进程探测助手：判断 agsbx 管理的 sing-box / xray 内核是否在运行。
+# 进程探测助手：判断 agsbx 管理的 sing-box / xray / caddy 内核是否在运行。
 # 此前该长管道在第 1/8/12 段被逐字复制三次，现统一收敛为单一函数，杜绝逻辑漂移与维护遗漏。
 agsbx_running(){
-  find /proc/*/exe -type l 2>/dev/null | grep -E '/proc/[0-9]+/exe' | xargs -r readlink 2>/dev/null | grep -Eq 'agsbx/(sing-box|xray)' \
+  find /proc/*/exe -type l 2>/dev/null | grep -E '/proc/[0-9]+/exe' | xargs -r readlink 2>/dev/null | grep -Eq 'agsbx/(sing-box|xray|caddy)' \
     || pgrep -f 'agsbx/sing-box' >/dev/null 2>&1 \
-    || pgrep -f 'agsbx/xray' >/dev/null 2>&1
+    || pgrep -f 'agsbx/xray' >/dev/null 2>&1 \
+    || pgrep -f 'agsbx/caddy' >/dev/null 2>&1
 }
 # 安装态探测：只要内核二进制还在磁盘上就视为"已安装"（rep 只重置配置、stop 只停进程，都不删二进制）。
 # 管理类命令(start/stop/restart/reload/list/...)应以"是否已安装"放行，而非"是否正在运行"——
 # 否则 stop 停掉最后一个内核后 agsbx_running 变 false，随后的 start 会被前置守卫误判为"未安装"而拦截。
 agsbx_installed(){
-  [ -s "$HOME/agsbx/sing-box" ] || [ -s "$HOME/agsbx/xray" ]
+  [ -s "$HOME/agsbx/sing-box" ] || [ -s "$HOME/agsbx/xray" ] || [ -s "$HOME/agsbx/caddy" ]
 }
 
 # 终端配色：仅在交互式 TTY 且未设置 NO_COLOR 时启用；输出被重定向到文件/管道时自动留空，
@@ -883,8 +884,11 @@ upcaddy(){
 # NaiveProxy 服务端＝带 forwardproxy@naive 分支的 Caddy。两种获取方式，按 CPU 架构与用户选择决定：
 #   · 官方预编译（仅 amd64，klzgrad/forwardproxy 发布页）——1C1G 小机首选，零编译；
 #   · xcaddy 现场编译（arm64 必走 / amd64 可选）——用 go.dev 官方 tarball 引导唯一标准 Go，全程自包含在暂存区。
-# 锁定 release tag（不取 latest）：供应链可审计、可复现；升级时手动 bump 此默认值或传 NAIVE_VER= 覆盖。
-NAIVE_VER="${NAIVE_VER:-v2.11.2-naive}"
+# 自动通过 GitHub API 获取最新 release tag，并提供弱网下的 3 秒连接超时和默认稳定版（v2.11.2-naive）自愈回退
+local latest_tag
+latest_tag=$( (command -v curl >/dev/null 2>&1 && curl -sL --connect-timeout 3 "https://api.github.com/repos/klzgrad/forwardproxy/releases/latest" | grep '"tag_name":' | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/') || \
+              (command -v wget >/dev/null 2>&1 && wget -qO- --timeout=3 "https://api.github.com/repos/klzgrad/forwardproxy/releases/latest" | grep '"tag_name":' | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/') )
+NAIVE_VER="${NAIVE_VER:-${latest_tag:-v2.11.2-naive}}"
 local method="$naivebuild" ans
 # 未显式指定获取方式时：交互终端按架构给菜单选一次；非交互(管道运行)则 amd64 默认下载、arm64 直接报错给指引。
 if [ -z "$method" ]; then
