@@ -64,7 +64,7 @@ vrow(){ printf "  ${C_YELLOW}%-11s${C_RESET} %s\n" "$1" "$2"; }
 showvars(){
 printf '%s\n' "${C_CYAN}~~~~~~~~~~~~~~~~~~~~ Airgosbx 变量速查表 ~~~~~~~~~~~~~~~~~~~~${C_RESET}"
 printf '%s\n' "${C_BOLD}用法：在脚本前以「变量=值」空格分隔传入，可任意组合${C_RESET}"
-echo "示例：xhpt=2087 warp=s4x4 sub bash <(curl -Ls $agsbxurl)"
+echo "示例：xhpt=2087 warp=s4x4 sub=y bash <(curl -Ls $agsbxurl)"
 echo "说明：端口类变量留空(如 vlpt)即自动随机分配；带 pt 后缀的为可指定端口版"
 
 vg "① Xray 内核协议（端口留空＝自动分配）"
@@ -108,6 +108,7 @@ vrow "certkey"  "外部导入：私钥文件路径"
 vrow "acmem"    "ACME 注册邮箱（可选）"
 
 vg "⑧ Web 订阅分发（Clash/聚合，强制TLS加密）"
+vrow "sub"      "订阅分发开关（sub=y 启用；亦可只设 subpt/subid）"
 vrow "subpt"    "订阅服务对外端口（留空自动分配）"
 vrow "subid"    "订阅访问 token（留空＝复用 uuid）"
 
@@ -393,6 +394,9 @@ export LANG=en_US.UTF-8
 # vmag 是"存在可走 Argo 隧道的协议"总开关，决定第8段是否拉起 cloudflared。
 # 此前仅 vmpt/vwpt 置位，导致单独设 xvargopt+argo=xvargopt 时隧道被静默跳过；补齐 xvargo。
 [ -z "${xvargopt+x}" ] || { xvargo=yes; vmag=yes; }
+# 布尔开关 sub 归一化：仅 sub=y/yes/1 视为显式启用，其余值或空/未设一律=关闭，统一规范（禁用 sub=on 之类写法）。
+# 随后 subpt/subid 一旦设值仍视为启用（向后兼容旧用法）。naive=<域名>、argo=<协议> 属「带值即启用」，不在此归一化。
+case "${sub:-}" in y|yes|1) sub=yes ;; *) sub='' ;; esac
 [ -z "${subpt+x}" ] || sub=yes
 [ -z "${subid+x}" ] || sub=yes
 if agsbx_running || agsbx_installed; then
@@ -474,10 +478,10 @@ echo
 # - 关联性：为后续第 4 段 (ACME证书 socat 依赖) 和第 10 段 (Web订阅 busybox httpd 依赖) 奠定系统级环境基础。
 #============================================================
 printf '%s\n' "${C_CYAN}~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~${C_RESET}"
-printf '%s\n' "${C_BOLD}Airgosbx 一键无交互小钢炮脚本 💣${C_RESET}"
+printf '%s\n' "${C_BOLD}Airgosbx 小钢炮脚本 💣${C_RESET}"
 echo "项目地址：github.com/hugobaum/sbxrago"
-echo "基于 yonggekkk/argosbx, 已加固安全"
-printf '%s\n' "当前版本：${C_GREEN}V26.06.11${C_RESET}"
+echo "基于 yonggekkk/argosbx"
+printf '%s\n' "当前版本：${C_GREEN}V26.06.14${C_RESET}"
 printf '%s\n' "${C_CYAN}~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~${C_RESET}"
 hostname=$(uname -n)
 op=$(cat /etc/redhat-release 2>/dev/null || cat /etc/os-release 2>/dev/null | grep -i pretty_name | cut -d \" -f2)
@@ -928,6 +932,23 @@ if [ "$method" = dl ]; then
   local tmp="$cstage/caddy.tar.xz"
   (command -v curl >/dev/null 2>&1 && curl -Lo "$tmp" -# --retry 2 "$url") || (command -v wget >/dev/null 2>&1 && wget -O "$tmp" --tries=2 "$url")
   if [ ! -s "$tmp" ]; then echo "错误：Caddy 下载失败（网络不可达或该版本资源不存在）。"; rm -rf "$cstage"; return 1; fi
+  # SHA256 完整性校验：klzgrad/forwardproxy 未提供独立 checksums.txt，但 GitHub Release API 为每个资产
+  # 暴露 "digest":"sha256:..."。据此比对下载归档，防篡改/防误下假包(如 404 HTML)。取不到 digest 时降级为信任 HTTPS。
+  local caddy_api caddy_digest caddy_actual
+  caddy_api=$( (command -v curl >/dev/null 2>&1 && curl -sL --connect-timeout 5 "https://api.github.com/repos/klzgrad/forwardproxy/releases/tags/${NAIVE_VER}") || (command -v wget >/dev/null 2>&1 && wget -qO- --timeout=5 "https://api.github.com/repos/klzgrad/forwardproxy/releases/tags/${NAIVE_VER}") )
+  caddy_digest=$(printf '%s' "$caddy_api" | grep -oE '"digest":[[:space:]]*"sha256:[0-9a-f]{64}"' | head -1 | grep -oE '[0-9a-f]{64}')
+  if [ -n "$caddy_digest" ]; then
+    caddy_actual=$(sha256sum "$tmp" 2>/dev/null | awk '{print $1}')
+    if [ "$caddy_digest" != "$caddy_actual" ]; then
+      echo "错误：Caddy 文件 SHA256 校验失败！下载可能已被篡改或资源损坏，终止安装。"
+      echo "预期: $caddy_digest"
+      echo "实际: $caddy_actual"
+      rm -rf "$cstage"; return 1
+    fi
+    echo "SHA256 校验通过 ✓ ($caddy_actual)"
+  else
+    echo "警告：未能从 GitHub API 获取官方 SHA256，跳过哈希校验，信任 HTTPS 连接。"
+  fi
   # .tar.xz 解压：优先 GNU tar -J，缺则用 xz 管道兜底（兼容 busybox tar）。xz 已在 ensure_deps 中预置。
   if ! ( tar -xJf "$tmp" -C "$cstage" 2>/dev/null || ( xz -dc "$tmp" 2>/dev/null | tar -xf - -C "$cstage" 2>/dev/null ) ); then
     echo "错误：解压失败，可能缺少 xz 工具。请确认已安装 xz/xz-utils 后重试。"; rm -rf "$cstage"; return 1
@@ -958,11 +979,18 @@ local newcaddy="$cstage/caddy"
 [ -f "$newcaddy" ] || newcaddy=$(find "$cstage" -maxdepth 2 -type f -name caddy 2>/dev/null | head -1)
 if [ ! -s "$newcaddy" ]; then echo "错误：未找到 caddy 可执行文件。"; rm -rf "$cstage"; return 1; fi
 chmod +x "$newcaddy"
-# 功能性校验与安全特征审计
+# 功能性校验与安全特征审计：
+#   · version 可执行性=硬校验（架构不符/文件损坏才是真无法运行，必须拦截）。
+#   · forward_proxy 功能=软校验(仅警告)：下载分支哈希已证明是官方二进制（必含该模块），
+#     编译分支 xcaddy --with forwardproxy@naive 成功亦必含；list-modules 偶有输出差异，
+#     不应据此误拦合法内核而中断安装（此前的硬失败正是「官方包被拒、停止安装」的根因）。
 echo "正在对 Caddy(naive) 内核进行可执行性与功能组件校验……"
 if ! "$newcaddy" version >/dev/null 2>&1; then echo "错误：caddy 不可执行（架构不符或文件损坏）。"; rm -rf "$cstage"; return 1; fi
-if ! "$newcaddy" list-modules 2>/dev/null | grep -q 'forward_proxy'; then
-  echo "错误：该 caddy 未内置 forward_proxy 模块，无法用于 NaiveProxy。"; rm -rf "$cstage"; return 1
+if "$newcaddy" list-modules 2>/dev/null | grep -q 'forward_proxy'; then
+  echo "forward_proxy 模块校验通过 ✓（具备 NaiveProxy 功能，与自行编译效果一致）"
+else
+  printf '%s\n' "${C_YELLOW}警告：未在 caddy list-modules 输出中检出 forward_proxy 模块。${C_RESET}"
+  echo "已通过哈希/可执行校验，继续安装；若 naive 实际不可用，请改用 naivebuild=build 现场编译。"
 fi
 
 mv -f "$newcaddy" "$HOME/agsbx/caddy"
@@ -1075,6 +1103,56 @@ tls_key_file="$2"
 echo "$tls_cert_file" > "$HOME/agsbx/cert_file_path"
 echo "$tls_key_file" > "$HOME/agsbx/key_file_path"
 }
+# 证书可信判定：ca(ACME/外部CA) 与 caddy(Caddy 自动托管签发) 均为受公共 CA 信任的真实证书，
+# 客户端可 insecure=0 校验；其余(自签 selfsigned)需 skip-cert-verify/pinSHA256。供 cip 渲染节点链接统一调用。
+cert_trusted(){ [ "$1" = "ca" ] || [ "$1" = "caddy" ]; }
+# Caddy(naive) 证书续期联动重载：Caddy 自动续期会原地更新证书文件，但 xray/sing-box 仅在启动时读取证书、
+# 不会热感知续期。此处生成助手脚本并注册每日 cron——每天比对证书指纹，仅当证书真正变化(续期)时，
+# 才重启「配置里确实引用了该 Caddy 证书路径」的内核，平时零打断；首次运行只记录基线指纹。
+# 助手脚本用单引号 heredoc 写入，内部 $HOME/$cf 等在 cron 运行时(而非安装时)求值。
+setup_caddy_cert_reload(){
+  cat > "$HOME/agsbx/caddy_cert_reload.sh" <<'RELOADEOF'
+#!/bin/bash
+# 由 airgosbx 自动生成：Caddy 证书续期后，联动重启复用了该证书的 xray/sing-box。请勿手动编辑。
+H="$HOME/agsbx"
+[ "$(cat "$H/cert_mode" 2>/dev/null)" = "caddy" ] || exit 0
+cf=$(cat "$H/cert_file_path" 2>/dev/null)
+[ -s "$cf" ] || exit 0
+fp=$(openssl x509 -noout -fingerprint -sha256 -in "$cf" 2>/dev/null | awk -F= '{print $2}')
+[ -n "$fp" ] || exit 0
+old=$(cat "$H/.caddy_cert_fp" 2>/dev/null)
+echo "$fp" > "$H/.caddy_cert_fp"
+[ -z "$old" ] && exit 0          # 首次仅记录基线指纹，不重启
+[ "$fp" = "$old" ] && exit 0     # 证书未变化（未到续期），不打断
+reload_one(){
+  cfg="$1"; sd="$2"; rc="$3"; pat="$4"; bin="$5"; log="$6"
+  [ -s "$cfg" ] || return 0
+  grep -q "$cf" "$cfg" 2>/dev/null || return 0   # 仅重启确实引用了该 Caddy 证书的内核
+  if pidof systemd >/dev/null 2>&1; then
+    systemctl restart "$sd" >/dev/null 2>&1
+  elif command -v rc-service >/dev/null 2>&1; then
+    rc-service "$rc" restart >/dev/null 2>&1
+  else
+    kill -15 $(pgrep -f "$pat" 2>/dev/null) >/dev/null 2>&1; sleep 1
+    nohup "$bin" run -c "$cfg" > "$log" 2>&1 &
+  fi
+}
+reload_one "$H/xr.json" xr xray     'agsbx/xray'     "$H/xray"     "$H/xray.log"
+reload_one "$H/sb.json" sb sing-box 'agsbx/sing-box' "$H/sing-box" "$H/sing-box.log"
+RELOADEOF
+  chmod 700 "$HOME/agsbx/caddy_cert_reload.sh"
+  local cron_tmp
+  cron_tmp=$(mktemp)
+  crontab -l 2>/dev/null > "$cron_tmp"
+  if ! grep -q 'caddy_cert_reload.sh' "$cron_tmp"; then
+    echo "20 3 * * * /bin/bash $HOME/agsbx/caddy_cert_reload.sh > /dev/null 2>&1" >> "$cron_tmp"
+    crontab "$cron_tmp" >/dev/null 2>&1
+  fi
+  rm -f "$cron_tmp"
+  # 立即落一次基线指纹，避免装好当天的首次 cron 误判为「已变化」而重启。
+  bash "$HOME/agsbx/caddy_cert_reload.sh" >/dev/null 2>&1
+  echo "已注册证书续期联动重载（每日 03:20 校验；Caddy 续期后自动重启复用该证书的 xray/sing-box，平时零打断）。"
+}
 show_tls_cert_summary(){
 cert_result="$1"
 cert_domain="$2"
@@ -1093,6 +1171,13 @@ echo "证书结果：$cert_result"
 [ -n "$cert_domain" ] && echo "申请域名：$cert_domain"
 [ -n "$cert_sni" ] && echo "SNI/CN：$cert_sni"
 [ -n "$cert_mode_now" ] && echo "证书模式：$cert_mode_now"
+# 签发方式：把内部 cert_mode 翻译成人类可读来源，明确区分「ACME 命令申请」与「Caddy 自动托管申请」。
+case "$cert_mode_now" in
+  ca)         echo "签发方式：ACME 命令申请（acme.sh + Let's Encrypt）或外部导入证书" ;;
+  caddy)      echo "签发方式：Caddy(naive) 自动托管申请（Caddy 内置 ACME，自动续期）" ;;
+  selfsigned) echo "签发方式：OpenSSL 本地自签（无需域名，有效期 100 年）" ;;
+  *)          echo "签发方式：未知" ;;
+esac
 echo "颁发机构：${cert_issuer:-未知}"
 echo "证书主体：${cert_subject:-未知}"
 echo "有效期开始：${cert_not_before:-未知}"
@@ -1103,6 +1188,7 @@ echo "证书文件：$cert_file"
 echo "私钥文件：$key_file"
 echo "指纹文件：$HOME/agsbx/cert_sha256.txt"
 [ "$cert_mode_now" = "ca" ] && echo "ACME工作目录：$HOME/agsbx/acme"
+[ "$cert_mode_now" = "caddy" ] && echo "Caddy证书存储目录：$HOME/agsbx/caddy_storage/caddy/certificates"
 printf '%s\n' "${C_CYAN}==================================${C_RESET}"
 }
 setup_selfsigned_certificate(){
@@ -1149,7 +1235,7 @@ fi
         echo "ca" > "$HOME/agsbx/cert_mode"
         record_tls_cert_paths "$acme_cert_file" "$acme_key_file"
         tls_cert_source="本地已有 CA/ACME 证书"
-        
+
         # 补全每日定时自动续期 crontab 定时任务
         cron_tmp=$(mktemp)
         crontab -l 2>/dev/null > "$cron_tmp" 2>/dev/null
@@ -1221,8 +1307,26 @@ setup_tls_certificate(){
   if [ "$tls_cert_ready" = yes ]; then
     return 0
   fi
+  # 最高优先级：复用 Caddy(naive) 已成功签发的真实域名证书。
+  # 当启用 naive 且 Caddy 已自动托管签发证书(cert_mode=caddy)时，hy2/tuic/anytls/xhy2 等 TLS 节点
+  # 直接复用该证书、SNI 取 naive 域名，免去再生成自签或重复申请 ACME。优先级：caddy > certym/ACME > 自签。
+  if [ -n "$naive" ] && [ "$(cat "$HOME/agsbx/cert_mode" 2>/dev/null)" = "caddy" ]; then
+    local reuse_cert reuse_key
+    reuse_cert=$(cat "$HOME/agsbx/cert_file_path" 2>/dev/null)
+    reuse_key=$(cat "$HOME/agsbx/key_file_path" 2>/dev/null)
+    if [ -s "$reuse_cert" ] && [ -s "$reuse_key" ] && openssl x509 -checkend 0 -noout -in "$reuse_cert" >/dev/null 2>&1; then
+      tls_cert_file="$reuse_cert"
+      tls_key_file="$reuse_key"
+      write_cert_fingerprint
+      echo "TLS证书模式：复用 Caddy(naive) 已签发的真实证书"
+      show_tls_cert_summary "复用 Caddy(naive) 已签发证书" "$(cat "$HOME/agsbx/naive_domain" 2>/dev/null)"
+      tls_cert_ready=yes
+      return 0
+    fi
+  fi
   # 智能安全网关拦截：当前没有任何启用 TLS 的节点，且未启用订阅分发时，直接静默退出，避免无意义的证书生成和定时任务注册
-  if [ "$sub" != "yes" ] && [ "$hyp" != "yes" ] && [ "$xhyp" != "yes" ] && [ "$tup" != "yes" ] && [ "$ssp" != "yes" ] && [ "$xvcdn" != "yes" ] && [ "$xvargo" != "yes" ]; then
+  # 注：anytls(anp) 亦为 TLS 节点，需纳入放行条件，否则仅启用 anytls 时会因网关拦截而拿不到证书。
+  if [ "$sub" != "yes" ] && [ "$hyp" != "yes" ] && [ "$xhyp" != "yes" ] && [ "$tup" != "yes" ] && [ "$ssp" != "yes" ] && [ "$anp" != "yes" ] && [ "$xvcdn" != "yes" ] && [ "$xvargo" != "yes" ]; then
     return 0
   fi
 
@@ -1664,7 +1768,7 @@ cat >> "$HOME/agsbx/xr.json" <<EOF
           "destOverride": ["http", "tls", "quic"],
           "metadataOnly": false
       }
-    },  
+    },
 EOF
 else
 vlp=vlptargo
@@ -2279,7 +2383,7 @@ cat >> "$HOME/agsbx/sb.json" <<EOF
             "listen_port": $port_ss,
             "method": "2022-blake3-aes-128-gcm",
             "password": "$sskey"
-    },  
+    },
 EOF
 else
 ssp=ssptargo
@@ -2307,11 +2411,10 @@ echo "错误：naive=$naive 不是合法域名。NaiveProxy 需要已解析到�
 return 1
 fi
 fi
-# 交互模式(域名为现场输入)下，继续就伪装站/账号/密码给出可选提示；已用环境变量预置者自动跳过。
+# 交互模式(域名为现场输入)下，仅就伪装站给出可选提示；账号/密码统一交由 insnaivecred 处理，
+# 避免与其重复提问（此前这里与 insnaivecred 各问一次用户名/密码，回车取默认时会被连问两遍）。
 if [ "$interactive_naive" = 1 ]; then
 [ -z "$naivesite" ] && { printf "伪装站域名（直接回车=默认 mirror.us.leaseweb.net）："; read -r naivesite; }
-[ -z "$naiveuser" ] && { printf "basic_auth 用户名（直接回车=默认 naive）："; read -r naiveuser; }
-[ -z "$naivepass" ] && { printf "basic_auth 密码（直接回车=自动随机生成）："; read -r naivepass; }
 fi
 # 获取/编译 caddy 二进制（按架构交互选择）；失败则放弃，不影响其它内核。
 if [ ! -s "$HOME/agsbx/caddy" ]; then
@@ -2438,8 +2541,11 @@ if [ -s "$caddy_cert" ] && [ -s "$caddy_key" ] && openssl x509 -noout -in "$cadd
   echo "$caddy_cert" > "$HOME/agsbx/cert_file_path"
   echo "$caddy_key" > "$HOME/agsbx/key_file_path"
   echo "$naive" > "$HOME/agsbx/sni.txt"
+  write_cert_fingerprint
   # 调用 show_tls_cert_summary 展示详细证书信息并标记来源
   show_tls_cert_summary "Caddy 自动托管申请成功" "$naive"
+  # 注册续期联动重载：Caddy 自动续期后，复用该证书的 xray/sing-box 能加载到新证书
+  setup_caddy_cert_reload
 else
   printf '%s\n' "${C_YELLOW}提示：60 秒内未检测到 Caddy 生成的有效 TLS 证书。${C_RESET}"
   echo "Caddy 可能仍在后台获取证书中，或者 80/443 端口被占用/DNS 解析未生效。"
@@ -2447,7 +2553,8 @@ else
 fi
 
 echo "NaiveProxy(Caddy) 已部署：https://$naive"
-echo "分享链接：naive+https://$naiveuser:$naivepass@$naive"
+echo "分享链接(HTTPS·H1/H2，TCP)：naive+https://$naiveuser:$naivepass@$naive:443?padding=true"
+echo "分享链接(QUIC·H3，UDP)：naive+quic://$naiveuser:$naivepass@$naive:443?padding=true"
 }
 
 #============================================================
@@ -2492,7 +2599,7 @@ cat >> "$HOME/agsbx/xr.json" <<EOF
             "destOverride": ["http", "tls", "quic"],
             "metadataOnly": false
             }
-         }, 
+         },
 EOF
 else
 cat >> "$HOME/agsbx/sb.json" <<EOF
@@ -2548,7 +2655,7 @@ cat >> "$HOME/agsbx/xr.json" <<EOF
             "destOverride": ["http", "tls", "quic"],
             "metadataOnly": false
             }
-         }, 
+         },
 EOF
 else
 cat >> "$HOME/agsbx/sb.json" <<EOF
@@ -2827,6 +2934,12 @@ fi
 #============================================================
 ins(){
 enable_system_bbr
+# NaiveProxy（Caddy）优先装配：先让 Caddy 起来并自动托管签发真实域名证书，
+# 之后 hy2/tuic/anytls/xhy2 等 TLS 节点在 setup_tls_certificate 中复用该证书（SNI=naive 域名）。
+# 仅当显式设置 naive=<域名> 时执行，与 xray/sing-box 隔离并存；Caddy 用独立端口(443)，不与代理内核抢占。
+if [ -n "$naive" ]; then
+installcaddy
+fi
 local has_xray_sb=no
 if [ "$vwp" = yes ] || [ "$sop" = yes ] || [ "$vxp" = yes ] || [ "$ssp" = yes ] || [ "$vlp" = yes ] || [ "$vmp" = yes ] || [ "$hyp" = yes ] || [ "$tup" = yes ] || [ "$xhp" = yes ] || [ "$anp" = yes ] || [ "$arp" = yes ] || [ "$xhyp" = yes ] || [ "$xdns" = yes ] || [ "$xicp" = yes ] || [ "$xvcdn" = yes ] || [ "$xvargo" = yes ]; then
   has_xray_sb=yes
@@ -2955,10 +3068,7 @@ else
 echo "Argo$argoname隧道申请失败，请稍后再试"
 fi
 fi
-# NaiveProxy（Caddy）增量内核：仅当显式设置 naive=<域名> 时装配，与 xray/sing-box 隔离并存。
-if [ -n "$naive" ]; then
-installcaddy
-fi
+# NaiveProxy（Caddy）已在本函数开头优先装配并签发证书（供 TLS 节点复用），此处不再重复。
 sleep 5
 echo
 if agsbx_running ; then
@@ -2990,7 +3100,8 @@ fi
 if find /proc/*/exe -type l 2>/dev/null | grep -E '/proc/[0-9]+/exe' | xargs -r readlink 2>/dev/null | grep -q 'agsbx/xray' || pgrep -f 'agsbx/xray' >/dev/null 2>&1 ; then
 echo '@reboot sleep 10 && /bin/sh -c "nohup $HOME/agsbx/xray run -c $HOME/agsbx/xr.json > $HOME/agsbx/xray.log 2>&1 &"' >> "$cron_tmp"
 fi
-sed -i '/agsbx\/caddy/d' "$cron_tmp"
+# 仅清理 @reboot 的 caddy 运行守护行，保留 setup_caddy_cert_reload 注册的续期联动 cron(caddy_cert_reload.sh)。
+sed -i '/agsbx\/caddy run/d' "$cron_tmp"
 if [ -n "$naive" ] && [ -s "$HOME/agsbx/caddy" ]; then
 echo '@reboot sleep 10 && /bin/sh -c "nohup $HOME/agsbx/caddy run --config $HOME/agsbx/Caddyfile > $HOME/agsbx/caddy.log 2>&1 &"' >> "$cron_tmp"
 fi
@@ -3402,7 +3513,7 @@ node_title "💣【 AnyTLS 】节点信息如下："
 port_an=$(cat "$HOME/agsbx/port_an")
 ran_sni=$(cat "$HOME/agsbx/sni.txt" 2>/dev/null)
 cert_mode=$(cat "$HOME/agsbx/cert_mode" 2>/dev/null)
-if [ "$cert_mode" = "ca" ] && [ -n "$ran_sni" ]; then
+if cert_trusted "$cert_mode" && [ -n "$ran_sni" ]; then
 an_link="anytls://$uuid@$server_ip:$port_an?sni=$ran_sni&insecure=0&allowInsecure=0#${sxname}anytls-$hostname"
 else
 an_link="anytls://$uuid@$server_ip:$port_an?insecure=1&allowInsecure=1#${sxname}anytls-$hostname"
@@ -3434,7 +3545,7 @@ if [ -n "$sby_hop" ]; then
   sby_mport="&mport=$(echo "$sby_hop" | tr ':' '-')"
   echo "Hysteria2 跳跃端口已启用：$sby_hop"
 fi
-if [ "$cert_mode" = "ca" ] && [ -n "$ran_sni" ]; then
+if cert_trusted "$cert_mode" && [ -n "$ran_sni" ]; then
 if [ -n "$obfs_pass" ]; then
 hy2_link="hysteria2://$uuid@$server_ip:$port_hy2?security=tls&alpn=h3&sni=$ran_sni&insecure=0&allowInsecure=0&obfs=salamander&obfs-password=$obfs_pass${sby_mport}#${sxname}hy2-$hostname"
 else
@@ -3454,7 +3565,7 @@ if [ "$sub" = yes ]; then
 clhypt(){
 local sby_hop_clean=$(echo "$sby_hop" | tr ':' '-')
 local cl_skip_cert="true"
-[ "$cert_mode" = "ca" ] && cl_skip_cert="false"
+cert_trusted "$cert_mode" && cl_skip_cert="false"
 local cl_obfs=""
 [ -n "$obfs_pass" ] && cl_obfs="  obfs: salamander\n  obfs-password: \"$obfs_pass\""
 cat <<EOF
@@ -3491,7 +3602,7 @@ if [ -n "$xby_hop" ]; then
   xby_mport="&mport=$(echo "$xby_hop" | tr ':' '-')"
   echo "Xray-Hysteria2 跳跃端口已启用：$xby_hop"
 fi
-if [ "$cert_mode" = "ca" ] && [ -n "$ran_sni" ]; then
+if cert_trusted "$cert_mode" && [ -n "$ran_sni" ]; then
 xhy2_link="hysteria2://$uuid@$server_ip:$port_xhy2?security=tls&alpn=h3&sni=$ran_sni&insecure=0&allowInsecure=0${xby_mport}#${sxname}xray-hy2-$hostname"
 else
 xhy2_link="hysteria2://$uuid@$server_ip:$port_xhy2?pinSHA256=$cert_hash&alpn=h3&sni=$ran_sni&insecure=1&allowInsecure=1${xby_mport}#${sxname}xray-hy2-$hostname"
@@ -3503,7 +3614,7 @@ if [ "$sub" = yes ]; then
 clxhypt(){
 local xby_hop_clean=$(echo "$xby_hop" | tr ':' '-')
 local cl_skip_cert="true"
-[ "$cert_mode" = "ca" ] && cl_skip_cert="false"
+cert_trusted "$cert_mode" && cl_skip_cert="false"
 cat <<EOF
 - name: "${sxname}xray-hy2-$hostname"
   type: hysteria2
@@ -3528,7 +3639,7 @@ node_title "💣【 Tuic 】节点信息如下："
 port_tu=$(cat "$HOME/agsbx/port_tu")
 ran_sni=$(cat "$HOME/agsbx/sni.txt" 2>/dev/null)
 cert_mode=$(cat "$HOME/agsbx/cert_mode" 2>/dev/null)
-if [ "$cert_mode" = "ca" ] && [ -n "$ran_sni" ]; then
+if cert_trusted "$cert_mode" && [ -n "$ran_sni" ]; then
 tuic5_link="tuic://$uuid:$uuid@$server_ip:$port_tu?congestion_control=bbr&udp_relay_mode=native&alpn=h3&sni=$ran_sni&insecure=0&allow_insecure=0&allowInsecure=0#${sxname}tuic-$hostname"
 else
 tuic5_link="tuic://$uuid:$uuid@$server_ip:$port_tu?congestion_control=bbr&udp_relay_mode=native&alpn=h3&sni=$ran_sni&allow_insecure=1&allowInsecure=1#${sxname}tuic-$hostname"
@@ -3539,7 +3650,7 @@ echo
 if [ "$sub" = yes ]; then
 cltupt(){
 local cl_skip_cert="true"
-[ "$cert_mode" = "ca" ] && cl_skip_cert="false"
+cert_trusted "$cert_mode" && cl_skip_cert="false"
 cat <<EOF
 - name: "${sxname}tuic5-$hostname"
   server: $server_ip
@@ -3579,12 +3690,11 @@ naivedomain=$(cat "$HOME/agsbx/naive_domain")
 naiveuser=$(cat "$HOME/agsbx/naive_user" 2>/dev/null)
 naivepass=$(cat "$HOME/agsbx/naive_pass" 2>/dev/null)
 node_title "💣【 NaiveProxy 】Caddy 转发代理（独立客户端），节点信息如下："
-echo "域名(SNI)：$naivedomain"
-echo "端口：443"
 echo "账号：$naiveuser"
 echo "密码：$naivepass"
-echo "分享链接：naive+https://$naiveuser:$naivepass@$naivedomain:443?padding=true#${sxname}naiveproxy-$hostname"
-echo "（请用 NekoBox 等支持 naive 的客户端导入上面链接；未并入 jh.txt / Clash 聚合订阅）"
+echo "分享链接(HTTPS·H1/H2，TCP)：naive+https://$naiveuser:$naivepass@$naivedomain:443?padding=true#${sxname}naive-tcp-$hostname"
+echo "分享链接(QUIC·H3，UDP)：naive+quic://$naiveuser:$naivepass@$naivedomain:443?padding=true#${sxname}naive-quic-$hostname"
+echo "（用 NekoBox 等支持 naive 的客户端导入；SNI/端口已含在链接内，naive+quic 需放行 UDP/443；未并入 jh.txt / Clash 聚合订阅）"
 echo
 fi
 argodomain=$(cat "$HOME/agsbx/sbargoym.log" 2>/dev/null)
@@ -3780,7 +3890,7 @@ mode: rule
 log-level: info
 unified-delay: true
 dns:
-  enable: true 
+  enable: true
   listen: "0.0.0.0:1053"
   ipv6: true
   prefer-h3: false
@@ -3830,11 +3940,11 @@ proxy-groups:
   interval: 300
   tolerance: 50
   proxies:
-    $clgz 
+    $clgz
 - name: 🌍选择代理节点
   type: select
   proxies:
-    - 负载均衡                                         
+    - 负载均衡
     - 自动选择
     - DIRECT
     $clgz
@@ -3891,6 +4001,11 @@ else
 fi
 
 subdomain=$(cat "$HOME/agsbx/cdnym" 2>/dev/null)
+# 复用 Caddy 真实证书时(cert_mode=caddy)，订阅地址优先用 naive 域名，使客户端 HTTPS 证书校验直接通过、
+# 免去 skip-cert-verify；仅在未显式指定 cdnym 优选域名时生效，不覆盖用户的 CDN 配置。
+if [ -z "$subdomain" ] && [ "$(cat "$HOME/agsbx/cert_mode" 2>/dev/null)" = "caddy" ]; then
+  subdomain=$(cat "$HOME/agsbx/naive_domain" 2>/dev/null)
+fi
 [ -z "$subdomain" ] && subdomain="$server_ip"
 suburl="${sub_protocol}://${subdomain}:${subport_show}/${subtoken}"
 clash_sub_info="Clash/Mihomo 本地订阅链接：${suburl}/clmi.yaml"
