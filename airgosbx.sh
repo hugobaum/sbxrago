@@ -2436,7 +2436,7 @@ echo "$naive" > "$HOME/agsbx/naive_domain"
 cat > "$HOME/agsbx/Caddyfile" <<EOF
 {
   order forward_proxy before reverse_proxy
-  storage file_system "{$HOME}/agsbx/caddy_storage"
+  storage file_system "$HOME/agsbx/caddy_storage"
   log {
     exclude http.log.error
   }
@@ -2525,8 +2525,8 @@ local caddy_key=""
 printf "正在等待 Caddy 自动托管申请证书（最长 60 秒，签发成功将立刻退出）"
 while [ $detect_sec -gt 0 ]; do
   printf "."
-  caddy_cert=$(find "$HOME/agsbx/caddy_storage/caddy/certificates" -type f -name "$naive.crt" 2>/dev/null | head -1)
-  caddy_key=$(find "$HOME/agsbx/caddy_storage/caddy/certificates" -type f -name "$naive.key" 2>/dev/null | head -1)
+  caddy_cert=$(find "$HOME/agsbx" -type f -iname "$naive.crt" 2>/dev/null | head -1)
+  caddy_key=$(find "$HOME/agsbx" -type f -iname "$naive.key" 2>/dev/null | head -1)
   if [ -s "$caddy_cert" ] && [ -s "$caddy_key" ]; then
     echo " [成功]"
     break
