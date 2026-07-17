@@ -106,6 +106,7 @@ vrow "certym"   "申请ACME域名证书的域名（需解析到本机）"
 vrow "certcrt"  "外部导入：证书(fullchain)文件路径"
 vrow "certkey"  "外部导入：私钥文件路径"
 vrow "acmem"    "ACME 注册邮箱（可选）"
+vrow "certdns"  "ACME 验证方式：填 cf 走 Cloudflare DNS-01（免占用80/443端口）；留空＝HTTP-01(80端口)"
 
 vg "⑧ Web 订阅分发（Clash/聚合，强制TLS加密）"
 vrow "sub"      "订阅分发开关（sub=y 启用；亦可只设 subpt/subid）"
@@ -439,6 +440,7 @@ export certym=${certym:-''}
 export certcrt=${certcrt:-''}
 export certkey=${certkey:-''}
 export acmem=${acmem:-''}
+export certdns=${certdns:-''}
 export shyjpt=${shyjpt:-''}
 export xhyjpt=${xhyjpt:-''}
 export hyjpt=${hyjpt:-''}
@@ -1249,29 +1251,54 @@ fi
     fi
   fi
 
-  # [80端口占用校验] ACME Standalone 模式需要占用 80 端口进行 HTTP-01 验证
-  local port_80_in_use=false
-  if command -v ss >/dev/null 2>&1; then
-    if ss -tuln 2>/dev/null | grep -qE "(:80\s|:80$)"; then
-      port_80_in_use=true
+  # 验证方式(ACME challenge)选择：certdns=cf 走 Cloudflare DNS-01——通过 DNS API 写 TXT 记录验证域名，
+  # 全程无需任何入站端口，可绕过 80/443 被占用、NAT/防火墙或无公网入站的场景；留空则沿用 HTTP-01 standalone(80端口)。
+  local acme_dns
+  acme_dns=$(printf '%s' "$certdns" | tr -d '[:space:]' | tr 'A-Z' 'a-z')
+  local acme_challenge_args
+  if [ "$acme_dns" = "cf" ] || [ "$acme_dns" = "cloudflare" ]; then
+    # Cloudflare 凭证：优先取环境变量(CF_Token 或 CF_Key+CF_Email)；缺失且为交互终端则提示粘贴 API Token(不回显)。
+    if [ -z "$CF_Token" ] && [ -z "$CF_Key" ]; then
+      if [ -t 0 ]; then
+        printf "请输入 Cloudflare API Token（需 Zone.DNS 编辑权限，输入不回显）：" >&2
+        stty -echo 2>/dev/null; read -r CF_Token; stty echo 2>/dev/null; echo >&2
+      fi
     fi
-  elif command -v netstat >/dev/null 2>&1; then
-    if netstat -tuln 2>/dev/null | grep -qE "(:80\s|:80$)"; then
-      port_80_in_use=true
+    # 校验凭证充分性：Token 单独可用；或旧版 Global Key 需搭配账户邮箱。二者皆缺则终止(交由上层回退自签)。
+    if [ -z "$CF_Token" ] && { [ -z "$CF_Key" ] || [ -z "$CF_Email" ]; }; then
+      echo "错误：Cloudflare DNS-01 缺少有效凭证（需环境变量 CF_Token，或 CF_Key + CF_Email）。"
+      return 1
     fi
-  fi
+    export CF_Token CF_Key CF_Email
+    acme_challenge_args="--dns dns_cf"
+    echo "ACME 验证方式：Cloudflare DNS-01（无需占用 80/443 端口）。"
+  else
+    acme_challenge_args="--standalone"
+    # [80端口占用校验] ACME Standalone 模式需要占用 80 端口进行 HTTP-01 验证
+    local port_80_in_use=false
+    if command -v ss >/dev/null 2>&1; then
+      if ss -tuln 2>/dev/null | grep -qE "(:80\s|:80$)"; then
+        port_80_in_use=true
+      fi
+    elif command -v netstat >/dev/null 2>&1; then
+      if netstat -tuln 2>/dev/null | grep -qE "(:80\s|:80$)"; then
+        port_80_in_use=true
+      fi
+    fi
 
-  if [ "$port_80_in_use" = "true" ]; then
-    echo ""
-    printf '%s\n' "${C_YELLOW}警告：检测到本机的 80 端口已被其他服务占用！${C_RESET}"
-    echo "ACME Standalone 模式自动申请证书必须独占 80 端口。"
-    echo "如果直接继续，ACME 申请大概率会失败并自动退回到【自签证书】模式。"
-    echo "建议在继续之前，暂时停止占用 80 端口的服务（例如：systemctl stop nginx 或 caddy/apache2）。"
-    echo "脚本将等待 5 秒，方便您查看此警告并做准备..."
-    sleep 5
-  fi
+    if [ "$port_80_in_use" = "true" ]; then
+      echo ""
+      printf '%s\n' "${C_YELLOW}警告：检测到本机的 80 端口已被其他服务占用！${C_RESET}"
+      echo "ACME Standalone 模式自动申请证书必须独占 80 端口。"
+      echo "如果直接继续，ACME 申请大概率会失败并自动退回到【自签证书】模式。"
+      echo "建议在继续之前，暂时停止占用 80 端口的服务（例如：systemctl stop nginx 或 caddy/apache2）。"
+      echo "或改用 certdns=cf 走 Cloudflare DNS-01 验证，即可完全避开 80 端口占用。"
+      echo "脚本将等待 5 秒，方便您查看此警告并做准备..."
+      sleep 5
+    fi
 
-install_socat_if_needed || return 1
+    install_socat_if_needed || return 1
+  fi
 acme_script="$HOME/agsbx/acme.sh"
 acme_home="$HOME/agsbx/acme"
 mkdir -p "$acme_home"
@@ -1282,7 +1309,7 @@ fi
 acme_mail=${acmem:-"admin@$acme_domain"}
 bash "$acme_script" --home "$acme_home" --set-default-ca --server letsencrypt >/dev/null 2>&1
 bash "$acme_script" --home "$acme_home" --register-account -m "$acme_mail" --server letsencrypt >/dev/null 2>&1
-bash "$acme_script" --home "$acme_home" --issue --standalone -d "$acme_domain" --keylength ec-256 --server letsencrypt >/dev/null 2>&1 || return 1
+bash "$acme_script" --home "$acme_home" --issue $acme_challenge_args -d "$acme_domain" --keylength ec-256 --server letsencrypt >/dev/null 2>&1 || return 1
 local reload_cmd="if pidof systemd >/dev/null 2>&1; then if systemctl list-unit-files 2>/dev/null | grep -qE '^(xr|sb)\.service'; then systemctl restart xr sb; fi; elif command -v rc-service >/dev/null 2>&1; then if [ -f /etc/init.d/xray ] || [ -f /etc/init.d/sing-box ]; then rc-service xray restart; rc-service sing-box restart; fi; else kill -15 \$(pgrep -f 'agsbx/xray') \$(pgrep -f 'agsbx/sing-box') 2>/dev/null; sleep 2; nohup $HOME/agsbx/xray run -c $HOME/agsbx/xr.json > $HOME/agsbx/xray.log 2>&1 & nohup $HOME/agsbx/sing-box run -c $HOME/agsbx/sb.json > $HOME/agsbx/sing-box.log 2>&1 & fi"
 bash "$acme_script" --home "$acme_home" --install-cert -d "$acme_domain" --ecc --fullchain-file "$acme_cert_file" --key-file "$acme_key_file" --reloadcmd "$reload_cmd" >/dev/null 2>&1 || return 1
 [ -s "$acme_cert_file" ] && [ -s "$acme_key_file" ] || return 1
