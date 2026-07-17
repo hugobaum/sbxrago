@@ -254,14 +254,43 @@ vercmp() {
 }
 
 enable_system_bbr() {
-  # 系统网络加速：① UDP/QUIC 收发缓冲区调优；② 内核 TCP BBR 拥塞控制。
+  # 系统网络加速：① UDP/QUIC 收发缓冲区调优；② 内核 TCP BBR 拥塞控制与自适应系统网络栈加速。
   # 确保 /etc/sysctl.conf 存在，防止 sed 报 can't read 错误
   [ -f /etc/sysctl.conf ] || touch /etc/sysctl.conf
 
-  # —— ① UDP/QUIC 缓冲区 —— 内核 BBR 只作用于 TCP；QUIC(Hysteria2/TUIC/HTTP3)跑在 UDP 用户态，吃不到内核 BBR。
-  # UDP 缓冲区太小时 quic-go 会告警并降速，调大上限可显著提升 QUIC 吞吐(sing-box/Hysteria 官方推荐 16MiB)。
-  # 放在 BBR 检测之前，确保即便系统已启用 BBR、提前 return 时，这段也已执行过。
-  local udp_buf=16777216 cur_rmem
+  # 自适应内存检测：通过 /proc/meminfo 获取 VPS 物理内存总量 (单位: MB)
+  local mem_total_kb mem_total_mb tcp_max_buf udp_buf
+  mem_total_kb=$(awk '/^MemTotal:/{print $2}' /proc/meminfo 2>/dev/null)
+  case "$mem_total_kb" in ''|*[!0-9]*) mem_total_kb=0 ;; esac
+  mem_total_mb=$((mem_total_kb / 1024))
+
+  # 自适应分级缓冲区配置策略：
+  #   - 极速小鸡 (≤512MB RAM): 限制最大缓冲区为 8MB (防止 OOM)
+  #   - 标准 VPS (512MB < RAM ≤ 1536MB, 如1C1G): 最大缓冲区为 16MB (平衡安全与带宽)
+  #   - 高配 VPS (>1536MB RAM): 最大充盈 32MB (最大化释放高带宽高延迟长距离传输性能)
+  if [ "$mem_total_mb" -gt 0 ] && [ "$mem_total_mb" -le 512 ]; then
+    tcp_max_buf=8388608
+    udp_buf=8388608
+    echo "检测到 VPS 物理内存为 ${mem_total_mb}MB (低配型)，已自适应将网络最大缓冲区限制为 8MB 以防内存溢出(OOM)。🔒"
+  elif [ "$mem_total_mb" -gt 512 ] && [ "$mem_total_mb" -le 1536 ]; then
+    tcp_max_buf=16777216
+    udp_buf=16777216
+    echo "检测到 VPS 物理内存为 ${mem_total_mb}MB (标准型)，已自适应将网络最大缓冲区设置为 16MB (平衡型)。🚀"
+  else
+    tcp_max_buf=33554432
+    udp_buf=33554432
+    if [ "$mem_total_mb" -gt 0 ]; then
+      echo "检测到 VPS 物理内存为 ${mem_total_mb}MB (高配型)，已自适应将网络最大缓冲区设置为 32MB 以最大化吞吐性能。🔥"
+    else
+      # 内存读取异常时兜底采用标准配置
+      tcp_max_buf=16777216
+      udp_buf=16777216
+    fi
+  fi
+
+  # —— ① UDP/QUIC 缓冲区自适应调优 ——
+  # UDP 缓冲区太小时 quic-go 会告警并降速，调大上限可显著提升 QUIC 吞吐。
+  local cur_rmem
   cur_rmem=$(sysctl -n net.core.rmem_max 2>/dev/null)
   case "$cur_rmem" in ''|*[!0-9]*) cur_rmem=0 ;; esac
   if [ "$cur_rmem" -lt "$udp_buf" ]; then
@@ -270,38 +299,55 @@ enable_system_bbr() {
     echo "net.core.wmem_max = $udp_buf" >> /etc/sysctl.conf
     sysctl -w net.core.rmem_max=$udp_buf >/dev/null 2>&1
     sysctl -w net.core.wmem_max=$udp_buf >/dev/null 2>&1
-    echo "已调大 UDP 收发缓冲区至 16MiB，提升 QUIC(Hysteria2/TUIC/HTTP3)吞吐。🚀"
+    echo "已调大 UDP 收发缓冲区至 $((udp_buf / 1024 / 1024))MiB，提升 QUIC(Hysteria2/TUIC/HTTP3)吞吐。🚀"
   else
-    echo "提示：UDP 缓冲区已 ≥16MiB，无需调整。"
+    echo "提示：UDP 缓冲区已为 $((cur_rmem / 1024 / 1024))MiB，无需下调。"
   fi
 
-  # —— ② 内核 TCP BBR 拥塞控制加速 ——
-  local current_congestion_control
-  current_congestion_control=$(sysctl net.ipv4.tcp_congestion_control 2>/dev/null | awk '{print $3}')
-  if [ "${current_congestion_control}" = "bbr" ]; then
-    echo "提示：检测到当前系统已经启用了 BBR 网络加速，无需重复开启。🚀"
-    return
-  fi
+  # —— ② 内核 TCP BBR 拥塞控制与系统网络栈自适应加速 ——
+  echo "正在为您检测并开启系统级 TCP BBR 与网络栈自适应优化加速..."
 
-  echo "正在为您检测并开启系统级 TCP BBR 拥塞控制加速..."
-
-  # 内核未内置 bbr 时先尝试加载模块，再统一做一次可用性判定与写入，避免两段重复逻辑
+  # 内核未内置 bbr 时先尝试加载模块
   if ! sysctl net.ipv4.tcp_available_congestion_control 2>/dev/null | grep -q "bbr"; then
     modprobe tcp_bbr >/dev/null 2>&1
   fi
+
   if sysctl net.ipv4.tcp_available_congestion_control 2>/dev/null | grep -q "bbr"; then
+    # 批量清理已存在的参数，防止多次运行脚本堆积垃圾配置
     sed -i '/net.core.default_qdisc/d' /etc/sysctl.conf
     sed -i '/net.ipv4.tcp_congestion_control/d' /etc/sysctl.conf
+    sed -i '/net.ipv4.tcp_slow_start_after_idle/d' /etc/sysctl.conf
+    sed -i '/net.ipv4.tcp_rmem/d' /etc/sysctl.conf
+    sed -i '/net.ipv4.tcp_wmem/d' /etc/sysctl.conf
+    sed -i '/net.ipv4.tcp_notsent_lowat/d' /etc/sysctl.conf
+    sed -i '/net.ipv4.tcp_fin_timeout/d' /etc/sysctl.conf
+    sed -i '/net.ipv4.tcp_keepalive_time/d' /etc/sysctl.conf
+    sed -i '/net.ipv4.tcp_max_syn_backlog/d' /etc/sysctl.conf
+    sed -i '/net.core.somaxconn/d' /etc/sysctl.conf
+    sed -i '/net.core.netdev_max_backlog/d' /etc/sysctl.conf
+
+    # 写入自适应和通用加速配置
     echo "net.core.default_qdisc = fq" >> /etc/sysctl.conf
     echo "net.ipv4.tcp_congestion_control = bbr" >> /etc/sysctl.conf
+    echo "net.ipv4.tcp_slow_start_after_idle = 0" >> /etc/sysctl.conf
+    echo "net.ipv4.tcp_rmem = 4096 87380 $tcp_max_buf" >> /etc/sysctl.conf
+    echo "net.ipv4.tcp_wmem = 4096 65536 $tcp_max_buf" >> /etc/sysctl.conf
+    echo "net.ipv4.tcp_notsent_lowat = 131072" >> /etc/sysctl.conf
+    echo "net.ipv4.tcp_fin_timeout = 30" >> /etc/sysctl.conf
+    echo "net.ipv4.tcp_keepalive_time = 1200" >> /etc/sysctl.conf
+    echo "net.ipv4.tcp_max_syn_backlog = 8192" >> /etc/sysctl.conf
+    echo "net.core.somaxconn = 8192" >> /etc/sysctl.conf
+    echo "net.core.netdev_max_backlog = 16384" >> /etc/sysctl.conf
+
     sysctl -p >/dev/null 2>&1
 
     # 再次读取系统实时拥塞控制算法以验证是否真正启用成功
+    local current_congestion_control
     current_congestion_control=$(sysctl net.ipv4.tcp_congestion_control 2>/dev/null | awk '{print $3}')
     if [ "${current_congestion_control}" = "bbr" ]; then
-      echo "TCP BBR 拥塞控制加速已成功开启！🚀"
+      echo "TCP BBR 拥塞控制及系统网络栈自适应优化已成功应用！🚀"
     else
-      echo "警告：BBR 配置已写入，但系统实时加载失败，可能处于受限虚拟化环境。😿"
+      echo "警告：网络参数配置已写入，但 BBR 实时加载失败，可能处于受限虚拟化环境。😿"
     fi
   else
     echo "警告：当前 VPS 系统内核版本较低，不支持 BBR 模块。建议您升级内核后再开启网络加速。😿"
@@ -1041,9 +1087,12 @@ if [ -n "$naiveuser" ]; then
   echo "$naiveuser" > "$HOME/agsbx/naive_user"
 elif [ ! -e "$HOME/agsbx/naive_user" ]; then
   if [ "$can_prompt" = 1 ]; then
-    printf "请输入 NaiveProxy 用户名（直接回车=默认 naive）："; read -r naiveuser
+    printf "请输入 NaiveProxy 用户名（直接回车=自动随机生成）："; read -r naiveuser
   fi
-  naiveuser="${naiveuser:-naive}"
+  if [ -z "$naiveuser" ]; then
+    # 自动生成 20 位随机规范用户名
+    naiveuser=$(tr -dc 'a-zA-Z0-9' </dev/urandom | head -c 20)
+  fi
   echo "$naiveuser" > "$HOME/agsbx/naive_user"
 fi
 naiveuser=$(cat "$HOME/agsbx/naive_user")
@@ -1055,7 +1104,8 @@ elif [ ! -e "$HOME/agsbx/naive_pass" ]; then
     printf "请输入 NaiveProxy 密码（直接回车=自动随机生成）："; read -r naivepass
   fi
   if [ -z "$naivepass" ]; then
-    naivepass=$(tr -dc 'a-zA-Z0-9' </dev/urandom | head -c 16)
+    # 自动生成 20 位随机规范密码，兼顾防爆破强度与 URL 分享链接兼容性
+    naivepass=$(tr -dc 'a-zA-Z0-9' </dev/urandom | head -c 20)
   fi
   echo "$naivepass" > "$HOME/agsbx/naive_pass"
 fi
@@ -2471,16 +2521,44 @@ cat > "$HOME/agsbx/Caddyfile" <<EOF
 :443, $naive {
   tls $naivemail
   encode
+
+  # 1. 响应头安全加固与防爬防收录标记
   header {
+    # 强制在 HTTP 协议层向所有探针与爬虫下达禁止索引与递归的指令
+    X-Robots-Tag "noindex, nofollow, noarchive"
+    # 移除敏感 Server 指纹，防网络空间测绘扫描
     -Server
     -X-Powered-By
+    # 其它常规安全头
+    X-Content-Type-Options "nosniff"
+    X-Frame-Options "DENY"
+    Referrer-Policy "no-referrer"
   }
+
+  # 2. 本地拦截 robots.txt 请求，防止爬虫进一步探索
+  handle /robots.txt {
+    respond "User-agent: *\nDisallow: /" 200 {
+      close
+    }
+  }
+
+  # 3. 拦截大部分已知恶意爬虫、扫描器与命令行抓取工具的 User-Agent
+  @blocked_robots {
+    header User-Agent *bot* *spider* *crawler* *scanner* *headless* *python* *curl* *wget* *go-http-client*
+  }
+  respond @blocked_robots "Access Denied" 403 {
+    close
+  }
+
+  # 4. NaiveProxy 代理核心组件
   forward_proxy {
     basic_auth $naiveuser $naivepass
     hide_ip
     hide_via
     probe_resistance
   }
+
+  # 5. 常规浏览器探测回源反代
   reverse_proxy https://$naivesite {
     header_up Host {upstream_hostport}
     header_up -Forwarded
