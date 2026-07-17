@@ -2537,16 +2537,19 @@ cat > "$HOME/agsbx/Caddyfile" <<EOF
 
   # 2. 本地拦截 robots.txt 请求，防止爬虫进一步探索
   handle /robots.txt {
-    respond "User-agent: *\nDisallow: /" 200 {
+    respond 200 {
+      body "User-agent: *
+Disallow: /"
       close
     }
   }
 
   # 3. 拦截大部分已知恶意爬虫、扫描器与命令行抓取工具的 User-Agent
   @blocked_robots {
-    header User-Agent *bot* *spider* *crawler* *scanner* *headless* *python* *curl* *wget* *go-http-client*
+    header_regexp User-Agent "(?i)(bot|spider|crawler|scanner|headless|python|curl|wget|go-http-client)"
   }
-  respond @blocked_robots "Access Denied" 403 {
+  respond @blocked_robots 403 {
+    body "Access Denied"
     close
   }
 
