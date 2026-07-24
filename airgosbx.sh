@@ -2544,8 +2544,9 @@ Disallow: /"
     }
   }
 
-  # 3. 拦截大部分已知恶意爬虫、扫描器与命令行抓取工具的 User-Agent
+  # 3. 仅拦截未携带代理认证的常见爬虫、扫描器与命令行抓取工具，避免误伤已认证 Naive 客户端
   @blocked_robots {
+    header !Proxy-Authorization
     header_regexp User-Agent "(?i)(bot|spider|crawler|scanner|headless|python|curl|wget|go-http-client)"
   }
   respond @blocked_robots 403 {
@@ -2577,6 +2578,11 @@ Disallow: /"
     header_down -Server
     header_down -X-Powered-By
     header_down -Set-Cookie
+    transport http {
+      response_header_timeout 15s
+      max_conns_per_host 16
+      keepalive_idle_conns_per_host 8
+    }
   }
 }
 EOF
@@ -3797,7 +3803,7 @@ if [ -s "$HOME/agsbx/naive_domain" ]; then
 naivedomain=$(cat "$HOME/agsbx/naive_domain")
 naiveuser=$(cat "$HOME/agsbx/naive_user" 2>/dev/null)
 naivepass=$(cat "$HOME/agsbx/naive_pass" 2>/dev/null)
-node_title "💣【 NaiveProxy 】Caddy 转发代理（独立客户端），节点信息如下："
+node_title "💣【 NaiveProxy 】Caddy 转发代理，节点信息如下："
 echo "账号：$naiveuser"
 echo "密码：$naivepass"
 echo "分享链接(HTTPS·H1/H2，TCP)：naive+https://$naiveuser:$naivepass@$naivedomain:443?padding=true#${sxname}naive-tcp-$hostname"
