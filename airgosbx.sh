@@ -101,12 +101,19 @@ vg "⑥ Cloudflare CDN 回源 / 优选"
 vrow "xvcdnpt"  "Vlessenc-xhttp-tls-vision-fm-cdn（旗舰CDN节点）"
 vrow "cdnym"    "CDN host域名/优选IP域名（须已解析到CF）"
 
-vg "⑦ TLS 证书（留空＝自动自签，100年有效期）"
-vrow "certym"   "申请ACME域名证书的域名（需解析到本机）"
+vg "⑦ TLS 证书（alns=y 启用 acme.sh；未请求 ACME 时自动自签）"
+vrow "alns"     "acme.sh 证书开关：y＝需要证书时交互选择申请方式"
+vrow "acmemode" "预设方式：ip / http / alpn / dns（留空则交互选择）"
+vrow "certip"   "IP 短期证书的一个或两个公网 IP（空格分隔）"
+vrow "certym"   "域名；兼容旧用法：单独设置时默认 HTTP-01"
+vrow "certwild" "DNS-01 时填 y，同时申请根域名与泛域名"
 vrow "certcrt"  "外部导入：证书(fullchain)文件路径"
 vrow "certkey"  "外部导入：私钥文件路径"
 vrow "acmem"    "ACME 注册邮箱（可选）"
-vrow "certdns"  "ACME 验证方式：填 cf 走 Cloudflare DNS-01（免占用80/443端口）；留空＝HTTP-01(80端口)"
+vrow "certdns"  "兼容旧用法：填 cf 走 Cloudflare DNS-01（免占用80/443端口）"
+vrow "CF_Token" "Cloudflare Token（Zone.DNS 编辑；自动发现时还需 Zone.Zone 读取）"
+vrow "CF_Account_ID" "Cloudflare 账户 ID（可选，用于缩小 Zone 查询范围）"
+vrow "CF_Zone_ID" "Cloudflare Zone ID（可选，已知时可直接指定）"
 
 vg "⑧ Web 订阅分发（Clash/聚合，强制TLS加密）"
 vrow "sub"      "订阅分发开关（sub=y 启用；亦可只设 subpt/subid）"
@@ -482,7 +489,11 @@ export ARGO_AUTH=${agk:-''}
 export ippz=${ippz:-''}
 export warp=${warp:-''}
 export name=${name:-''}
+export alns=${alns:-''}
+export acmemode=${acmemode:-''}
+export certip=${certip:-''}
 export certym=${certym:-''}
+export certwild=${certwild:-''}
 export certcrt=${certcrt:-''}
 export certkey=${certkey:-''}
 export acmem=${acmem:-''}
@@ -611,6 +622,54 @@ v4=$( (command -v curl >/dev/null 2>&1 && curl -s4m5 "$v46url" 2>/dev/null) || (
 v6=$( (command -v curl >/dev/null 2>&1 && curl -s6m5 "$v46url" 2>/dev/null) || (command -v wget >/dev/null 2>&1 && timeout 3 wget -6 --tries=2 -qO- "$v46url" 2>/dev/null) )
 v4dq=$( (command -v curl >/dev/null 2>&1 && curl -s4m5 https://ip.fm | sed -n 's/.*Location: //p' 2>/dev/null) || (command -v wget >/dev/null 2>&1 && timeout 3 wget -4 --tries=2 -qO- https://ip.fm | grep '<span class="has-text-grey-light">Location:' | tail -n1 | sed -E 's/.*>Location: <\/span>([^<]+)<.*/\1/' 2>/dev/null) )
 v6dq=$( (command -v curl >/dev/null 2>&1 && curl -s6m5 https://ip.fm | sed -n 's/.*Location: //p' 2>/dev/null) || (command -v wget >/dev/null 2>&1 && timeout 3 wget -6 --tries=2 -qO- https://ip.fm | grep '<span class="has-text-grey-light">Location:' | tail -n1 | sed -E 's/.*>Location: <\/span>([^<]+)<.*/\1/' 2>/dev/null) )
+}
+show_vps_info(){
+# 依赖安装完成后集中展示部署决策真正需要的 VPS 信息；公网 IP 复用 v4v6() 缓存，后续不重复联网探测。
+local kernel_version cpu_model cpu_cores mem_total_kb mem_available_kb mem_total_mb mem_available_mb
+local disk_total disk_used disk_available disk_usage current_cc bbr_support
+kernel_version=$(uname -r 2>/dev/null)
+cpu_model=$(awk -F: '
+  /model name|Hardware|Processor/ {
+    value=$2
+    sub(/^[[:space:]]+/, "", value)
+    if (value != "") { print value; exit }
+  }
+' /proc/cpuinfo 2>/dev/null)
+[ -n "$cpu_model" ] || cpu_model=$(uname -m 2>/dev/null)
+cpu_cores=$(getconf _NPROCESSORS_ONLN 2>/dev/null)
+case "$cpu_cores" in ''|*[!0-9]*) cpu_cores=$(awk '/^processor[[:space:]]*:/{count++} END{print count+0}' /proc/cpuinfo 2>/dev/null) ;; esac
+[ "$cpu_cores" -gt 0 ] 2>/dev/null || cpu_cores="未知"
+mem_total_kb=$(awk '/^MemTotal:/{print $2}' /proc/meminfo 2>/dev/null)
+mem_available_kb=$(awk '/^MemAvailable:/{print $2}' /proc/meminfo 2>/dev/null)
+case "$mem_total_kb" in ''|*[!0-9]*) mem_total_mb="未知" ;; *) mem_total_mb="$((mem_total_kb / 1024)) MiB" ;; esac
+case "$mem_available_kb" in ''|*[!0-9]*) mem_available_mb="未知" ;; *) mem_available_mb="$((mem_available_kb / 1024)) MiB" ;; esac
+read -r disk_total disk_used disk_available disk_usage <<EOF
+$(df -hP / 2>/dev/null | awk 'NR==2 {print $2, $3, $4, $5}')
+EOF
+disk_total=${disk_total:-未知}; disk_used=${disk_used:-未知}; disk_available=${disk_available:-未知}; disk_usage=${disk_usage:-未知}
+current_cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)
+[ -n "$current_cc" ] || current_cc="未知"
+if sysctl -n net.ipv4.tcp_available_congestion_control 2>/dev/null | grep -qw bbr; then
+  bbr_support="当前可用"
+else
+  bbr_support="当前未加载或内核不支持"
+fi
+v4v6
+section "VPS 配置信息"
+printf "  %-12s %s\n" "操作系统：" "${op:-未知}"
+printf "  %-12s %s\n" "内核版本：" "${kernel_version:-未知}"
+printf "  %-12s %s\n" "CPU 架构：" "$cpu"
+printf "  %-12s %s\n" "CPU 型号：" "${cpu_model:-未知}"
+printf "  %-12s %s\n" "CPU 核心：" "$cpu_cores 核"
+printf "  %-12s %s\n" "内存：" "总计 $mem_total_mb / 可用 $mem_available_mb"
+printf "  %-12s %s\n" "系统盘：" "总计 $disk_total / 已用 $disk_used（$disk_usage）/ 可用 $disk_available"
+printf "  %-12s %s\n" "公网 IPv4：" "${v4:-未检测到}${v4dq:+（$v4dq）}"
+printf "  %-12s %s\n" "公网 IPv6：" "${v6:-未检测到}${v6dq:+（$v6dq）}"
+printf "  %-12s %s\n" "TCP 拥塞算法：" "$current_cc"
+printf "  %-12s %s\n" "BBR 状态：" "$bbr_support"
+echo "  网络调优：接下来将按内存容量自动调整 TCP/UDP 缓冲区，并尝试启用 BBR。"
+hr2
+echo
 }
 warpsx(){
 if [ "$wap" = yes ]; then
@@ -936,11 +995,8 @@ upcaddy(){
 # NaiveProxy 服务端＝带 forwardproxy@naive 分支的 Caddy。两种获取方式，按 CPU 架构与用户选择决定：
 #   · 官方预编译（仅 amd64，klzgrad/forwardproxy 发布页）——1C1G 小机首选，零编译；
 #   · xcaddy 现场编译（arm64 必走 / amd64 可选）——用 go.dev 官方 tarball 引导唯一标准 Go，全程自包含在暂存区。
-# 自动通过 GitHub API 获取最新 release tag，并提供弱网下的 3 秒连接超时和默认稳定版（v2.11.2-naive）自愈回退
-local latest_tag
-latest_tag=$( (command -v curl >/dev/null 2>&1 && curl -sL --connect-timeout 3 "https://api.github.com/repos/klzgrad/forwardproxy/releases/latest" | grep '"tag_name":' | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/') || \
-              (command -v wget >/dev/null 2>&1 && wget -qO- --timeout=3 "https://api.github.com/repos/klzgrad/forwardproxy/releases/latest" | grep '"tag_name":' | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/') )
-NAIVE_VER="${NAIVE_VER:-${latest_tag:-v2.11.2-naive}}"
+# 预编译分支直接使用 GitHub Latest 永久链接，不在脚本内固定或回退到任何版本号。
+# GitHub API 仅用于展示实际 tag 与读取官方 SHA256；API 暂时不可用时仍可通过 Latest 链接下载。
 local method="$naivebuild" ans
 # 未显式指定获取方式时：交互终端按架构给菜单选一次；非交互(管道运行)则 amd64 默认下载、arm64 直接报错给指引。
 if [ -z "$method" ]; then
@@ -975,15 +1031,16 @@ fi
 local cstage="$HOME/agsbx/.stage_caddy"
 rm -rf "$cstage"; mkdir -p "$cstage"
 if [ "$method" = dl ]; then
-  echo "正在从 klzgrad/forwardproxy 官方发布页下载预编译 Caddy(naive)：$NAIVE_VER ……"
-  local url="https://github.com/klzgrad/forwardproxy/releases/download/${NAIVE_VER}/caddy-forwardproxy-naive.tar.xz"
+  local caddy_api latest_tag caddy_digest caddy_actual
+  caddy_api=$( (command -v curl >/dev/null 2>&1 && curl -fsSL --connect-timeout 5 "https://api.github.com/repos/klzgrad/forwardproxy/releases/latest") || (command -v wget >/dev/null 2>&1 && wget -qO- --timeout=5 "https://api.github.com/repos/klzgrad/forwardproxy/releases/latest") )
+  latest_tag=$(printf '%s' "$caddy_api" | grep '"tag_name":' | head -1 | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')
+  echo "正在从 klzgrad/forwardproxy 官方发布页下载最新版预编译 Caddy(naive)：${latest_tag:-GitHub Latest} ……"
+  local url="https://github.com/klzgrad/forwardproxy/releases/latest/download/caddy-forwardproxy-naive.tar.xz"
   local tmp="$cstage/caddy.tar.xz"
-  (command -v curl >/dev/null 2>&1 && curl -Lo "$tmp" -# --retry 2 "$url") || (command -v wget >/dev/null 2>&1 && wget -O "$tmp" --tries=2 "$url")
-  if [ ! -s "$tmp" ]; then echo "错误：Caddy 下载失败（网络不可达或该版本资源不存在）。"; rm -rf "$cstage"; return 1; fi
+  (command -v curl >/dev/null 2>&1 && curl -fLo "$tmp" -# --retry 2 "$url") || (command -v wget >/dev/null 2>&1 && wget -O "$tmp" --tries=2 "$url")
+  if [ ! -s "$tmp" ]; then echo "错误：Caddy 最新版下载失败（网络不可达或 Latest 发布缺少对应资源）。"; rm -rf "$cstage"; return 1; fi
   # SHA256 完整性校验：klzgrad/forwardproxy 未提供独立 checksums.txt，但 GitHub Release API 为每个资产
   # 暴露 "digest":"sha256:..."。据此比对下载归档，防篡改/防误下假包(如 404 HTML)。取不到 digest 时降级为信任 HTTPS。
-  local caddy_api caddy_digest caddy_actual
-  caddy_api=$( (command -v curl >/dev/null 2>&1 && curl -sL --connect-timeout 5 "https://api.github.com/repos/klzgrad/forwardproxy/releases/tags/${NAIVE_VER}") || (command -v wget >/dev/null 2>&1 && wget -qO- --timeout=5 "https://api.github.com/repos/klzgrad/forwardproxy/releases/tags/${NAIVE_VER}") )
   caddy_digest=$(printf '%s' "$caddy_api" | grep -oE '"digest":[[:space:]]*"sha256:[0-9a-f]{64}"' | head -1 | grep -oE '[0-9a-f]{64}')
   if [ -n "$caddy_digest" ]; then
     caddy_actual=$(sha256sum "$tmp" 2>/dev/null | awk '{print $1}')
@@ -1129,6 +1186,58 @@ printf '%s' "$1" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z0-9][A-Za-z0-9.-
 printf '%s' "$1" | grep -Eq '(^-|-$|\.\.|\.-|-\.)' && return 1
 return 0
 }
+is_yes(){
+case "$(printf '%s' "$1" | tr 'A-Z' 'a-z')" in
+  y|yes|1|true) return 0 ;;
+  *) return 1 ;;
+esac
+}
+valid_ipv4(){
+local ip="$1" part
+local -a parts
+IFS='.' read -r -a parts <<< "$ip"
+[ "${#parts[@]}" -eq 4 ] || return 1
+for part in "${parts[@]}"; do
+  case "$part" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$part" -le 255 ] 2>/dev/null || return 1
+done
+return 0
+}
+valid_ipv6(){
+local ip="$1" group compact
+local -a groups
+case "$ip" in
+  *[!0-9A-Fa-f:]*) return 1 ;;
+  *:*) ;;
+  *) return 1 ;;
+esac
+case "$ip" in *:::*) return 1 ;; esac
+case "$ip" in *::*::*) return 1 ;; esac
+compact=no
+case "$ip" in *::*) compact=yes ;; esac
+IFS=':' read -r -a groups <<< "$ip"
+if [ "$compact" = yes ]; then
+  [ "${#groups[@]}" -le 7 ] || return 1
+else
+  [ "${#groups[@]}" -eq 8 ] || return 1
+fi
+for group in "${groups[@]}"; do
+  [ -z "$group" ] && continue
+  [ "${#group}" -le 4 ] || return 1
+done
+return 0
+}
+valid_ip(){ valid_ipv4 "$1" || valid_ipv6 "$1"; }
+port_is_listening(){
+local port="$1"
+if command -v ss >/dev/null 2>&1; then
+  ss -ltn 2>/dev/null | awk -v suffix=":$port" '$4 ~ (suffix "$") { found=1 } END { exit !found }'
+elif command -v netstat >/dev/null 2>&1; then
+  netstat -ltn 2>/dev/null | awk -v suffix=":$port" '$4 ~ (suffix "$") { found=1 } END { exit !found }'
+else
+  return 1
+fi
+}
 install_socat_if_needed(){
 command -v socat >/dev/null 2>&1 && return 0
 is_root || return 1
@@ -1154,6 +1263,63 @@ tls_cert_file="$1"
 tls_key_file="$2"
 echo "$tls_cert_file" > "$HOME/agsbx/cert_file_path"
 echo "$tls_key_file" > "$HOME/agsbx/key_file_path"
+}
+record_cert_source(){
+echo "$1" > "$HOME/agsbx/cert_source"
+echo "$2" > "$HOME/agsbx/cert_identifier"
+}
+validate_certificate_bundle(){
+local cert_file="$1" key_file="$2" source="$3" identifier threshold cert_public key_public
+shift 3
+[ -s "$cert_file" ] && [ -s "$key_file" ] || return 1
+openssl x509 -noout -in "$cert_file" >/dev/null 2>&1 || return 1
+openssl pkey -noout -in "$key_file" >/dev/null 2>&1 || return 1
+cert_public=$(openssl x509 -pubkey -noout -in "$cert_file" 2>/dev/null | openssl pkey -pubin -outform DER 2>/dev/null | openssl dgst -sha256 2>/dev/null)
+key_public=$(openssl pkey -in "$key_file" -pubout -outform DER 2>/dev/null | openssl dgst -sha256 2>/dev/null)
+[ -n "$cert_public" ] && [ "$cert_public" = "$key_public" ] || return 1
+case "$source" in
+  acme-ip) threshold=86400 ;;
+  acme-http|acme-alpn|acme-dns) threshold=2592000 ;;
+  *) threshold=0 ;;
+esac
+openssl x509 -checkend "$threshold" -noout -in "$cert_file" >/dev/null 2>&1 || return 1
+for identifier in "$@"; do
+  case "$identifier" in
+    \*.*)
+      valid_domain "${identifier#\*.}" || return 1
+      openssl x509 -noout -ext subjectAltName -in "$cert_file" 2>/dev/null \
+        | tr ',' '\n' \
+        | sed -n 's/.*DNS:[[:space:]]*//p' \
+        | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' \
+        | grep -Fqx -- "$identifier" || return 1
+      ;;
+    *)
+      if valid_ip "$identifier"; then
+        openssl x509 -checkip "$identifier" -noout -in "$cert_file" >/dev/null 2>&1 || return 1
+      elif valid_domain "$identifier"; then
+        openssl x509 -checkhost "$identifier" -noout -in "$cert_file" >/dev/null 2>&1 || return 1
+      else
+        return 1
+      fi
+      ;;
+  esac
+done
+}
+register_acme_cron(){
+local acme_script="$HOME/agsbx/acme.sh"
+local acme_home="$HOME/agsbx/acme"
+local cron_tmp
+command -v crontab >/dev/null 2>&1 || {
+  echo "警告：系统没有 crontab，证书已可用，但无法注册自动续期任务。"
+  return 0
+}
+cron_tmp=$(mktemp) || return 0
+crontab -l 2>/dev/null > "$cron_tmp"
+if ! grep -Fq "/bin/bash $acme_script --cron --home $acme_home" "$cron_tmp"; then
+  echo "30 2 * * * /bin/bash $acme_script --cron --home $acme_home > /dev/null 2>&1" >> "$cron_tmp"
+  crontab "$cron_tmp" >/dev/null 2>&1 || echo "警告：ACME 自动续期任务写入失败，请稍后手动检查 crontab。"
+fi
+rm -f "$cron_tmp"
 }
 # 证书可信判定：ca(ACME/外部CA) 与 caddy(Caddy 自动托管签发) 均为受公共 CA 信任的真实证书，
 # 客户端可 insecure=0 校验；其余(自签 selfsigned)需 skip-cert-verify/pinSHA256。供 cip 渲染节点链接统一调用。
@@ -1212,6 +1378,7 @@ cert_file=${tls_cert_file:-$(cat "$HOME/agsbx/cert_file_path" 2>/dev/null)}
 key_file=${tls_key_file:-$(cat "$HOME/agsbx/key_file_path" 2>/dev/null)}
 cert_sni=$(cat "$HOME/agsbx/sni.txt" 2>/dev/null)
 cert_mode_now=$(cat "$HOME/agsbx/cert_mode" 2>/dev/null)
+cert_source_now=$(cat "$HOME/agsbx/cert_source" 2>/dev/null)
 cert_issuer=$(openssl x509 -noout -issuer -in "$cert_file" 2>/dev/null | sed 's/^issuer=//')
 cert_subject=$(openssl x509 -noout -subject -in "$cert_file" 2>/dev/null | sed 's/^subject=//')
 cert_not_before=$(openssl x509 -noout -startdate -in "$cert_file" 2>/dev/null | sed 's/^notBefore=//')
@@ -1220,12 +1387,22 @@ cert_serial=$(openssl x509 -noout -serial -in "$cert_file" 2>/dev/null | sed 's/
 cert_fingerprint=$(openssl x509 -noout -fingerprint -sha256 -in "$cert_file" 2>/dev/null | awk -F= '{print $2}')
 printf '%s\n' "${C_CYAN}========== TLS 证书信息 ==========${C_RESET}"
 echo "证书结果：$cert_result"
-[ -n "$cert_domain" ] && echo "申请域名：$cert_domain"
+[ -n "$cert_domain" ] && echo "申请标识：$cert_domain"
 [ -n "$cert_sni" ] && echo "SNI/CN：$cert_sni"
 [ -n "$cert_mode_now" ] && echo "证书模式：$cert_mode_now"
+[ -n "$cert_source_now" ] && echo "证书来源：$cert_source_now"
 # 签发方式：把内部 cert_mode 翻译成人类可读来源，明确区分「ACME 命令申请」与「Caddy 自动托管申请」。
 case "$cert_mode_now" in
-  ca)         echo "签发方式：ACME 命令申请（acme.sh + Let's Encrypt）或外部导入证书" ;;
+  ca)
+    case "$cert_source_now" in
+      external)   echo "签发方式：外部导入的受信任证书" ;;
+      acme-ip)    echo "签发方式：acme.sh + Let's Encrypt IP 短期证书" ;;
+      acme-http)  echo "签发方式：acme.sh + HTTP-01" ;;
+      acme-alpn)  echo "签发方式：acme.sh + TLS-ALPN-01" ;;
+      acme-dns)   echo "签发方式：acme.sh + Cloudflare DNS-01" ;;
+      *)          echo "签发方式：ACME 命令申请或外部导入证书" ;;
+    esac
+    ;;
   caddy)      echo "签发方式：Caddy(naive) 自动托管申请（Caddy 内置 ACME，自动续期）" ;;
   selfsigned) echo "签发方式：OpenSSL 本地自签（无需域名，有效期 100 年）" ;;
   *)          echo "签发方式：未知" ;;
@@ -1239,7 +1416,7 @@ echo "SHA256指纹：${cert_fingerprint:-未知}"
 echo "证书文件：$cert_file"
 echo "私钥文件：$key_file"
 echo "指纹文件：$HOME/agsbx/cert_sha256.txt"
-[ "$cert_mode_now" = "ca" ] && echo "ACME工作目录：$HOME/agsbx/acme"
+case "$cert_source_now" in acme-*) echo "ACME工作目录：$HOME/agsbx/acme" ;; esac
 [ "$cert_mode_now" = "caddy" ] && echo "Caddy证书存储目录：$HOME/agsbx/caddy_storage/caddy/certificates"
 printf '%s\n' "${C_CYAN}==================================${C_RESET}"
 }
@@ -1255,140 +1432,358 @@ openssl ecparam -genkey -name prime256v1 -out "$selfsigned_key_file" >/dev/null 
 # 极具自愈性地将本地自签证书有效期设置为 36500 天（100 年），省去高频重新签发及失效排障烦恼！
 openssl req -new -x509 -days 36500 -key "$selfsigned_key_file" -out "$selfsigned_cert_file" -subj "/CN=$random_sni" >/dev/null 2>&1
 echo "selfsigned" > "$HOME/agsbx/cert_mode"
+record_cert_source "selfsigned" "$random_sni"
 record_tls_cert_paths "$selfsigned_cert_file" "$selfsigned_key_file"
 write_cert_fingerprint
 }
-setup_acme_certificate(){
-acme_domain="$1"
+ensure_official_acme(){
+local mode="$1"
+# 主脚本与 DNS hook 必须固定到同一官方提交；升级时同步更新此值并重新审阅，禁止直接执行可变 master。
+local acme_ref="2feb392bd0e3964d9bf68871ae804578d9d5ca80"
+local acme_script="$HOME/agsbx/acme.sh"
+local acme_tmp="$HOME/agsbx/.acme.sh.$$"
+local acme_ref_file="$HOME/agsbx/acme_upstream_ref"
+local cf_hook="$HOME/agsbx/dnsapi/dns_cf.sh"
+local cf_hook_tmp="$HOME/agsbx/dnsapi/.dns_cf.sh.$$"
+local cf_hook_ref_file="$HOME/agsbx/dnsapi/.dns_cf_ref"
+local refresh=no
+[ -s "$acme_script" ] || refresh=yes
+[ "$(cat "$acme_ref_file" 2>/dev/null)" = "$acme_ref" ] || refresh=yes
+if [ "$refresh" = yes ]; then
+  echo "准备安装固定到官方提交 ${acme_ref:0:12} 的 acme.sh。"
+  fetch_file "https://raw.githubusercontent.com/acmesh-official/acme.sh/$acme_ref/acme.sh" "$acme_tmp" || {
+    rm -f "$acme_tmp"
+    echo "错误：无法从 acmesh-official/acme.sh 官方仓库下载脚本。"
+    return 1
+  }
+  head -n 1 "$acme_tmp" | grep -q '^#!/' || {
+    rm -f "$acme_tmp"
+    echo "错误：下载到的 acme.sh 文件格式异常。"
+    return 1
+  }
+  mv "$acme_tmp" "$acme_script" || return 1
+  echo "$acme_ref" > "$acme_ref_file"
+fi
+chmod 700 "$acme_script" 2>/dev/null
+if [ "$mode" = ip ] && ! grep -q -- '--certificate-profile' "$acme_script"; then
+  echo "错误：固定版本的 acme.sh 不支持 IP 证书参数。"
+  return 1
+fi
+if [ "$mode" = dns ] && { [ ! -s "$cf_hook" ] || [ "$(cat "$cf_hook_ref_file" 2>/dev/null)" != "$acme_ref" ]; }; then
+  mkdir -p "$HOME/agsbx/dnsapi"
+  fetch_file "https://raw.githubusercontent.com/acmesh-official/acme.sh/$acme_ref/dnsapi/dns_cf.sh" "$cf_hook_tmp" || {
+    rm -f "$cf_hook_tmp"
+    echo "错误：无法从官方仓库下载 Cloudflare DNS hook。"
+    return 1
+  }
+  grep -q 'dns_cf_add()' "$cf_hook_tmp" || {
+    rm -f "$cf_hook_tmp"
+    echo "错误：下载到的 Cloudflare DNS hook 格式异常。"
+    return 1
+  }
+  mv "$cf_hook_tmp" "$cf_hook" || return 1
+  echo "$acme_ref" > "$cf_hook_ref_file"
+  chmod 700 "$cf_hook" 2>/dev/null
+fi
+}
+setup_external_certificate(){
+local acme_cert_file="$HOME/agsbx/acmecer/cert.pem"
+local acme_key_file="$HOME/agsbx/acmecer/private.key"
+local cert_identifier
 mkdir -p "$HOME/agsbx/acmecer"
-acme_cert_file="$HOME/agsbx/acmecer/cert.pem"
-acme_key_file="$HOME/agsbx/acmecer/private.key"
-if [ -n "$certcrt" ] || [ -n "$certkey" ]; then
-if [ -s "$certcrt" ] && [ -s "$certkey" ]; then
+if [ ! -s "$certcrt" ] || [ ! -s "$certkey" ]; then
+  echo "错误：certcrt 与 certkey 必须同时指向有效的证书和私钥文件。"
+  return 1
+fi
+openssl x509 -noout -in "$certcrt" >/dev/null 2>&1 || {
+  echo "错误：certcrt 不是 OpenSSL 可识别的 PEM 证书。"
+  return 1
+}
+openssl pkey -noout -in "$certkey" >/dev/null 2>&1 || {
+  echo "错误：certkey 不是 OpenSSL 可识别的私钥。"
+  return 1
+}
+cert_identifier=$(printf '%s' "$certym" | tr -d '[:space:]' | tr 'A-Z' 'a-z')
+if [ -z "$cert_identifier" ]; then
+  cert_identifier=$(openssl x509 -noout -ext subjectAltName -in "$certcrt" 2>/dev/null | tr ',' '\n' | sed -n 's/.*DNS:[[:space:]]*//p' | head -n 1 | tr -d '[:space:]')
+fi
+if [ -z "$cert_identifier" ]; then
+  cert_identifier=$(openssl x509 -noout -ext subjectAltName -in "$certcrt" 2>/dev/null | tr ',' '\n' | sed -n 's/.*IP Address:[[:space:]]*//p' | head -n 1 | tr -d '[:space:]')
+fi
+if [ -z "$cert_identifier" ]; then
+  cert_identifier=$(openssl x509 -noout -subject -in "$certcrt" 2>/dev/null | sed -n 's/.*CN[[:space:]]*=[[:space:]]*\([^,]*\).*/\1/p' | tr -d '[:space:]')
+fi
+if [ -z "$cert_identifier" ]; then
+  echo "错误：无法从外部证书提取 SAN/CN；请同时设置 certym 指定客户端 SNI。"
+  return 1
+fi
+if ! valid_ip "$cert_identifier" && ! valid_domain "$cert_identifier"; then
+  echo "错误：外部证书需要一个具体的域名或 IP 作为 SNI；泛域名证书请通过 certym 指定实际子域名。"
+  return 1
+fi
+if ! validate_certificate_bundle "$certcrt" "$certkey" external "$cert_identifier"; then
+  echo "错误：外部证书已过期、与私钥不匹配，或不包含 certym=$cert_identifier。"
+  return 1
+fi
 cp "$certcrt" "$acme_cert_file" && cp "$certkey" "$acme_key_file" || return 1
-echo "$acme_domain" > "$HOME/agsbx/sni.txt"
+chmod 600 "$acme_key_file" 2>/dev/null
+echo "$cert_identifier" > "$HOME/agsbx/sni.txt"
 echo "ca" > "$HOME/agsbx/cert_mode"
+record_cert_source "external" "$cert_identifier"
 record_tls_cert_paths "$acme_cert_file" "$acme_key_file"
-tls_cert_source="外部导入 CA/ACME 证书"
-return 0
+tls_cert_source="外部导入的受信任证书"
+}
+reuse_existing_trusted_certificate(){
+local wanted_type="$1"
+shift
+local acme_cert_file="$HOME/agsbx/acmecer/cert.pem"
+local acme_key_file="$HOME/agsbx/acmecer/private.key"
+local source identifier
+[ "$(cat "$HOME/agsbx/cert_mode" 2>/dev/null)" = ca ] || return 1
+[ -s "$acme_cert_file" ] && [ -s "$acme_key_file" ] || return 1
+source=$(cat "$HOME/agsbx/cert_source" 2>/dev/null)
+[ -n "$source" ] || source=acme-http
+case "$source" in
+  acme-ip|acme-http|acme-alpn|acme-dns) ;;
+  *) return 1 ;;
+esac
+identifier=$(cat "$HOME/agsbx/cert_identifier" 2>/dev/null)
+[ -n "$identifier" ] || identifier=$(cat "$HOME/agsbx/sni.txt" 2>/dev/null)
+if [ "$#" -eq 0 ]; then
+  case "$wanted_type" in
+    ip) valid_ip "$identifier" || return 1 ;;
+    domain) valid_domain "$identifier" || return 1 ;;
+  esac
+  validate_certificate_bundle "$acme_cert_file" "$acme_key_file" "$source" || return 1
+else
+  validate_certificate_bundle "$acme_cert_file" "$acme_key_file" "$source" "$@" || return 1
 fi
-echo "警告：certcrt/certkey 未同时指向有效文件，将尝试自动申请 ACME 证书。"
-fi
-
-  # 检查本地是否已存在有效的、未过期的同域名证书（有效期大于30天），免于重复申请风控。
-  if [ -s "$acme_cert_file" ] && [ -s "$acme_key_file" ]; then
-    # 优先提取真实证书中的 CN 域名进行比对，防止 sni.txt 被自签逻辑覆写导致误判
-    local cert_cn
-    cert_cn=$(openssl x509 -noout -subject -in "$acme_cert_file" 2>/dev/null | sed -n 's/.*CN=\([^,]*\).*/\1/p' | tr -d '[:space:]')
-    if [ "${cert_cn}" = "$acme_domain" ] || [ "$(cat "$HOME/agsbx/sni.txt" 2>/dev/null)" = "$acme_domain" ]; then
-      if openssl x509 -checkend 2592000 -noout -in "$acme_cert_file" >/dev/null 2>&1; then
-        echo "检测到本地已存在有效的 $acme_domain 证书（剩余有效期大于30天），直接复用，免于重复申请风控。💎"
-        echo "$acme_domain" > "$HOME/agsbx/sni.txt"
-        echo "ca" > "$HOME/agsbx/cert_mode"
-        record_tls_cert_paths "$acme_cert_file" "$acme_key_file"
-        tls_cert_source="本地已有 CA/ACME 证书"
-
-        # 补全每日定时自动续期 crontab 定时任务
-        cron_tmp=$(mktemp)
-        crontab -l 2>/dev/null > "$cron_tmp" 2>/dev/null
-        if ! grep -q "acme.sh --cron" "$cron_tmp"; then
-          echo "30 2 * * * /bin/bash $HOME/agsbx/acme.sh --cron --home $HOME/agsbx/acme > /dev/null 2>&1" >> "$cron_tmp"
-          crontab "$cron_tmp" >/dev/null 2>&1
-        fi
-        rm -f "$cron_tmp"
-        return 0
-      fi
-    fi
+tls_cert_file="$acme_cert_file"
+tls_key_file="$acme_key_file"
+echo "ca" > "$HOME/agsbx/cert_mode"
+record_cert_source "$source" "$identifier"
+record_tls_cert_paths "$acme_cert_file" "$acme_key_file"
+case "$source" in acme-*) register_acme_cron ;; esac
+tls_cert_source="本地已有且有效的受信任证书"
+echo "检测到本地已有有效证书，直接复用，避免重复申请触发 CA 限制。"
+}
+choose_acme_mode(){
+local requested choice
+requested=$(printf '%s' "$acmemode" | tr -d '[:space:]' | tr 'A-Z' 'a-z')
+if [ "${acme_force_menu:-no}" != yes ]; then
+  if [ -z "$requested" ]; then
+    case "$(printf '%s' "$certdns" | tr -d '[:space:]' | tr 'A-Z' 'a-z')" in
+      cf|cloudflare) requested=dns ;;
+    esac
   fi
-
-  # 验证方式(ACME challenge)选择：certdns=cf 走 Cloudflare DNS-01——通过 DNS API 写 TXT 记录验证域名，
-  # 全程无需任何入站端口，可绕过 80/443 被占用、NAT/防火墙或无公网入站的场景；留空则沿用 HTTP-01 standalone(80端口)。
-  local acme_dns
-  acme_dns=$(printf '%s' "$certdns" | tr -d '[:space:]' | tr 'A-Z' 'a-z')
-  local acme_challenge_args
-  if [ "$acme_dns" = "cf" ] || [ "$acme_dns" = "cloudflare" ]; then
-    # Cloudflare 凭证：优先取环境变量(CF_Token 或 CF_Key+CF_Email)；缺失且为交互终端则提示粘贴 API Token(不回显)。
-    if [ -z "$CF_Token" ] && [ -z "$CF_Key" ]; then
-      if [ -t 0 ]; then
-        printf "请输入 Cloudflare API Token（需 Zone.DNS 编辑权限，输入不回显）：" >&2
-        stty -echo 2>/dev/null; read -r CF_Token; stty echo 2>/dev/null; echo >&2
+  [ -z "$requested" ] && [ -n "$certip" ] && requested=ip
+  [ -z "$requested" ] && [ -n "$certym" ] && requested=http
+fi
+if [ -z "$requested" ]; then
+  if [ ! -t 0 ]; then
+    echo "错误：非交互运行启用了 ACME，但未设置 acmemode/certip/certym/certdns。"
+    return 1
+  fi
+  echo ""
+  printf '%s\n' "${C_CYAN}请选择 acme.sh 证书申请方式：${C_RESET}"
+  echo "1. IP 短期证书：HTTP-01，需公网 80/TCP 可达"
+  echo "2. 域名证书：HTTP-01，域名需指向本机且 80/TCP 可达"
+  echo "3. 域名证书：TLS-ALPN-01，域名需指向本机且 443/TCP 可达"
+  echo "4. Cloudflare DNS-01：无需开放 80/443，可申请泛域名"
+  echo "0. 终止本次安装"
+  printf "请输入数字 [0-4]：" >&2
+  read -r choice
+  requested="$choice"
+fi
+case "$requested" in
+  1|ip|ip-http) acme_mode_selected=ip ;;
+  2|http|standalone|domain) acme_mode_selected=http ;;
+  3|alpn|tls-alpn) acme_mode_selected=alpn ;;
+  4|dns|cf|cloudflare) acme_mode_selected=dns ;;
+  0|abort|quit) return 2 ;;
+  *)
+    echo "错误：不支持的 acmemode=$requested；可选 ip/http/alpn/dns。"
+    return 1
+    ;;
+esac
+}
+setup_acme_certificate(){
+local mode="$1"
+local acme_script="$HOME/agsbx/acme.sh"
+local acme_home="$HOME/agsbx/acme"
+local acme_cert_file="$HOME/agsbx/acmecer/cert.pem"
+local acme_key_file="$HOME/agsbx/acmecer/private.key"
+local acme_log="$HOME/agsbx/acme_issue.log"
+local input identifier source required_port reload_cmd cf_prompted=no index
+local -a identifiers issue_args
+mkdir -p "$HOME/agsbx/acmecer" "$acme_home"
+chmod 700 "$acme_home" 2>/dev/null
+case "$mode" in
+  ip)
+    input=$(printf '%s' "$certip" | tr ',' ' ')
+    if [ -z "$(printf '%s' "$input" | tr -d '[:space:]')" ]; then
+      if [ ! -t 0 ]; then
+        echo "错误：IP 证书模式缺少 certip。"
+        return 1
       fi
+      printf "请输入一个或两个公网 IP（空格分隔）：" >&2
+      read -r input
     fi
-    # 校验凭证充分性：Token 单独可用；或旧版 Global Key 需搭配账户邮箱。二者皆缺则终止(交由上层回退自签)。
-    if [ -z "$CF_Token" ] && { [ -z "$CF_Key" ] || [ -z "$CF_Email" ]; }; then
-      echo "错误：Cloudflare DNS-01 缺少有效凭证（需环境变量 CF_Token，或 CF_Key + CF_Email）。"
+    read -r -a identifiers <<< "$input"
+    if [ "${#identifiers[@]}" -lt 1 ] || [ "${#identifiers[@]}" -gt 2 ]; then
+      echo "错误：certip 只能包含一个或两个公网 IP。"
       return 1
     fi
-    export CF_Token CF_Key CF_Email
-    acme_challenge_args="--dns dns_cf"
-    echo "ACME 验证方式：Cloudflare DNS-01（无需占用 80/443 端口）。"
-  else
-    acme_challenge_args="--standalone"
-    # [80端口占用校验] ACME Standalone 模式需要占用 80 端口进行 HTTP-01 验证
-    local port_80_in_use=false
-    if command -v ss >/dev/null 2>&1; then
-      if ss -tuln 2>/dev/null | grep -qE "(:80\s|:80$)"; then
-        port_80_in_use=true
+    for index in "${!identifiers[@]}"; do
+      identifier="${identifiers[$index]}"
+      identifier=${identifier#[}
+      identifier=${identifier%]}
+      valid_ip "$identifier" || {
+        echo "错误：certip 中包含无效 IP：$identifier"
+        return 1
+      }
+      identifiers[$index]="$identifier"
+    done
+    certip="${identifiers[*]}"
+    required_port=80
+    source=acme-ip
+    ;;
+  http|alpn|dns)
+    identifier=$(printf '%s' "$certym" | tr -d '[:space:]' | tr 'A-Z' 'a-z')
+    if [ -z "$identifier" ]; then
+      if [ ! -t 0 ]; then
+        echo "错误：$mode 模式缺少 certym。"
+        return 1
       fi
-    elif command -v netstat >/dev/null 2>&1; then
-      if netstat -tuln 2>/dev/null | grep -qE "(:80\s|:80$)"; then
-        port_80_in_use=true
+      printf "请输入申请证书的域名：" >&2
+      read -r identifier
+      identifier=$(printf '%s' "$identifier" | tr -d '[:space:]' | tr 'A-Z' 'a-z')
+    fi
+    if [ "${identifier#\*.}" != "$identifier" ]; then
+      if [ "$mode" != dns ]; then
+        echo "错误：泛域名证书只能通过 DNS-01 申请，请改选模式 4。"
+        return 1
       fi
+      certwild=y
+      identifier=${identifier#\*.}
     fi
-
-    if [ "$port_80_in_use" = "true" ]; then
-      echo ""
-      printf '%s\n' "${C_YELLOW}警告：检测到本机的 80 端口已被其他服务占用！${C_RESET}"
-      echo "ACME Standalone 模式自动申请证书必须独占 80 端口。"
-      echo "如果直接继续，ACME 申请大概率会失败并自动退回到【自签证书】模式。"
-      echo "建议在继续之前，暂时停止占用 80 端口的服务（例如：systemctl stop nginx 或 caddy/apache2）。"
-      echo "或改用 certdns=cf 走 Cloudflare DNS-01 验证，即可完全避开 80 端口占用。"
-      echo "脚本将等待 5 秒，方便您查看此警告并做准备..."
-      sleep 5
+    valid_domain "$identifier" || {
+      echo "错误：certym=$identifier 不是有效域名。"
+      return 1
+    }
+    certym="$identifier"
+    identifiers=("$identifier")
+    case "$mode" in
+      http) required_port=80; source=acme-http ;;
+      alpn) required_port=443; source=acme-alpn ;;
+      dns)
+        required_port=""
+        source=acme-dns
+        if [ -z "$certwild" ] && [ -t 0 ]; then
+          printf "是否同时申请 *.$identifier 泛域名证书？[y/N]：" >&2
+          read -r certwild
+        fi
+        is_yes "$certwild" && identifiers+=("*.$identifier")
+        ;;
+    esac
+    ;;
+  *)
+    echo "错误：未知 ACME 模式：$mode"
+    return 1
+    ;;
+esac
+if [ -n "$required_port" ] && port_is_listening "$required_port"; then
+  echo "错误：$mode 模式需要独占 $required_port/TCP，但该端口当前已被占用。"
+  echo "脚本不会停止现有服务；请释放端口，或改选 Cloudflare DNS-01。"
+  return 1
+fi
+if [ "$mode" != dns ]; then
+  install_socat_if_needed || {
+    echo "错误：$mode 模式需要 socat，自动安装失败。"
+    return 1
+  }
+fi
+if [ "$mode" = dns ]; then
+  CF_Token=${CF_Token:-}
+  CF_Account_ID=${CF_Account_ID:-}
+  CF_Zone_ID=${CF_Zone_ID:-}
+  CF_Key=${CF_Key:-}
+  CF_Email=${CF_Email:-}
+  if [ -z "$CF_Token" ] && { [ -z "$CF_Key" ] || [ -z "$CF_Email" ]; }; then
+    if [ ! -t 0 ]; then
+      echo "错误：Cloudflare DNS-01 缺少 CF_Token，或 CF_Key + CF_Email。"
+      return 1
     fi
-
-    install_socat_if_needed || return 1
+    printf "请输入 Cloudflare API Token（Zone.DNS 编辑权限，输入不回显）：" >&2
+    read -r -s CF_Token
+    echo >&2
+    cf_prompted=yes
   fi
-acme_script="$HOME/agsbx/acme.sh"
-acme_home="$HOME/agsbx/acme"
-mkdir -p "$acme_home"
-if [ ! -s "$acme_script" ]; then
-fetch_file "https://raw.githubusercontent.com/acmesh-official/acme.sh/master/acme.sh" "$acme_script" || return 1
-chmod 700 "$acme_script" 2>/dev/null
+  if [ -z "$CF_Token" ] && { [ -z "$CF_Key" ] || [ -z "$CF_Email" ]; }; then
+    echo "错误：Cloudflare DNS-01 凭据不完整。"
+    return 1
+  fi
+  if [ "$cf_prompted" = yes ]; then
+    printf "Cloudflare Account ID（可选，回车自动发现 Zone）：" >&2
+    read -r CF_Account_ID
+    printf "Cloudflare Zone ID（可选，回车自动发现）：" >&2
+    read -r CF_Zone_ID
+  fi
+  export CF_Token CF_Account_ID CF_Zone_ID CF_Key CF_Email
+  echo "ACME 验证方式：Cloudflare DNS-01；域名须由 Cloudflare 权威 DNS 托管，无需 A/AAAA 指向本机。"
+elif [ "$mode" = alpn ]; then
+  echo "ACME 验证方式：TLS-ALPN-01；域名须指向本机，公网 443/TCP 必须可达。"
+else
+  echo "ACME 验证方式：HTTP-01；申请标识须指向本机，公网 80/TCP 必须可达。"
 fi
-acme_mail=${acmem:-"admin@$acme_domain"}
-bash "$acme_script" --home "$acme_home" --set-default-ca --server letsencrypt >/dev/null 2>&1
-bash "$acme_script" --home "$acme_home" --register-account -m "$acme_mail" --server letsencrypt >/dev/null 2>&1
-bash "$acme_script" --home "$acme_home" --issue $acme_challenge_args -d "$acme_domain" --keylength ec-256 --server letsencrypt >/dev/null 2>&1 || return 1
-local reload_cmd="if pidof systemd >/dev/null 2>&1; then if systemctl list-unit-files 2>/dev/null | grep -qE '^(xr|sb)\.service'; then systemctl restart xr sb; fi; elif command -v rc-service >/dev/null 2>&1; then if [ -f /etc/init.d/xray ] || [ -f /etc/init.d/sing-box ]; then rc-service xray restart; rc-service sing-box restart; fi; else kill -15 \$(pgrep -f 'agsbx/xray') \$(pgrep -f 'agsbx/sing-box') 2>/dev/null; sleep 2; nohup $HOME/agsbx/xray run -c $HOME/agsbx/xr.json > $HOME/agsbx/xray.log 2>&1 & nohup $HOME/agsbx/sing-box run -c $HOME/agsbx/sb.json > $HOME/agsbx/sing-box.log 2>&1 & fi"
-bash "$acme_script" --home "$acme_home" --install-cert -d "$acme_domain" --ecc --fullchain-file "$acme_cert_file" --key-file "$acme_key_file" --reloadcmd "$reload_cmd" >/dev/null 2>&1 || return 1
-[ -s "$acme_cert_file" ] && [ -s "$acme_key_file" ] || return 1
-
-# 注册每日凌晨 2:30 的自动续期 crontab 定时任务，实现到期前 100% 自动签发并重载
-cron_tmp=$(mktemp)
-crontab -l 2>/dev/null > "$cron_tmp" 2>/dev/null
-if ! grep -q "acme.sh --cron" "$cron_tmp"; then
-  echo "30 2 * * * /bin/bash $acme_script --cron --home $acme_home > /dev/null 2>&1" >> "$cron_tmp"
-  crontab "$cron_tmp" >/dev/null 2>&1
+ensure_official_acme "$mode" || return 1
+: > "$acme_log"
+bash "$acme_script" --home "$acme_home" --set-default-ca --server letsencrypt >> "$acme_log" 2>&1 || return 1
+if [ -n "$acmem" ]; then
+  bash "$acme_script" --home "$acme_home" --register-account -m "$acmem" --server letsencrypt >> "$acme_log" 2>&1 || return 1
+else
+  bash "$acme_script" --home "$acme_home" --register-account --server letsencrypt >> "$acme_log" 2>&1 || return 1
 fi
-rm -f "$cron_tmp"
-
-echo "$acme_domain" > "$HOME/agsbx/sni.txt"
+chmod 600 "$acme_home/account.conf" 2>/dev/null
+issue_args=(--home "$acme_home" --issue --server letsencrypt --keylength ec-256)
+case "$mode" in
+  ip)
+    issue_args+=(--standalone --certificate-profile shortlived --days 4)
+    ;;
+  http) issue_args+=(--standalone) ;;
+  alpn) issue_args+=(--alpn) ;;
+  dns) issue_args+=(--dns dns_cf) ;;
+esac
+for identifier in "${identifiers[@]}"; do
+  issue_args+=(-d "$identifier")
+done
+if ! bash "$acme_script" "${issue_args[@]}" >> "$acme_log" 2>&1; then
+  echo "错误：ACME 签发失败，详情见 $acme_log"
+  return 1
+fi
+identifier="${identifiers[0]}"
+reload_cmd="if pidof systemd >/dev/null 2>&1; then systemctl restart xr 2>/dev/null; systemctl restart sb 2>/dev/null; elif command -v rc-service >/dev/null 2>&1; then rc-service xray restart 2>/dev/null; rc-service sing-box restart 2>/dev/null; else kill -15 \$(pgrep -f 'agsbx/xray') \$(pgrep -f 'agsbx/sing-box') 2>/dev/null; sleep 2; [ -x $HOME/agsbx/xray ] && nohup $HOME/agsbx/xray run -c $HOME/agsbx/xr.json > $HOME/agsbx/xray.log 2>&1 & [ -x $HOME/agsbx/sing-box ] && nohup $HOME/agsbx/sing-box run -c $HOME/agsbx/sb.json > $HOME/agsbx/sing-box.log 2>&1 & fi; true"
+bash "$acme_script" --home "$acme_home" --install-cert -d "$identifier" --ecc --fullchain-file "$acme_cert_file" --key-file "$acme_key_file" --reloadcmd "$reload_cmd" >> "$acme_log" 2>&1
+if ! validate_certificate_bundle "$acme_cert_file" "$acme_key_file" "$source" "${identifiers[@]}"; then
+  echo "错误：ACME 已签发，但运行目录中的证书未通过有效期、SAN 或私钥匹配校验，详情见 $acme_log"
+  return 1
+fi
+chmod 600 "$acme_key_file" 2>/dev/null
+register_acme_cron
+echo "$identifier" > "$HOME/agsbx/sni.txt"
 echo "ca" > "$HOME/agsbx/cert_mode"
+record_cert_source "$source" "$identifier"
 record_tls_cert_paths "$acme_cert_file" "$acme_key_file"
 tls_cert_source="ACME 自动申请成功"
 }
 setup_tls_certificate(){
-  # 运行期幂等保护：本函数会被多个 TLS 协议装配段（xhyp/xvcdn/xvargo/sub 等）各自调用，
-  # 证书在同一次运行内只需准备一次，二次调用直接复用，避免反复生成自签证书或触发 ACME 流程。
+  local reuse_cert reuse_key wanted wanted_type mode_hint dns_requested=no reuse_allowed=yes acme_requested=no choose_status retry_choice index
+  local -a wanted_identifiers
   if [ "$tls_cert_ready" = yes ]; then
     return 0
   fi
-  # 最高优先级：复用 Caddy(naive) 已成功签发的真实域名证书。
-  # 当启用 naive 且 Caddy 已自动托管签发证书(cert_mode=caddy)时，hy2/tuic/anytls/xhy2 等 TLS 节点
-  # 直接复用该证书、SNI 取 naive 域名，免去再生成自签或重复申请 ACME。优先级：caddy > certym/ACME > 自签。
+  # Caddy 内置 ACME 仍保持最高优先级；这里只复用其现成证书，不干预 Caddy 自己的申请与续期。
   if [ -n "$naive" ] && [ "$(cat "$HOME/agsbx/cert_mode" 2>/dev/null)" = "caddy" ]; then
-    local reuse_cert reuse_key
     reuse_cert=$(cat "$HOME/agsbx/cert_file_path" 2>/dev/null)
     reuse_key=$(cat "$HOME/agsbx/key_file_path" 2>/dev/null)
     if [ -s "$reuse_cert" ] && [ -s "$reuse_key" ] && openssl x509 -checkend 0 -noout -in "$reuse_cert" >/dev/null 2>&1; then
@@ -1401,42 +1796,125 @@ setup_tls_certificate(){
       return 0
     fi
   fi
-  # 智能安全网关拦截：当前没有任何启用 TLS 的节点，且未启用订阅分发时，直接静默退出，避免无意义的证书生成和定时任务注册
-  # 注：anytls(anp) 亦为 TLS 节点，需纳入放行条件，否则仅启用 anytls 时会因网关拦截而拿不到证书。
   if [ "$sub" != "yes" ] && [ "$hyp" != "yes" ] && [ "$xhyp" != "yes" ] && [ "$tup" != "yes" ] && [ "$ssp" != "yes" ] && [ "$anp" != "yes" ] && [ "$xvcdn" != "yes" ] && [ "$xvargo" != "yes" ]; then
     return 0
   fi
-
-if ! command -v openssl >/dev/null 2>&1; then
-echo "错误：系统未安装 openssl，无法生成 TLS 证书。"
-echo "请先安装 openssl 后重试：apt install openssl 或 yum install openssl"
-exit 1
-fi
-cert_domain=$(printf '%s' "$certym" | tr -d '[:space:]')
-if [ -n "$cert_domain" ]; then
-if valid_domain "$cert_domain"; then
-echo "检测到域名证书变量 certym=$cert_domain，开始准备 ACME/CA 证书。"
-if setup_acme_certificate "$cert_domain" && write_cert_fingerprint; then
-echo "TLS证书模式：CA/ACME 域名证书 ($cert_domain)"
-show_tls_cert_summary "${tls_cert_source:-ACME/CA 证书可用}" "$cert_domain"
-tls_cert_ready=yes
-return 0
-fi
-echo "ACME证书申请失败：$cert_domain"
-echo "正在自动回退为自签证书，确保 TLS 协议仍有证书可用。"
-else
-echo "警告：certym=$cert_domain 不像有效域名。"
-echo "正在自动回退为自签证书，确保 TLS 协议仍有证书可用。"
-fi
-fi
-if setup_selfsigned_certificate; then
-echo "TLS证书模式：自签证书 ($(cat "$HOME/agsbx/sni.txt" 2>/dev/null))"
-show_tls_cert_summary "OpenSSL 自签证书可用" "$(cat "$HOME/agsbx/sni.txt" 2>/dev/null)"
-tls_cert_ready=yes
-else
-echo "错误：TLS 证书生成失败，终止安装。"
-exit 1
-fi
+  if ! command -v openssl >/dev/null 2>&1; then
+    echo "错误：系统未安装 openssl，无法准备 TLS 证书。"
+    echo "请先安装 openssl 后重试：apt install openssl 或 yum install openssl"
+    exit 1
+  fi
+  # 显式导入的证书优先于独立 acme.sh 证书；缺一项或校验失败时直接终止，避免悄悄换成其他证书。
+  if [ -n "$certcrt" ] || [ -n "$certkey" ]; then
+    if setup_external_certificate && write_cert_fingerprint; then
+      echo "TLS证书模式：外部导入的受信任证书"
+      show_tls_cert_summary "$tls_cert_source" "$(cat "$HOME/agsbx/sni.txt" 2>/dev/null)"
+      tls_cert_ready=yes
+      return 0
+    fi
+    echo "错误：外部证书导入失败，终止安装。"
+    exit 1
+  fi
+  wanted=""
+  wanted_type=""
+  mode_hint=$(printf '%s' "$acmemode" | tr -d '[:space:]' | tr 'A-Z' 'a-z')
+  case "$mode_hint" in
+    1|ip|ip-http) wanted_type=ip ;;
+    2|http|standalone|domain|3|alpn|tls-alpn|4|dns|cf|cloudflare) wanted_type=domain ;;
+  esac
+  case "$mode_hint" in 4|dns|cf|cloudflare) dns_requested=yes ;; esac
+  case "$(printf '%s' "$certdns" | tr -d '[:space:]' | tr 'A-Z' 'a-z')" in
+    cf|cloudflare) wanted_type=domain; dns_requested=yes ;;
+  esac
+  if [ -n "$certip" ]; then
+    wanted_type=ip
+    read -r -a wanted_identifiers <<< "$(printf '%s' "$certip" | tr ',' ' ')"
+    if [ "${#wanted_identifiers[@]}" -lt 1 ] || [ "${#wanted_identifiers[@]}" -gt 2 ]; then
+      reuse_allowed=no
+    fi
+    for index in "${!wanted_identifiers[@]}"; do
+      wanted="${wanted_identifiers[$index]}"
+      wanted=${wanted#[}
+      wanted=${wanted%]}
+      wanted_identifiers[$index]="$wanted"
+    done
+  elif [ -n "$certym" ]; then
+    wanted_type=domain
+    wanted=$(printf '%s' "$certym" | tr -d '[:space:]' | tr 'A-Z' 'a-z')
+    if [ "${wanted#\*.}" != "$wanted" ]; then
+      if [ "$dns_requested" = yes ]; then
+        wanted=${wanted#\*.}
+        wanted_identifiers=("$wanted" "*.$wanted")
+      else
+        reuse_allowed=no
+      fi
+    else
+      wanted_identifiers=("$wanted")
+      if [ "$dns_requested" = yes ] && is_yes "$certwild"; then
+        wanted_identifiers+=("*.$wanted")
+      fi
+    fi
+  elif [ "$dns_requested" = yes ] && is_yes "$certwild"; then
+    reuse_allowed=no
+  fi
+  if [ "$reuse_allowed" = yes ] && reuse_existing_trusted_certificate "$wanted_type" "${wanted_identifiers[@]}" && write_cert_fingerprint; then
+    echo "TLS证书模式：复用本地受信任证书"
+    show_tls_cert_summary "$tls_cert_source" "$(cat "$HOME/agsbx/sni.txt" 2>/dev/null)"
+    tls_cert_ready=yes
+    return 0
+  fi
+  is_yes "$alns" && acme_requested=yes
+  [ -n "$acmemode" ] && acme_requested=yes
+  [ -n "$certip" ] && acme_requested=yes
+  [ -n "$certym" ] && acme_requested=yes
+  [ -n "$certdns" ] && acme_requested=yes
+  if [ "$acme_requested" = yes ]; then
+    acme_force_menu=no
+    while :; do
+      choose_acme_mode
+      choose_status=$?
+      if [ "$choose_status" -eq 2 ]; then
+        echo "已取消 ACME 证书申请，安装终止。"
+        exit 1
+      elif [ "$choose_status" -ne 0 ]; then
+        if [ -t 0 ]; then
+          echo "请重新选择有效的 ACME 申请方式。"
+          acmemode=""
+          acme_force_menu=yes
+          continue
+        fi
+        echo "错误：无法确定 ACME 申请方式，安装终止。"
+        exit 1
+      fi
+      if setup_acme_certificate "$acme_mode_selected" && write_cert_fingerprint; then
+        echo "TLS证书模式：ACME 受信任证书（$acme_mode_selected）"
+        show_tls_cert_summary "$tls_cert_source" "$(cat "$HOME/agsbx/sni.txt" 2>/dev/null)"
+        tls_cert_ready=yes
+        return 0
+      fi
+      echo "ACME 证书申请失败；按安全策略不会自动降级为自签证书。"
+      if [ ! -t 0 ]; then
+        echo "错误：非交互运行无法重新选择申请方式，安装终止。"
+        exit 1
+      fi
+      printf "输入 y 返回方式菜单重试，其他输入终止安装：[y/N] " >&2
+      read -r retry_choice
+      if ! is_yes "$retry_choice"; then
+        echo "ACME 证书未就绪，安装终止。"
+        exit 1
+      fi
+      acmemode=""
+      acme_force_menu=yes
+    done
+  fi
+  if setup_selfsigned_certificate; then
+    echo "TLS证书模式：自签证书 ($(cat "$HOME/agsbx/sni.txt" 2>/dev/null))"
+    show_tls_cert_summary "OpenSSL 自签证书可用" "$(cat "$HOME/agsbx/sni.txt" 2>/dev/null)"
+    tls_cert_ready=yes
+  else
+    echo "错误：TLS 证书生成失败，终止安装。"
+    exit 1
+  fi
 }
 #============================================================
 # [第5.5段] Hysteria 2 端口跳跃防火墙控制函数
@@ -2503,16 +2981,18 @@ if command -v ss >/dev/null 2>&1 && ss -tuln 2>/dev/null | grep -qE '(:80[[:spac
 printf '%s\n' "${C_YELLOW}警告：检测到 80 端口已被占用，Caddy 自动申请证书可能失败。${C_RESET}"
 echo "如有其它服务占用 80/443（如 nginx 或脚本内 acme.sh），可先停掉再装，或装好后用 agsbx stop caddy 让出端口。"
 fi
-# 生成 Caddyfile（硬化模板：剥离指纹响应头、净化回源请求头、probe_resistance 抗主动探测）
+# 生成 Caddyfile（硬化模板：代理优先、私网 ACL、统一伪装响应、净化回源请求头）
 local naivemail="${acmem:-admin@$naive}"
 local naivesite="${naivesite:-mirror.us.leaseweb.net}"
+local caddyfile_tmp="$HOME/agsbx/.Caddyfile.new"
 # 容错：伪装站允许带或不带 scheme，统一剥离后由模板固定以 https 回源（伪装站须支持 HTTPS）
 naivesite="${naivesite#http://}"; naivesite="${naivesite#https://}"
 # 持久化域名：供后续 agsbx list 渲染节点卡片时读取（彼时 naive 环境变量已不在作用域）
 echo "$naive" > "$HOME/agsbx/naive_domain"
-cat > "$HOME/agsbx/Caddyfile" <<EOF
+cat > "$caddyfile_tmp" <<EOF
 {
-  order forward_proxy before reverse_proxy
+  # 认证代理请求必须最先进入 forward_proxy；未认证请求再落到后面的统一伪装站路由。
+  order forward_proxy first
   storage file_system "$HOME/agsbx/caddy_storage"
   log {
     exclude http.log.error
@@ -2544,52 +3024,67 @@ Disallow: /"
     }
   }
 
-  # 3. 仅拦截未携带代理认证的常见爬虫、扫描器与命令行抓取工具，避免误伤已认证 Naive 客户端
-  @blocked_robots {
-    header !Proxy-Authorization
-    header_regexp User-Agent "(?i)(bot|spider|crawler|scanner|headless|python|curl|wget|go-http-client)"
-  }
-  respond @blocked_robots 403 {
-    body "Access Denied"
-    close
-  }
-
-  # 4. NaiveProxy 代理核心组件
+  # 3. NaiveProxy 代理核心组件
   forward_proxy {
     basic_auth $naiveuser $naivepass
     hide_ip
     hide_via
     probe_resistance
+
+    # 覆盖插件默认 ACL，并补齐 CGNAT、链路本地、云元数据与 IPv6 ULA，防止代理凭据泄露后访问 VPS 内网。
+    acl {
+      deny 10.0.0.0/8
+      deny 100.64.0.0/10
+      deny 127.0.0.0/8
+      deny 169.254.0.0/16
+      deny 172.16.0.0/12
+      deny 192.168.0.0/16
+      deny ::1/128
+      deny fc00::/7
+      deny fe80::/10
+      allow all
+    }
   }
 
-  # 5. 常规浏览器探测回源反代
-  reverse_proxy https://$naivesite {
-    header_up Host {upstream_hostport}
-    header_up -Forwarded
-    header_up -Via
-    header_up -X-Forwarded-*
-    header_up -X-Real-IP
-    header_up -X-Client-IP
-    header_up -Proxy-Connection
-    header_up -Proxy-Authorization
-    header_up -Cookie
-    header_up -Origin
-    header_up -Referer
-    header_down -Server
-    header_down -X-Powered-By
-    header_down -Set-Cookie
-    transport http {
-      response_header_timeout 15s
-      max_conns_per_host 16
-      keepalive_idle_conns_per_host 8
+  # 4. 未认证访问首页时，完整反代真实 Linux 镜像首页，维持可信的网站身份与内容特征。
+  handle / {
+    reverse_proxy https://$naivesite {
+      header_up Host {upstream_hostport}
+      header_up -Forwarded
+      header_up -Via
+      header_up -X-Forwarded-*
+      header_up -X-Real-IP
+      header_up -X-Client-IP
+      header_up -Proxy-Connection
+      header_up -Proxy-Authorization
+      header_up -Cookie
+      header_up -Origin
+      header_up -Referer
+      header_down -Server
+      header_down -X-Powered-By
+      header_down -Set-Cookie
+      transport http {
+        response_header_timeout 15s
+        max_conns_per_host 16
+        keepalive_idle_conns_per_host 8
+      }
     }
+  }
+
+  # 5. 首页内的目录与下载链接跳转到真实镜像相同 URI，避免爬虫在自定义域名下递归抓取。
+  handle {
+    redir https://$naivesite{uri} 302
   }
 }
 EOF
-# 配置落地后语法预检，不过则告警（仍注册服务，便于用户看 journal 定位后 agsbx reload caddy 修正）
-if ! "$HOME/agsbx/caddy" validate --config "$HOME/agsbx/Caddyfile" >/dev/null 2>&1; then
-printf '%s\n' "${C_YELLOW}警告：Caddyfile 校验未通过，请检查域名/邮箱后用 agsbx reload caddy 重载。${C_RESET}"
+# 先用目标 Caddy 内核完整适配并预配模块；通过后再原子替换正式配置，失败时不注册服务、不覆盖旧配置。
+if ! "$HOME/agsbx/caddy" validate --config "$caddyfile_tmp" >/dev/null 2>&1; then
+printf '%s\n' "${C_RED}错误：新 Caddyfile 与当前 Caddy(naive) 内核不兼容，已终止 Caddy 安装。${C_RESET}"
+"$HOME/agsbx/caddy" validate --config "$caddyfile_tmp" 2>&1 | head -5
+echo "待检查配置保留在：$caddyfile_tmp"
+return 1
 fi
+mv -f "$caddyfile_tmp" "$HOME/agsbx/Caddyfile"
 # 服务注册三后端（systemd / openrc / 裸 nohup），对齐 xr/argo 既有写法；root 运行 + NoNewPrivileges 收敛。
 if pidof systemd >/dev/null 2>&1 && is_root; then
 cat > /etc/systemd/system/caddy.service <<EOF
@@ -2652,6 +3147,7 @@ echo
 
 if [ -s "$caddy_cert" ] && [ -s "$caddy_key" ] && openssl x509 -noout -in "$caddy_cert" >/dev/null 2>&1; then
   echo "caddy" > "$HOME/agsbx/cert_mode"
+  record_cert_source "caddy" "$naive"
   echo "$caddy_cert" > "$HOME/agsbx/cert_file_path"
   echo "$caddy_key" > "$HOME/agsbx/key_file_path"
   echo "$naive" > "$HOME/agsbx/sni.txt"
@@ -2667,8 +3163,6 @@ else
 fi
 
 echo "NaiveProxy(Caddy) 已部署：https://$naive"
-echo "分享链接(HTTPS·H1/H2，TCP)：naive+https://$naiveuser:$naivepass@$naive:443?padding=true"
-echo "分享链接(QUIC·H3，UDP)：naive+quic://$naiveuser:$naivepass@$naive:443?padding=true"
 }
 
 #============================================================
@@ -3806,8 +4300,8 @@ naivepass=$(cat "$HOME/agsbx/naive_pass" 2>/dev/null)
 node_title "💣【 NaiveProxy 】Caddy 转发代理，节点信息如下："
 echo "账号：$naiveuser"
 echo "密码：$naivepass"
-echo "分享链接(HTTPS·H1/H2，TCP)：naive+https://$naiveuser:$naivepass@$naivedomain:443?padding=true#${sxname}naive-tcp-$hostname"
-echo "分享链接(QUIC·H3，UDP)：naive+quic://$naiveuser:$naivepass@$naivedomain:443?padding=true#${sxname}naive-quic-$hostname"
+echo "分享链接(HTTPS·H1/H2，TCP)：naive+https://$naiveuser:$naivepass@$naivedomain:443?security=tls&sni=$naivedomain&insecure=0&allowInsecure=0#${sxname}naive-h2-$hostname"
+echo "分享链接(QUIC·H3，UDP)：naive+quic://$naiveuser:$naivepass@$naivedomain:443?congestion_control=bbr&security=tls&sni=$naivedomain&insecure=0&allowInsecure=0#${sxname}naive-h3-$hostname"
 echo "（用 NekoBox 等支持 naive 的客户端导入；SNI/端口已含在链接内，naive+quic 需放行 UDP/443；未并入 jh.txt / Clash 聚合订阅）"
 echo
 fi
@@ -4082,8 +4576,9 @@ echo "$subtoken" > "$HOME/agsbx/subtoken.log"
 # - 关联映射：自启动和 crontab 守护任务将天然与该随机回源端口绑定，对前文的 TLS 卸载 Inbound 提供闭环数据响应。
 # ------------------------------------------------------------
 setup_tls_certificate
-if [ ! -f "$tls_cert_file" ] || [ ! -f "$tls_key_file" ]; then
-  setup_selfsigned_certificate
+if [ ! -s "$tls_cert_file" ] || [ ! -s "$tls_key_file" ]; then
+  echo "错误：订阅服务所需的 TLS 证书未准备完成，终止安装。"
+  exit 1
 fi
 
 subport_show=$(init_port "$subpt" subport.log)
@@ -4497,16 +4992,17 @@ kill -15 $(pgrep -f 'agsbx/sing-box' 2>/dev/null) $(pgrep -f 'agsbx/cloudflared'
 # 双栈 VPS 优先走 IPv4 外层封装（外层包头比 IPv6 少 20 字节、UDP 路径质量普遍更稳），
 # 仅在纯 IPv6 VPS（无 IPv4 出站）时才回退 IPv6 对端。
 # 此前无条件优先 IPv6 对端，叠加未设 MTU，是 warp=s6x6 等内层 IPv6 模式"连接不通畅"的主要诱因。
-if [ -n "$( (command -v curl >/dev/null 2>&1 && curl -s4m5 "$v46url" 2>/dev/null) || (command -v wget >/dev/null 2>&1 && timeout 3 wget -4 -qO- --tries=2 "$v46url" 2>/dev/null) )" ]; then
+# 复用集中 VPS 信息展示所需的双栈探测结果，避免这里单独再请求一次公网 IPv4。
+v4v6
+if [ -n "$v4" ]; then
 sendip="162.159.192.1"
 xendip="162.159.192.1"
 else
 sendip="2606:4700:d0::a29f:c001"
 xendip="[2606:4700:d0::a29f:c001]"
 fi
-echo "VPS系统：$op"
-echo "CPU架构：$cpu"
 echo "Airgosbx脚本未安装，开始安装…………" && sleep 1
+show_vps_info
 ins
 cip
 echo
