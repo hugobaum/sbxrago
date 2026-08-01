@@ -90,9 +90,9 @@ vrow "sopt"     "Socks5（无加密；可作应用代理或二级代理上游）
 vg "④ 出站方式（默认直连；可选 WARP 或二级代理）"
 vrow "warp"     "出站经WARP，值选：s/x/sx 或 s4x4/s6x6 等"
 echo "             s=sing-box核走WARP  x=xray核走WARP  4/6=锁IPv4/IPv6"
-vrow "secp"     "二级代理出站选择器：协议名逗号分隔，或 xr / sb"
+vrow "secp"     "二级代理出站选择器：协议名逗号分隔，或 xr / sb；Naive 显式用 naive"
 vrow "securl"   "B节点URL：ss:// / socks5:// / http:// / https://（留空隐藏输入；socks5/http无加密）"
-echo "             阶段一若 secp 命中 Sing-box 核心，B 地址须使用 IPv4 或 [IPv6]；Xray 可使用域名"
+echo "             secp 命中 Sing-box 或 naive 时，B 地址须使用 IPv4 或 [IPv6]；Xray 可使用域名"
 
 vg "⑤ Cloudflare Argo 隧道（纯出站，VPS无需开放端口）"
 vrow "argo"     "指定哪个协议走隧道：vmpt / vwpt / xvargopt"
@@ -263,6 +263,14 @@ json_escape() {
   printf '%s' "$input"
 }
 
+# Caddyfile 双引号参数转义：防止 Naive 自定义凭据中的空格、引号或反斜杠破坏配置结构。
+caddyfile_quote() {
+  local input="$1"
+  input=${input//\\/\\\\}
+  input=${input//\"/\\\"}
+  printf '"%s"' "$input"
+}
+
 get_free_port() {
   local allocated_port
   while true; do
@@ -287,6 +295,23 @@ get_free_port() {
       break
     fi
   done
+}
+
+# Naive sidecar 使用受内核特权端口阈值保护的回环端口，避免普通本地进程在 Sing-box 停机时抢占监听。
+get_free_privileged_port() {
+  local upper="$1" span start attempt allocated_port
+  [ "$upper" -ge 200 ] 2>/dev/null || return 1
+  span=$((upper - 199))
+  start=$((RANDOM % span))
+  for ((attempt=0; attempt<span; attempt++)); do
+    allocated_port=$((200 + (start + attempt) % span))
+    [ "$allocated_port" -eq 443 ] && continue
+    if ! port_is_listening "$allocated_port"; then
+      printf '%s\n' "$allocated_port"
+      return 0
+    fi
+  done
+  return 1
 }
 
 # 端口分配与持久化助手：统一收敛此前在各协议装配段逐字复制十余次的同构逻辑。
@@ -2836,6 +2861,10 @@ else
     upsingbox
   fi
 fi
+if secondary_protocol_is_selected naive && [ ! -s "$HOME/agsbx/sing-box" ]; then
+  secondary_error "Naive 二级出站依赖 Sing-box sidecar，但内核未成功下载或不可用。"
+  return 1
+fi
 cat > "$HOME/agsbx/sb.json" <<EOF
 {
   "log": {
@@ -3011,6 +3040,28 @@ EOF
 else
 ssp=ssptargo
 fi
+
+# Caddy 解密 Naive 后仅通过独立凭据认证的回环 HTTP 代理转交；不开放任何新的公网监听。
+if secondary_protocol_is_selected naive; then
+secondary_validate_naive_credentials || return 1
+naive_sidecar_user_json=$(json_escape "$naive_secondary_user")
+naive_sidecar_pass_json=$(json_escape "$naive_secondary_pass")
+cat >> "$HOME/agsbx/sb.json" <<EOF
+    {
+      "type": "http",
+      "tag": "naive-secondary-in",
+      "listen": "127.0.0.1",
+      "listen_port": ${naive_secondary_port},
+      "users": [
+        {
+          "username": "$naive_sidecar_user_json",
+          "password": "$naive_sidecar_pass_json"
+        }
+      ]
+    },
+EOF
+echo "Naive 二级代理本地转交端口：127.0.0.1:${naive_secondary_port}（HTTP CONNECT，仅 TCP）"
+fi
 }
 
 installcaddy(){
@@ -3044,6 +3095,14 @@ if [ ! -s "$HOME/agsbx/caddy" ]; then
 upcaddy || { echo "NaiveProxy 内核未就位，已跳过 Caddy 配置。"; return 1; }
 fi
 insnaivecred
+secondary_validate_naive_credentials || return 1
+local naiveuser_caddy naivepass_caddy naive_upstream_user naive_upstream_pass
+naiveuser_caddy=$(caddyfile_quote "$naiveuser")
+naivepass_caddy=$(caddyfile_quote "$naivepass")
+if secondary_protocol_is_selected naive; then
+  naive_upstream_user=$(uri_percent_encode "$naive_secondary_user")
+  naive_upstream_pass=$(uri_percent_encode "$naive_secondary_pass")
+fi
 # [80端口占用预检] Caddy 自管 ACME 需要 80 端口做 HTTP-01 验证/跳转；占用则告警（不强制中断）。
 if command -v ss >/dev/null 2>&1 && ss -tuln 2>/dev/null | grep -qE '(:80[[:space:]]|:80$)'; then
 printf '%s\n' "${C_YELLOW}警告：检测到 80 端口已被占用，Caddy 自动申请证书可能失败。${C_RESET}"
@@ -3094,12 +3153,22 @@ Disallow: /"
 
   # 3. NaiveProxy 代理核心组件
   forward_proxy {
-    basic_auth $naiveuser $naivepass
+    basic_auth $naiveuser_caddy $naivepass_caddy
     hide_ip
     hide_via
     probe_resistance
+EOF
+if secondary_protocol_is_selected naive; then
+cat >> "$caddyfile_tmp" <<EOF
 
-    # 覆盖插件默认 ACL，并补齐 CGNAT、链路本地、云元数据与 IPv6 ULA，防止代理凭据泄露后访问 VPS 内网。
+    # Caddy 只负责 Naive/TLS 解密；目标地址通过唯一的回环 HTTP upstream 交给 Sing-box。
+    # upstream 失败会直接失败，不保留 Caddy 直拨目标的回退路径。
+    upstream http://${naive_upstream_user}:${naive_upstream_pass}@127.0.0.1:${naive_secondary_port}
+EOF
+else
+cat >> "$caddyfile_tmp" <<'EOF'
+
+    # 未启用二级出站时保留 Caddy 本地 ACL；upstream 模式与 acl 不兼容，二级模式由 Sing-box 等价拒绝。
     acl {
       deny 10.0.0.0/8
       deny 100.64.0.0/10
@@ -3112,6 +3181,9 @@ Disallow: /"
       deny fe80::/10
       allow all
     }
+EOF
+fi
+cat >> "$caddyfile_tmp" <<EOF
   }
 
   # 4. 未认证访问首页时，完整反代真实 Linux 镜像首页，维持可信的网站身份与内容特征。
@@ -3154,12 +3226,22 @@ return 1
 fi
 mv -f "$caddyfile_tmp" "$HOME/agsbx/Caddyfile"
 # 服务注册三后端（systemd / openrc / 裸 nohup），对齐 xr/argo 既有写法；root 运行 + NoNewPrivileges 收敛。
+local caddy_systemd_after="After=network.target network-online.target"
+local caddy_systemd_wants="Wants=network-online.target"
+local caddy_openrc_sidecar=""
+if secondary_protocol_is_selected naive; then
+  # 软依赖只约束开机顺序；Sing-box 故障时 Caddy 仍须保留 TLS/伪装站并让代理请求失败关闭。
+  caddy_systemd_after="After=network.target network-online.target sb.service"
+  caddy_systemd_wants="Wants=network-online.target sb.service"
+  caddy_openrc_sidecar="    use sing-box
+    after sing-box"
+fi
 if pidof systemd >/dev/null 2>&1 && is_root; then
 cat > /etc/systemd/system/caddy.service <<EOF
 [Unit]
 Description=caddy naiveproxy service
-After=network.target network-online.target
-Wants=network-online.target
+$caddy_systemd_after
+$caddy_systemd_wants
 [Service]
 Type=simple
 NoNewPrivileges=yes
@@ -3187,6 +3269,7 @@ command_background=yes
 pidfile="/run/caddy.pid"
 depend() {
 need net
+$caddy_openrc_sidecar
 }
 EOF
 chmod +x /etc/init.d/caddy >/dev/null 2>&1
@@ -3355,9 +3438,9 @@ fi
 }
 
 #============================================================
-# [阶段一] Xray / Sing-box 二级代理出站
+# [阶段一/阶段二] Xray / Sing-box / Naive 二级代理出站
 #------------------------------------------------------------
-# secp 选择 A VPS 上哪些核心协议的后续流量改走 secondary-out；实现层通过对应 inbound tag 精确匹配。
+# secp 选择 A VPS 上哪些入站协议的后续流量改走 secondary-out；实现层通过对应 inbound tag 精确匹配。
 # 客户端接入 A 的直连/CDN/Argo 方式不变。
 # 未被 secp 选中的协议继续沿用原有出站规则（直连或 WARP）。
 # B 节点 URL 只解析一次并归一化，再分别渲染两套内核配置，避免协议段内重复拼装出站 JSON。
@@ -3386,6 +3469,24 @@ secondary_add_protocol(){
   esac
 }
 
+# 只读取归一化后的选择结果；Naive 不参与 xr/sb 分组展开，必须由用户显式选择。
+secondary_protocol_is_selected(){
+  case ",${secondary_protocols}," in
+    *",$1,"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+secondary_saved_protocol_is_selected(){
+  local saved
+  [ -s "$HOME/agsbx/secondary_secp" ] || return 1
+  saved=$(tr -d '[:space:]' < "$HOME/agsbx/secondary_secp" 2>/dev/null)
+  case ",$saved," in
+    *",$1,"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 secondary_protocol_is_active(){
   case "$1" in
     xhpt)     [ "$xhp" = yes ] ;;
@@ -3404,6 +3505,7 @@ secondary_protocol_is_active(){
     sspt)     [ "$ssp" = yes ] ;;
     vmpt)     [ "$vmp" = yes ] ;;
     sopt)     [ "$sop" = yes ] ;;
+    naive)    [ -n "$naive" ] ;;
     *) return 1 ;;
   esac
 }
@@ -3430,6 +3532,8 @@ secondary_protocol_core(){
   case "$1" in
     xhpt|vlpt|vxpt|vwpt|xhypt|xdns|xicmp|xvcdnpt|xvargopt) printf 'xr' ;;
     shypt|tupt|anpt|arpt|sspt) printf 'sb' ;;
+    # Naive 入站仍由 Caddy 驱动；这里的 sb 仅表示本地转交和二级出站由 Sing-box 承载。
+    naive) printf 'sb' ;;
     vmpt|sopt) printf '%s' "$secondary_common_core" ;;
     *) return 1 ;;
   esac
@@ -3463,8 +3567,15 @@ normalize_secondary_selectors(){
     esac
     case "$normalized" in
       xr|sb) secondary_expand_group "$normalized" || return 1 ;;
-      naive|ca|all)
-        secondary_error "secp=$normalized 属于阶段二的 NaiveProxy/Caddy 范围，阶段一暂不支持。"
+      naive)
+        [ -n "$naive" ] && valid_domain "$naive" || {
+          secondary_error "secp=naive 必须同时提供合法的 naive=<域名>。"
+          return 1
+        }
+        secondary_add_protocol naive
+        ;;
+      ca|all)
+        secondary_error "不支持 secp=$normalized；NaiveProxy 二级出站请显式使用 secp=naive。"
         return 1
         ;;
       xhpt|vlpt|vxpt|vwpt|xhypt|xdns|xicmp|xvcdnpt|xvargopt|shypt|tupt|anpt|arpt|sspt|vmpt|sopt)
@@ -3475,7 +3586,7 @@ normalize_secondary_selectors(){
         secondary_add_protocol "$normalized"
         ;;
       *)
-        secondary_error "未知 secp 选择项：$token（阶段一支持协议名、xr、sb）。"
+        secondary_error "未知 secp 选择项：$token（支持协议名、xr、sb，以及显式的 naive）。"
         return 1
         ;;
     esac
@@ -3504,7 +3615,7 @@ secondary_split_hostport(){
   port=$((10#$port))
   [ "$port" -ge 1 ] && [ "$port" -le 65535 ] || { secondary_error "B 节点端口超出 1-65535。"; return 1; }
   [ -n "$host" ] || { secondary_error "B 节点服务器地址为空。"; return 1; }
-  case "$host" in *%*) secondary_error "阶段一不支持带 zone-id 的 IPv6 地址。"; return 1 ;; esac
+  case "$host" in *%*) secondary_error "当前不支持带 zone-id 的 IPv6 地址。"; return 1 ;; esac
   if ! valid_ipv4 "$host" && ! valid_ipv6 "$host" && ! valid_domain "$host"; then
     secondary_error "B 节点服务器地址不是有效的 IPv4、IPv6 或域名：$host"
     return 1
@@ -3512,6 +3623,166 @@ secondary_split_hostport(){
   case "$host" in 0.0.0.0|::) secondary_error "B 节点服务器地址不能是未指定地址 $host。"; return 1 ;; esac
   sec_server="$host"
   sec_port="$port"
+}
+
+secondary_normalize_ipv4(){
+  local input="$1" first second third fourth
+  valid_ipv4 "$input" || return 1
+  IFS='.' read -r first second third fourth <<< "$input"
+  printf '%d.%d.%d.%d' "$((10#$first))" "$((10#$second))" "$((10#$third))" "$((10#$fourth))"
+}
+
+# 将不含 IPv4 尾缀的 IPv6 展开为八组小写十六进制，供防递归做等价地址比较。
+secondary_normalize_ipv6(){
+  local input lower left right missing group normalized_group output=''
+  local -a left_groups=() right_groups=() groups=()
+  input="$1"
+  valid_ipv6 "$input" || return 1
+  lower=$(printf '%s' "$input" | tr 'A-F' 'a-f')
+  if [[ "$lower" == *::* ]]; then
+    left=${lower%%::*}
+    right=${lower#*::}
+    [ -z "$left" ] || IFS=':' read -r -a left_groups <<< "$left"
+    [ -z "$right" ] || IFS=':' read -r -a right_groups <<< "$right"
+    missing=$((8 - ${#left_groups[@]} - ${#right_groups[@]}))
+    [ "$missing" -ge 1 ] || return 1
+    groups=("${left_groups[@]}")
+    while [ "$missing" -gt 0 ]; do groups+=(0); missing=$((missing - 1)); done
+    groups+=("${right_groups[@]}")
+  else
+    IFS=':' read -r -a groups <<< "$lower"
+    [ "${#groups[@]}" -eq 8 ] || return 1
+  fi
+  [ "${#groups[@]}" -eq 8 ] || return 1
+  for group in "${groups[@]}"; do
+    [ -n "$group" ] || return 1
+    printf -v normalized_group '%04x' "$((16#$group))"
+    output="${output:+$output:}$normalized_group"
+  done
+  printf '%s' "$output"
+}
+
+secondary_server_is_local_address(){
+  local candidate="$1" local_address normalized_candidate normalized_local
+  command -v ip >/dev/null 2>&1 || return 1
+  if valid_ipv4 "$candidate"; then
+    normalized_candidate=$(secondary_normalize_ipv4 "$candidate") || return 1
+    while IFS= read -r local_address; do
+      local_address=${local_address%/*}
+      normalized_local=$(secondary_normalize_ipv4 "$local_address") || continue
+      [ "$normalized_candidate" = "$normalized_local" ] && return 0
+    done < <(ip -o -4 addr show 2>/dev/null | awk '{print $4}')
+  else
+    normalized_candidate=$(secondary_normalize_ipv6 "$candidate") || return 1
+    while IFS= read -r local_address; do
+      local_address=${local_address%/*}
+      normalized_local=$(secondary_normalize_ipv6 "$local_address") || continue
+      [ "$normalized_candidate" = "$normalized_local" ] && return 0
+    done < <(ip -o -6 addr show 2>/dev/null | awk '{print $4}')
+  fi
+  return 1
+}
+
+# Naive sidecar 的 B 地址必须是可直接拨号的远端 IP，拒绝明显的本机、链路本地和保留地址。
+# RFC1918/ULA 不在此一刀切禁止，保留 A/B 通过受信私网互联的部署能力。
+secondary_validate_naive_server(){
+  secondary_protocol_is_selected naive || return 0
+  local first second lower_server normalized_v4 normalized_v6
+  if valid_ipv4 "$sec_server"; then
+    sec_server=$(secondary_normalize_ipv4 "$sec_server") || return 1
+    IFS='.' read -r first second _ _ <<< "$sec_server"
+    if [ "$first" -eq 0 ] || [ "$first" -eq 127 ] || \
+      { [ "$first" -eq 169 ] && [ "$second" -eq 254 ]; } || [ "$first" -ge 224 ]; then
+      secondary_error "secp=naive 的 B 地址不能使用本机、链路本地、组播或保留 IPv4：$sec_server"
+      return 1
+    fi
+  elif valid_ipv6 "$sec_server"; then
+    lower_server=$(printf '%s' "$sec_server" | tr 'A-F' 'a-f')
+    case "$lower_server" in
+      ::|0:0:0:0:0:0:0:0|::1|0:0:0:0:0:0:0:1|fe[89ab]*:*|ff*:*)
+        secondary_error "secp=naive 的 B 地址不能使用本机、链路本地、组播或未指定 IPv6：$sec_server"
+        return 1
+        ;;
+    esac
+    sec_server=$(secondary_normalize_ipv6 "$sec_server") || {
+      secondary_error "无法规范化 B 节点 IPv6 地址：$sec_server"
+      return 1
+    }
+  else
+    secondary_error "secp=naive 的 B 地址必须是 IPv4 或 [IPv6]。"
+    return 1
+  fi
+
+  # 提前复用本轮公网 IP 探测结果；在停止旧服务前阻止 B 明确指回 A 自身形成递归。
+  v4v6
+  normalized_v4=$(secondary_normalize_ipv4 "$v4" 2>/dev/null)
+  normalized_v6=$(secondary_normalize_ipv6 "$v6" 2>/dev/null)
+  [ -n "$normalized_v4" ] && [ "$sec_server" = "$normalized_v4" ] && {
+    secondary_error "B 地址与 A VPS 的公网 IPv4 相同，已停止以防递归。"
+    return 1
+  }
+  [ -n "$normalized_v6" ] && [ "$sec_server" = "$normalized_v6" ] && {
+    secondary_error "B 地址与 A VPS 的公网 IPv6 相同，已停止以防递归。"
+    return 1
+  }
+  secondary_server_is_local_address "$sec_server" && {
+    secondary_error "B 地址属于 A VPS 的本地接口，已停止以防递归：$sec_server"
+    return 1
+  }
+}
+
+secondary_init_naive_sidecar(){
+  secondary_protocol_is_selected naive || return 0
+  local port_file="$HOME/agsbx/naive_secondary_port" pass_file="$HOME/agsbx/naive_secondary_pass"
+  local unprivileged_start upper
+  unprivileged_start=$(sysctl -n net.ipv4.ip_unprivileged_port_start 2>/dev/null)
+  case "$unprivileged_start" in ''|*[!0-9]*) unprivileged_start=1024 ;; esac
+  [ "$unprivileged_start" -gt 200 ] || {
+    secondary_error "当前系统允许普通进程绑定全部可用低位端口，无法安全建立 Naive TCP sidecar。"
+    return 1
+  }
+  upper=$((unprivileged_start - 1))
+  [ "$upper" -le 1023 ] || upper=1023
+  naive_secondary_port=$(cat "$port_file" 2>/dev/null)
+  case "$naive_secondary_port" in
+    ''|*[!0-9]*) naive_secondary_port='' ;;
+  esac
+  if [ -z "$naive_secondary_port" ] || [ "$naive_secondary_port" -lt 200 ] || \
+    [ "$naive_secondary_port" -gt "$upper" ] || [ "$naive_secondary_port" -eq 443 ] || \
+    port_is_listening "$naive_secondary_port"; then
+    naive_secondary_port=$(get_free_privileged_port "$upper") || {
+      secondary_error "未找到可用且受权限保护的 Naive 回环端口。"
+      return 1
+    }
+    printf '%s\n' "$naive_secondary_port" > "$port_file"
+  fi
+
+  naive_secondary_user="agsbx-sidecar"
+  if [ ! -s "$pass_file" ]; then
+    tr -dc 'a-zA-Z0-9' </dev/urandom | head -c 32 > "$pass_file"
+  fi
+  naive_secondary_pass=$(cat "$pass_file" 2>/dev/null)
+  if [ "${#naive_secondary_pass}" -ne 32 ]; then
+    secondary_error "Naive sidecar 内部密码状态无效。"
+    return 1
+  fi
+  case "$naive_secondary_pass" in *[!A-Za-z0-9]*) secondary_error "Naive sidecar 内部密码包含非法字符。"; return 1 ;; esac
+  chmod 600 "$port_file" "$pass_file" 2>/dev/null
+}
+
+secondary_validate_naive_credentials(){
+  secondary_protocol_is_selected naive || return 0
+  [ -n "$naiveuser" ] && [ -n "$naivepass" ] || {
+    secondary_error "Naive 公网认证的用户名和密码不能为空。"
+    return 1
+  }
+  secondary_valid_text "$naiveuser" 255 && secondary_valid_text "$naivepass" 1024 || {
+    secondary_error "Naive 凭据过长或包含控制字符，不能安全写入 Caddyfile/JSON。"
+    return 1
+  }
+  case "$naiveuser" in
+    *:*) secondary_error "Naive 用户名不能包含冒号，否则 HTTP Basic 认证无法无歧义转交。"; return 1 ;;
+  esac
 }
 
 secondary_parse_userinfo(){
@@ -3525,7 +3796,7 @@ secondary_parse_userinfo(){
   [ -n "$sec_username" ] && [ -n "$sec_password" ] || { secondary_error "代理用户名和密码都不能为空。"; return 1; }
   secondary_valid_text "$sec_username" 255 && secondary_valid_text "$sec_password" 1024 && \
     secondary_valid_ascii "$sec_username" && secondary_valid_ascii "$sec_password" || {
-    secondary_error "阶段一的 SOCKS/HTTP 认证仅支持可打印 ASCII，且认证信息不能过长。"
+    secondary_error "SOCKS/HTTP 二级代理认证仅支持可打印 ASCII，且认证信息不能过长。"
     return 1
   }
   sec_has_auth=yes
@@ -3534,7 +3805,7 @@ secondary_parse_userinfo(){
 secondary_validate_ss_method(){
   case "$sec_method" in
     2022-blake3-aes-128-gcm|2022-blake3-aes-256-gcm|2022-blake3-chacha20-poly1305) ;;
-    *) secondary_error "阶段一的 SS 二级出站仅支持三种 Shadowsocks-2022 加密方法：$sec_method"; return 1 ;;
+    *) secondary_error "SS 二级出站仅支持三种 Shadowsocks-2022 加密方法：$sec_method"; return 1 ;;
   esac
 }
 
@@ -3557,7 +3828,7 @@ secondary_validate_ss_key(){
 
 secondary_parse_ss_url(){
   local body="$1" userinfo hostport decoded credentials method_raw password_raw
-  case "$body" in *\?*) secondary_error "阶段一不支持带 query/plugin 的 SS URL。"; return 1 ;; esac
+  case "$body" in *\?*) secondary_error "当前不支持带 query/plugin 的 SS URL。"; return 1 ;; esac
   if [[ "$body" == *@* ]]; then
     body=${body%/}
     hostport=${body##*@}
@@ -3655,7 +3926,7 @@ parse_secondary_url(){
   case "$scheme" in
     ss) secondary_parse_ss_url "$rest" ;;
     socks5|http|https) secondary_parse_generic_url "$scheme" "$rest" ;;
-    *) secondary_error "不支持的 B 节点 URL：$scheme://（阶段一支持 ss、socks5、http、https）。"; return 1 ;;
+    *) secondary_error "不支持的 B 节点 URL：$scheme://（支持 ss、socks5、http、https）。"; return 1 ;;
   esac
 }
 
@@ -3699,14 +3970,15 @@ prepare_secondary_proxy(){
   parse_secondary_url "$securl" || return 1
   unset securl
   if secondary_has_singbox_selection && ! valid_ipv4 "$sec_server" && ! valid_ipv6 "$sec_server"; then
-    secondary_error "当前脚本兼容 Sing-box 1.11+；为避免新版域名解析字段不兼容，Sing-box 二级出站的 B 地址阶段一必须使用 IP。"
+    secondary_error "当前脚本兼容 Sing-box 1.11+；为避免新版域名解析字段不兼容，Sing-box 二级出站的 B 地址必须使用 IP。"
     return 1
   fi
+  secondary_validate_naive_server || return 1
   secondary_prepared=yes
   secondary_display_host="$sec_server"
   valid_ipv6 "$sec_server" && secondary_display_host="[$sec_server]"
   echo "二级代理出站已解析：$sec_scheme://$secondary_display_host:$sec_port（认证信息已隐藏）"
-  echo "应用二级出站的 A VPS 核心协议：$secp"
+  echo "应用二级出站的 A VPS 入站协议：$secp"
 }
 
 persist_secondary_proxy_state(){
@@ -3738,6 +4010,7 @@ secondary_tag_for_protocol(){
     sb:sspt) printf 'ss-2022' ;;
     sb:vmpt) printf 'vmess-sb' ;;
     sb:sopt) printf 'socks5-sb' ;;
+    sb:naive) printf 'naive-secondary-in' ;;
     *) return 1 ;;
   esac
 }
@@ -4096,6 +4369,34 @@ cat >> "$HOME/agsbx/sb.json" <<EOF
         "strategy": "${sbyx}"
       },
 EOF
+if secondary_protocol_is_selected naive; then
+cat >> "$HOME/agsbx/sb.json" <<EOF
+      {
+        "inbound": ["naive-secondary-in"],
+        "ip_cidr": [
+          "10.0.0.0/8",
+          "100.64.0.0/10",
+          "127.0.0.0/8",
+          "169.254.0.0/16",
+          "172.16.0.0/12",
+          "192.168.0.0/16",
+          "::1/128",
+          "fc00::/7",
+          "fe80::/10"
+        ],
+        "action": "reject"
+      },
+      {
+        "inbound": ["naive-secondary-in"],
+        "network": "tcp",
+        "outbound": "secondary-out"
+      },
+      {
+        "inbound": ["naive-secondary-in"],
+        "action": "reject"
+      },
+EOF
+fi
 if [ -n "$secondary_singbox_tags" ]; then
 cat >> "$HOME/agsbx/sb.json" <<EOF
       {
@@ -4166,34 +4467,53 @@ fi
 #============================================================
 ins(){
 enable_system_bbr
+# Naive 二级出站的 Caddy 与 Sing-box 必须引用同一个持久化回环端口。
+secondary_init_naive_sidecar || exit 1
+# Caddy 必须先启动以获取证书；先落盘不含密码的链路契约，确保后续 sidecar 失败也能被状态页识别为失败关闭。
+secondary_protocol_is_selected naive && persist_secondary_proxy_state
 # NaiveProxy（Caddy）优先装配：先让 Caddy 起来并自动托管签发真实域名证书，
 # 之后 hy2/tuic/anytls/xhy2 等 TLS 节点在 setup_tls_certificate 中复用该证书（SNI=naive 域名）。
 # 仅当显式设置 naive=<域名> 时执行，与 xray/sing-box 隔离并存；Caddy 用独立端口(443)，不与代理内核抢占。
 if [ -n "$naive" ]; then
-installcaddy
+  if secondary_protocol_is_selected naive; then
+    installcaddy || { secondary_error "Naive 二级出站依赖 Caddy，配置失败后已停止安装。"; exit 1; }
+  else
+    installcaddy
+  fi
 fi
-local has_xray_sb=no
-if [ "$vwp" = yes ] || [ "$sop" = yes ] || [ "$vxp" = yes ] || [ "$ssp" = yes ] || [ "$vlp" = yes ] || [ "$vmp" = yes ] || [ "$hyp" = yes ] || [ "$tup" = yes ] || [ "$xhp" = yes ] || [ "$anp" = yes ] || [ "$arp" = yes ] || [ "$xhyp" = yes ] || [ "$xdns" = yes ] || [ "$xicp" = yes ] || [ "$xvcdn" = yes ] || [ "$xvargo" = yes ]; then
-  has_xray_sb=yes
+local need_xray=no need_singbox=no
+# 先按阶段一既有规则决定原生协议归属，再额外加入 Naive sidecar 的 Sing-box 需求；
+# 这样仅启用 vmpt/sopt 时仍默认落在 Xray，不会因 sidecar 被悄悄迁移到 Sing-box。
+if [ "$xhp" = yes ] || [ "$vlp" = yes ] || [ "$vxp" = yes ] || [ "$vwp" = yes ] || \
+  [ "$xhyp" = yes ] || [ "$xdns" = yes ] || [ "$xicp" = yes ] || [ "$xvcdn" = yes ] || [ "$xvargo" = yes ]; then
+  need_xray=yes
 fi
+if [ "$hyp" = yes ] || [ "$tup" = yes ] || [ "$anp" = yes ] || [ "$arp" = yes ] || [ "$ssp" = yes ]; then
+  need_singbox=yes
+fi
+if [ "$vmp" = yes ] || [ "$sop" = yes ]; then
+  determine_secondary_common_core
+  if [ "$secondary_common_core" = sb ]; then need_singbox=yes; else need_xray=yes; fi
+fi
+secondary_protocol_is_selected naive && need_singbox=yes
 
-if [ "$has_xray_sb" = yes ]; then
-  if [ "$hyp" != yes ] && [ "$tup" != yes ] && [ "$anp" != yes ] && [ "$arp" != yes ] && [ "$ssp" != yes ]; then
+if [ "$need_xray" = yes ] || [ "$need_singbox" = yes ]; then
+  if [ "$need_xray" = yes ] && [ "$need_singbox" = no ]; then
     installxray
     xrsbvm
     xrsbso
     warpsx
     xrsbout
     hyp="shyptargo"; tup="tuptargo"; anp="anptargo"; arp="arptargo"; ssp="ssptargo"
-  elif [ "$xhp" != yes ] && [ "$vlp" != yes ] && [ "$vxp" != yes ] && [ "$vwp" != yes ] && [ "$xhyp" != yes ] && [ "$xdns" != yes ] && [ "$xicp" != yes ] && [ "$xvcdn" != yes ] && [ "$xvargo" != yes ]; then
-    installsb
+  elif [ "$need_xray" = no ] && [ "$need_singbox" = yes ]; then
+    installsb || { secondary_protocol_is_selected naive && exit 1; }
     xrsbvm
     xrsbso
     warpsx
     xrsbout
     xhp="xhptargo"; vlp="vlptargo"; vxp="vxptargo"; vwp="vwptargo"; xhyp="xhyptargo"; xdns="xdnstargo"; xicp="xicptargo"; xvcdn="xvcdnptargo"; xvargo="xvargoptargo"
   else
-    installsb
+    installsb || { secondary_protocol_is_selected naive && exit 1; }
     installxray
     xrsbvm
     xrsbso
@@ -4202,7 +4522,7 @@ if [ "$has_xray_sb" = yes ]; then
   fi
 fi
 
-# 二级代理的凭据只保留在 xr.json/sb.json；状态卡仅落盘无密码的协议、地址与端口。
+# B 节点凭据只保留在 xr.json/sb.json；状态卡仅落盘无密码的协议、地址与端口。
 persist_secondary_proxy_state
 
 # 双内核 Hysteria 2 跳跃端口规则解耦挂载
@@ -4329,15 +4649,21 @@ crontab -l > "$cron_tmp" 2>/dev/null
 if ! pidof systemd >/dev/null 2>&1 && ! command -v rc-service >/dev/null 2>&1; then
 sed -i '/agsbx\/sing-box/d' "$cron_tmp"
 sed -i '/agsbx\/xray/d' "$cron_tmp"
+# 仅清理 @reboot 的 caddy 运行守护行，保留 setup_caddy_cert_reload 注册的续期联动 cron(caddy_cert_reload.sh)。
+sed -i '/agsbx\/caddy run/d' "$cron_tmp"
+# Naive 二级链路在裸环境中使用同一条启动任务：先启动 Sing-box，有限等待回环端口，再启动 Caddy。
+# 即使等待超时仍启动 Caddy，以保留 TLS/伪装站；upstream 不可达时代理请求保持失败关闭。
+if secondary_protocol_is_selected naive && [ -s "$HOME/agsbx/sing-box" ] && [ -s "$HOME/agsbx/sb.json" ] && [ -s "$HOME/agsbx/caddy" ] && [ -s "$HOME/agsbx/Caddyfile" ]; then
+echo '@reboot sleep 10 && /bin/sh -c "nohup $HOME/agsbx/sing-box run -c $HOME/agsbx/sb.json > $HOME/agsbx/sing-box.log 2>&1 & i=0; while [ \$i -lt 20 ]; do if command -v ss >/dev/null 2>&1; then ss -ltn 2>/dev/null | grep -q 127.0.0.1:'"$naive_secondary_port"' && break; elif command -v netstat >/dev/null 2>&1; then netstat -ltn 2>/dev/null | grep -q 127.0.0.1:'"$naive_secondary_port"' && break; fi; i=\$((i + 1)); sleep 1; done; nohup $HOME/agsbx/caddy run --config $HOME/agsbx/Caddyfile > $HOME/agsbx/caddy.log 2>&1 &"' >> "$cron_tmp"
+else
 if find /proc/*/exe -type l 2>/dev/null | grep -E '/proc/[0-9]+/exe' | xargs -r readlink 2>/dev/null | grep -q 'agsbx/sing-box' || pgrep -f 'agsbx/sing-box' >/dev/null 2>&1 ; then
 echo '@reboot sleep 10 && /bin/sh -c "nohup $HOME/agsbx/sing-box run -c $HOME/agsbx/sb.json > $HOME/agsbx/sing-box.log 2>&1 &"' >> "$cron_tmp"
+fi
 fi
 if find /proc/*/exe -type l 2>/dev/null | grep -E '/proc/[0-9]+/exe' | xargs -r readlink 2>/dev/null | grep -q 'agsbx/xray' || pgrep -f 'agsbx/xray' >/dev/null 2>&1 ; then
 echo '@reboot sleep 10 && /bin/sh -c "nohup $HOME/agsbx/xray run -c $HOME/agsbx/xr.json > $HOME/agsbx/xray.log 2>&1 &"' >> "$cron_tmp"
 fi
-# 仅清理 @reboot 的 caddy 运行守护行，保留 setup_caddy_cert_reload 注册的续期联动 cron(caddy_cert_reload.sh)。
-sed -i '/agsbx\/caddy run/d' "$cron_tmp"
-if [ -n "$naive" ] && [ -s "$HOME/agsbx/caddy" ]; then
+if ! secondary_protocol_is_selected naive && [ -n "$naive" ] && [ -s "$HOME/agsbx/caddy" ]; then
 echo '@reboot sleep 10 && /bin/sh -c "nohup $HOME/agsbx/caddy run --config $HOME/agsbx/Caddyfile > $HOME/agsbx/caddy.log 2>&1 &"' >> "$cron_tmp"
 fi
 fi
@@ -4407,6 +4733,28 @@ kstat "Sing-box" "$HOME/agsbx/sing-box"    "$HOME/agsbx/sb.json"      'agsbx/sin
 kstat "Xray"     "$HOME/agsbx/xray"        "$HOME/agsbx/xr.json"      'agsbx/xray'       xray "$HOME/agsbx/xray.log"
 kstat "Caddy"    "$HOME/agsbx/caddy"       "$HOME/agsbx/Caddyfile"    'agsbx/caddy'      caddy "$HOME/agsbx/caddy.log"
 kstat "Argo"     "$HOME/agsbx/cloudflared" "$HOME/agsbx/argoport.log" 'agsbx/cloudflared' argo "$HOME/agsbx/argo.log"
+if secondary_saved_protocol_is_selected naive; then
+  local caddy_online=no sb_online=no sidecar_ready=no sidecar_port
+  if echo "$procs" | grep -q 'agsbx/caddy' || pgrep -f 'agsbx/caddy' >/dev/null 2>&1; then caddy_online=yes; fi
+  if echo "$procs" | grep -q 'agsbx/sing-box' || pgrep -f 'agsbx/sing-box' >/dev/null 2>&1; then sb_online=yes; fi
+  sidecar_port=$(cat "$HOME/agsbx/naive_secondary_port" 2>/dev/null)
+  if [ -n "$sidecar_port" ] && \
+    grep -Fq "@127.0.0.1:$sidecar_port" "$HOME/agsbx/Caddyfile" 2>/dev/null && \
+    grep -q '"tag"[[:space:]]*:[[:space:]]*"naive-secondary-in"' "$HOME/agsbx/sb.json" 2>/dev/null && \
+    grep -q '"tag"[[:space:]]*:[[:space:]]*"secondary-out"' "$HOME/agsbx/sb.json" 2>/dev/null && \
+    port_is_listening "$sidecar_port"; then
+    sidecar_ready=yes
+  fi
+  if [ "$caddy_online" = yes ] && [ "$sb_online" = yes ] && [ "$sidecar_ready" = yes ]; then
+    printf '%s\n' "Naive 二级链路：${C_GREEN}本地转交就绪${C_RESET}（Caddy → Sing-box → B；未主动探测 B）"
+  elif [ "$caddy_online" = yes ]; then
+    printf '%s\n' "Naive 二级链路：${C_YELLOW}失败关闭${C_RESET}（伪装站在线；sidecar/配置未就绪；不会回退直连）"
+  elif [ "$sb_online" = yes ]; then
+    printf '%s\n' "Naive 二级链路：${C_YELLOW}Naive 入站不可用${C_RESET}（Sing-box sidecar 在线，Caddy 未运行）"
+  else
+    printf '%s\n' "Naive 二级链路：${C_RED}未运行${C_RESET}"
+  fi
+fi
 }
 cip(){
 ipbest(){
@@ -4484,7 +4832,7 @@ secondary_saved_port=$(sed -n '3p' "$HOME/agsbx/secondary_meta" 2>/dev/null)
 secondary_saved_display="$secondary_saved_server"
 valid_ipv6 "$secondary_saved_server" && secondary_saved_display="[$secondary_saved_server]"
 node_title "💣【 二级代理出站 】A VPS 经 B VPS 访问目标服务器："
-echo "生效范围（A VPS 核心协议）：$secondary_saved_secp"
+echo "生效范围（A VPS 入站协议）：$secondary_saved_secp"
 echo "上游端点（B VPS 入站）：$secondary_saved_scheme://$secondary_saved_display:$secondary_saved_port（认证信息已隐藏）"
 echo
 fi
@@ -5426,6 +5774,17 @@ kctl(){
       fi ;;
     *) echo "未知动作：$action（可选 start｜stop｜restart｜reload）"; return 1 ;;
   esac
+  if secondary_saved_protocol_is_selected naive; then
+    if [ "$sd" = sb ] && [ "$action" = stop ]; then
+      echo "提示：Naive 二级链路已失败关闭；Caddy 伪装站仍可继续访问，不会回退为 A VPS 直连目标。"
+    elif [ "$sd" = caddy ] && { [ "$action" = start ] || [ "$action" = restart ] || [ "$action" = reload ]; } && \
+      ! pgrep -f 'agsbx/sing-box' >/dev/null 2>&1; then
+      echo "提示：Sing-box sidecar 未运行；Caddy 伪装站可用，但 Naive 二级代理保持失败关闭。"
+    elif [ "$sd" = sb ] && { [ "$action" = start ] || [ "$action" = restart ] || [ "$action" = reload ]; } && \
+      pgrep -f 'agsbx/sing-box' >/dev/null 2>&1; then
+      echo "提示：Sing-box sidecar 已恢复；Caddy 的新代理请求会自动恢复，无需重启 Caddy（未探测 B）。"
+    fi
+  fi
 }
 
 # 内核资源 / 流量监控：纯读 /proc + ss，零依赖、不改动任何配置，兼容 busybox(无 ps -o 的精简系统)。
