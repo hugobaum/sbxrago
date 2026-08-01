@@ -3078,9 +3078,9 @@ Disallow: /"
 }
 EOF
 # 先用目标 Caddy 内核完整适配并预配模块；通过后再原子替换正式配置，失败时不注册服务、不覆盖旧配置。
-if ! "$HOME/agsbx/caddy" validate --config "$caddyfile_tmp" >/dev/null 2>&1; then
+if ! "$HOME/agsbx/caddy" validate --config "$caddyfile_tmp" --adapter caddyfile >/dev/null 2>&1; then
 printf '%s\n' "${C_RED}错误：新 Caddyfile 与当前 Caddy(naive) 内核不兼容，已终止 Caddy 安装。${C_RESET}"
-"$HOME/agsbx/caddy" validate --config "$caddyfile_tmp" 2>&1 | head -5
+"$HOME/agsbx/caddy" validate --config "$caddyfile_tmp" --adapter caddyfile 2>&1 | head -5
 echo "待检查配置保留在：$caddyfile_tmp"
 return 1
 fi
