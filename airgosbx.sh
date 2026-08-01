@@ -85,11 +85,14 @@ vrow "sspt"     "Shadowsocks-2022（blake3-aes-128-gcm）"
 
 vg "③ 通用协议（落在当前激活的内核上）"
 vrow "vmpt"     "Vmess-ws（Xray或Sing-box，可走 Argo/CDN）"
-vrow "sopt"     "Socks5（仅供本地应用内置代理，勿直连）"
+vrow "sopt"     "Socks5（无加密；可作应用代理或二级代理上游）"
 
-vg "④ Cloudflare WARP 出站（解锁/隐藏真实出口IP）"
+vg "④ 出站方式（默认直连；可选 WARP 或二级代理）"
 vrow "warp"     "出站经WARP，值选：s/x/sx 或 s4x4/s6x6 等"
 echo "             s=sing-box核走WARP  x=xray核走WARP  4/6=锁IPv4/IPv6"
+vrow "secp"     "二级代理出站选择器：协议名逗号分隔，或 xr / sb"
+vrow "securl"   "B节点URL：ss:// / socks5:// / http:// / https://（留空隐藏输入；socks5/http无加密）"
+echo "             阶段一若 secp 命中 Sing-box 核心，B 地址须使用 IPv4 或 [IPv6]；Xray 可使用域名"
 
 vg "⑤ Cloudflare Argo 隧道（纯出站，VPS无需开放端口）"
 vrow "argo"     "指定哪个协议走隧道：vmpt / vwpt / xvargopt"
@@ -195,6 +198,69 @@ fi
 
 safe_base64() {
   tr -d '\r\n' | base64 | tr -d '\r\n'
+}
+
+# URI 组件编码：只保留 RFC 3986 unreserved 字符，其余按 UTF-8 字节转为大写 %HH。
+uri_percent_encode() {
+  local input="$1" output="" char hex i
+  local LC_ALL=C
+  for ((i=0; i<${#input}; i++)); do
+    char=${input:i:1}
+    case "$char" in
+      [A-Za-z0-9._~-]) output+="$char" ;;
+      *) printf -v hex '%02X' "'$char"; output+="%$hex" ;;
+    esac
+  done
+  printf '%s' "$output"
+}
+
+# URI 组件解码：严格要求每个百分号后跟两个十六进制字符；加号保持字面含义，不按表单空格处理。
+uri_percent_decode() {
+  local input="$1" output="" char hex i=0
+  local LC_ALL=C
+  while [ "$i" -lt "${#input}" ]; do
+    char=${input:i:1}
+    if [ "$char" = '%' ]; then
+      [ $((i + 2)) -lt "${#input}" ] || return 1
+      hex=${input:i+1:2}
+      case "$hex" in *[!0-9A-Fa-f]*) return 1 ;; esac
+      case "$hex" in [01][0-9A-Fa-f]|7[Ff]) return 1 ;; esac
+      printf -v char '%b' "\\x$hex"
+      output+="$char"
+      i=$((i + 3))
+    else
+      output+="$char"
+      i=$((i + 1))
+    fi
+  done
+  printf '%s' "$output"
+}
+
+# 同时兼容标准 Base64 与 Base64URL，并自动补齐省略的 padding；仅用于解析旧式 SS 链接。
+base64_decode_compat() {
+  local input="$1" remainder
+  input=${input//-/+}
+  input=${input//_/\/}
+  remainder=$((${#input} % 4))
+  case "$remainder" in
+    0) ;;
+    2) input="${input}==" ;;
+    3) input="${input}=" ;;
+    *) return 1 ;;
+  esac
+  # 必须在命令替换前检查；否则 Bash 会静默剥离解码结果末尾的换行符。
+  if printf '%s' "$input" | base64 -d 2>/dev/null | LC_ALL=C grep -q '[[:cntrl:]]'; then
+    return 1
+  fi
+  printf '%s' "$input" | base64 -d 2>/dev/null
+}
+
+# 所有 URL 解码字段进入 heredoc 前统一做 JSON 字符串转义。
+json_escape() {
+  local input="$1"
+  input=${input//\\/\\\\}
+  input=${input//\"/\\\"}
+  printf '%s' "$input"
 }
 
 get_free_port() {
@@ -488,6 +554,8 @@ export ARGO_DOMAIN=${agn:-''}
 export ARGO_AUTH=${agk:-''}
 export ippz=${ippz:-''}
 export warp=${warp:-''}
+secp=${secp:-''}
+securl=${securl:-''}
 export name=${name:-''}
 export alns=${alns:-''}
 export acmemode=${acmemode:-''}
@@ -3286,7 +3354,538 @@ sop=soptargo
 fi
 }
 
+#============================================================
+# [阶段一] Xray / Sing-box 二级代理出站
+#------------------------------------------------------------
+# secp 选择 A VPS 上哪些核心协议的后续流量改走 secondary-out；实现层通过对应 inbound tag 精确匹配。
+# 客户端接入 A 的直连/CDN/Argo 方式不变。
+# 未被 secp 选中的协议继续沿用原有出站规则（直连或 WARP）。
+# B 节点 URL 只解析一次并归一化，再分别渲染两套内核配置，避免协议段内重复拼装出站 JSON。
+#============================================================
+secondary_error(){
+  printf '%s\n' "${C_RED}二级代理配置错误：$1${C_RESET}"
+  return 1
+}
+
+secondary_valid_text(){
+  local value="$1" max_len="${2:-1024}"
+  local LC_ALL=C
+  [ "${#value}" -le "$max_len" ] || return 1
+  ! printf '%s' "$value" | grep -q '[[:cntrl:]]'
+}
+
+secondary_valid_ascii(){
+  LC_ALL=C grep -q '^[ -~]*$' <<< "$1"
+}
+
+secondary_add_protocol(){
+  local protocol="$1"
+  case ",${secondary_protocols}," in
+    *",${protocol},"*) ;;
+    *) secondary_protocols="${secondary_protocols:+$secondary_protocols,}$protocol" ;;
+  esac
+}
+
+secondary_protocol_is_active(){
+  case "$1" in
+    xhpt)     [ "$xhp" = yes ] ;;
+    vlpt)     [ "$vlp" = yes ] ;;
+    vxpt)     [ "$vxp" = yes ] ;;
+    vwpt)     [ "$vwp" = yes ] ;;
+    xhypt)    [ "$xhyp" = yes ] ;;
+    xdns)     [ "$xdns" = yes ] ;;
+    xicmp)    [ "$xicp" = yes ] ;;
+    xvcdnpt)  [ "$xvcdn" = yes ] ;;
+    xvargopt) [ "$xvargo" = yes ] ;;
+    shypt)    [ "$hyp" = yes ] ;;
+    tupt)     [ "$tup" = yes ] ;;
+    anpt)     [ "$anp" = yes ] ;;
+    arpt)     [ "$arp" = yes ] ;;
+    sspt)     [ "$ssp" = yes ] ;;
+    vmpt)     [ "$vmp" = yes ] ;;
+    sopt)     [ "$sop" = yes ] ;;
+    *) return 1 ;;
+  esac
+}
+
+determine_secondary_common_core(){
+  local has_xray_fixed=no has_singbox_fixed=no
+  if [ "$xhp" = yes ] || [ "$vlp" = yes ] || [ "$vxp" = yes ] || [ "$vwp" = yes ] || \
+    [ "$xhyp" = yes ] || [ "$xdns" = yes ] || [ "$xicp" = yes ] || \
+    [ "$xvcdn" = yes ] || [ "$xvargo" = yes ]; then
+    has_xray_fixed=yes
+  fi
+  if [ "$hyp" = yes ] || [ "$tup" = yes ] || [ "$anp" = yes ] || [ "$arp" = yes ] || \
+    [ "$ssp" = yes ]; then
+    has_singbox_fixed=yes
+  fi
+  if [ "$has_singbox_fixed" = yes ] && [ "$has_xray_fixed" = no ]; then
+    secondary_common_core=sb
+  else
+    secondary_common_core=xr
+  fi
+}
+
+secondary_protocol_core(){
+  case "$1" in
+    xhpt|vlpt|vxpt|vwpt|xhypt|xdns|xicmp|xvcdnpt|xvargopt) printf 'xr' ;;
+    shypt|tupt|anpt|arpt|sspt) printf 'sb' ;;
+    vmpt|sopt) printf '%s' "$secondary_common_core" ;;
+    *) return 1 ;;
+  esac
+}
+
+secondary_expand_group(){
+  local group="$1" protocol matched=no
+  for protocol in xhpt vlpt vxpt vwpt xhypt xdns xicmp xvcdnpt xvargopt shypt tupt anpt arpt sspt vmpt sopt; do
+    secondary_protocol_is_active "$protocol" || continue
+    [ "$(secondary_protocol_core "$protocol")" = "$group" ] || continue
+    matched=yes
+    secondary_add_protocol "$protocol"
+  done
+  [ "$matched" = yes ] || secondary_error "secp=$group 没有匹配到本次启用的 $group 内核协议。"
+}
+
+normalize_secondary_selectors(){
+  local raw token normalized
+  local -a tokens
+  determine_secondary_common_core
+  raw=$(printf '%s' "$secp" | tr -d '[:space:]')
+  [ -n "$raw" ] || { secondary_error "secp 不能为空或只包含空白字符。"; return 1; }
+  case "$raw" in ,*|*,|*,,*) secondary_error "secp 中存在空选择项，请使用逗号分隔有效协议名。"; return 1 ;; esac
+  secondary_protocols=''
+  IFS=',' read -r -a tokens <<< "$raw"
+  for token in "${tokens[@]}"; do
+    normalized=$(printf '%s' "$token" | tr 'A-Z' 'a-z')
+    case "$normalized" in
+      xdnspt) normalized=xdns ;;
+      xicmppt) normalized=xicmp ;;
+    esac
+    case "$normalized" in
+      xr|sb) secondary_expand_group "$normalized" || return 1 ;;
+      naive|ca|all)
+        secondary_error "secp=$normalized 属于阶段二的 NaiveProxy/Caddy 范围，阶段一暂不支持。"
+        return 1
+        ;;
+      xhpt|vlpt|vxpt|vwpt|xhypt|xdns|xicmp|xvcdnpt|xvargopt|shypt|tupt|anpt|arpt|sspt|vmpt|sopt)
+        secondary_protocol_is_active "$normalized" || {
+          secondary_error "secp=$normalized 已被选择，但本次没有启用对应协议变量。"
+          return 1
+        }
+        secondary_add_protocol "$normalized"
+        ;;
+      *)
+        secondary_error "未知 secp 选择项：$token（阶段一支持协议名、xr、sb）。"
+        return 1
+        ;;
+    esac
+  done
+  [ -n "$secondary_protocols" ] || { secondary_error "secp 没有匹配到任何可用协议。"; return 1; }
+  secp="$secondary_protocols"
+}
+
+secondary_split_hostport(){
+  local authority="$1" host port suffix
+  if [[ "$authority" == \[* ]]; then
+    case "$authority" in *']:'*) ;; *) secondary_error "IPv6 地址必须使用 [IPv6]:端口 格式。"; return 1 ;; esac
+    host=${authority#\[}
+    host=${host%%\]*}
+    suffix=${authority#*\]}
+    port=${suffix#:}
+    [ "$authority" = "[$host]:$port" ] || { secondary_error "B 节点地址包含不支持的路径或字符。"; return 1; }
+  else
+    case "$authority" in *:*) ;; *) secondary_error "B 节点 URL 必须显式包含端口。"; return 1 ;; esac
+    host=${authority%:*}
+    port=${authority##*:}
+    case "$host" in *:*) secondary_error "IPv6 地址必须放在方括号中。"; return 1 ;; esac
+  fi
+  case "$port" in ''|*[!0-9]*) secondary_error "B 节点端口必须是数字。"; return 1 ;; esac
+  [ "${#port}" -le 5 ] || { secondary_error "B 节点端口超出 1-65535。"; return 1; }
+  port=$((10#$port))
+  [ "$port" -ge 1 ] && [ "$port" -le 65535 ] || { secondary_error "B 节点端口超出 1-65535。"; return 1; }
+  [ -n "$host" ] || { secondary_error "B 节点服务器地址为空。"; return 1; }
+  case "$host" in *%*) secondary_error "阶段一不支持带 zone-id 的 IPv6 地址。"; return 1 ;; esac
+  if ! valid_ipv4 "$host" && ! valid_ipv6 "$host" && ! valid_domain "$host"; then
+    secondary_error "B 节点服务器地址不是有效的 IPv4、IPv6 或域名：$host"
+    return 1
+  fi
+  case "$host" in 0.0.0.0|::) secondary_error "B 节点服务器地址不能是未指定地址 $host。"; return 1 ;; esac
+  sec_server="$host"
+  sec_port="$port"
+}
+
+secondary_parse_userinfo(){
+  local userinfo="$1" user_raw pass_raw
+  [ -n "$userinfo" ] || { sec_has_auth=no; sec_username=''; sec_password=''; return 0; }
+  case "$userinfo" in *:*) ;; *) secondary_error "代理认证信息必须使用 用户名:密码 格式。"; return 1 ;; esac
+  user_raw=${userinfo%%:*}
+  pass_raw=${userinfo#*:}
+  sec_username=$(uri_percent_decode "$user_raw") || { secondary_error "代理用户名包含无效百分号编码。"; return 1; }
+  sec_password=$(uri_percent_decode "$pass_raw") || { secondary_error "代理密码包含无效百分号编码。"; return 1; }
+  [ -n "$sec_username" ] && [ -n "$sec_password" ] || { secondary_error "代理用户名和密码都不能为空。"; return 1; }
+  secondary_valid_text "$sec_username" 255 && secondary_valid_text "$sec_password" 1024 && \
+    secondary_valid_ascii "$sec_username" && secondary_valid_ascii "$sec_password" || {
+    secondary_error "阶段一的 SOCKS/HTTP 认证仅支持可打印 ASCII，且认证信息不能过长。"
+    return 1
+  }
+  sec_has_auth=yes
+}
+
+secondary_validate_ss_method(){
+  case "$sec_method" in
+    2022-blake3-aes-128-gcm|2022-blake3-aes-256-gcm|2022-blake3-chacha20-poly1305) ;;
+    *) secondary_error "阶段一的 SS 二级出站仅支持三种 Shadowsocks-2022 加密方法：$sec_method"; return 1 ;;
+  esac
+}
+
+secondary_validate_ss_key(){
+  local expected actual
+  case "$sec_method" in
+    2022-blake3-aes-128-gcm) expected=16 ;;
+    *) expected=32 ;;
+  esac
+  printf '%s' "$sec_password" | base64 -d >/dev/null 2>&1 || {
+    secondary_error "Shadowsocks-2022 密钥不是有效 Base64。"
+    return 1
+  }
+  actual=$(printf '%s' "$sec_password" | base64 -d 2>/dev/null | wc -c | tr -d '[:space:]')
+  [ "$actual" = "$expected" ] || {
+    secondary_error "$sec_method 密钥解码后应为 ${expected} 字节，当前为 ${actual:-0} 字节。"
+    return 1
+  }
+}
+
+secondary_parse_ss_url(){
+  local body="$1" userinfo hostport decoded credentials method_raw password_raw
+  case "$body" in *\?*) secondary_error "阶段一不支持带 query/plugin 的 SS URL。"; return 1 ;; esac
+  if [[ "$body" == *@* ]]; then
+    body=${body%/}
+    hostport=${body##*@}
+    userinfo=${body%@*}
+    case "$userinfo" in *@*) secondary_error "SS 用户信息中的 @ 必须进行百分号编码。"; return 1 ;; esac
+    if [[ "$userinfo" == *:* ]]; then
+      method_raw=${userinfo%%:*}
+      password_raw=${userinfo#*:}
+      sec_method=$(uri_percent_decode "$method_raw") || { secondary_error "SS method 包含无效百分号编码。"; return 1; }
+      sec_password=$(uri_percent_decode "$password_raw") || { secondary_error "SS 密钥包含无效百分号编码。"; return 1; }
+      sec_source_format=sip002
+    else
+      decoded=$(base64_decode_compat "$userinfo") || { secondary_error "SS SIP002 userinfo Base64 解码失败。"; return 1; }
+      case "$decoded" in *:*) ;; *) secondary_error "SS userinfo 缺少 method:password。"; return 1 ;; esac
+      sec_method=${decoded%%:*}
+      sec_password=${decoded#*:}
+      case "$sec_method" in 2022-*) secondary_error "AEAD-2022 的 SIP002 userinfo 不能使用 Base64URL。"; return 1 ;; esac
+      sec_source_format=sip002-base64
+    fi
+  else
+    decoded=$(base64_decode_compat "$body") || { secondary_error "旧式 SS URL Base64 解码失败。"; return 1; }
+    secondary_valid_text "$decoded" 4096 || { secondary_error "旧式 SS URL 解码结果包含控制字符或过长。"; return 1; }
+    case "$decoded" in *:*@*) ;; *) secondary_error "旧式 SS URL 缺少 method:password@server:port。"; return 1 ;; esac
+    credentials=${decoded%@*}
+    hostport=${decoded##*@}
+    sec_method=${credentials%%:*}
+    sec_password=${credentials#*:}
+    sec_source_format=legacy
+  fi
+  secondary_valid_text "$sec_method" 64 && secondary_valid_text "$sec_password" 512 || {
+    secondary_error "SS method 或密钥过长、为空或包含控制字符。"
+    return 1
+  }
+  [ -n "$sec_method" ] && [ -n "$sec_password" ] || { secondary_error "SS method 和密钥不能为空。"; return 1; }
+  secondary_validate_ss_method || return 1
+  secondary_validate_ss_key || return 1
+  secondary_split_hostport "$hostport" || return 1
+  sec_scheme=ss
+  sec_outbound_type=shadowsocks
+  sec_username=''
+  sec_has_auth=no
+  sec_tls_enabled=false
+  sec_network=tcp_udp
+}
+
+secondary_parse_generic_url(){
+  local scheme="$1" body="$2" authority userinfo='' has_userinfo=no
+  case "$body" in *\?*) secondary_error "$scheme URL 不支持 query 参数。"; return 1 ;; esac
+  body=${body%/}
+  case "$body" in */*) secondary_error "$scheme URL 只允许空路径或结尾的 /。"; return 1 ;; esac
+  authority="$body"
+  if [[ "$authority" == *@* ]]; then
+    has_userinfo=yes
+    userinfo=${authority%@*}
+    authority=${authority##*@}
+    case "$userinfo" in *@*) secondary_error "认证信息中的 @ 必须进行百分号编码。"; return 1 ;; esac
+  fi
+  [ "$has_userinfo" = no ] || [ -n "$userinfo" ] || { secondary_error "$scheme URL 的认证信息为空。"; return 1; }
+  secondary_parse_userinfo "$userinfo" || return 1
+  if [ "$scheme" = socks5 ] && [ "$sec_has_auth" = yes ] && ! secondary_valid_text "$sec_password" 255; then
+    secondary_error "SOCKS5 用户名和密码分别不能超过 255 字节。"
+    return 1
+  fi
+  if [ "$scheme" = http ] || [ "$scheme" = https ]; then
+    case "$sec_username" in *:*) secondary_error "HTTP Basic 用户名不能包含冒号。"; return 1 ;; esac
+  fi
+  secondary_split_hostport "$authority" || return 1
+  sec_scheme="$scheme"
+  case "$scheme" in
+    socks5) sec_outbound_type=socks; sec_tls_enabled=false; sec_network=tcp_udp ;;
+    http)   sec_outbound_type=http;  sec_tls_enabled=false; sec_network=tcp ;;
+    https)  sec_outbound_type=http;  sec_tls_enabled=true;  sec_network=tcp ;;
+  esac
+  sec_method=''
+  sec_source_format=uri
+}
+
+parse_secondary_url(){
+  local raw="$1" body scheme rest label_raw=''
+  [ -n "$raw" ] || { secondary_error "B 节点 URL 不能为空。"; return 1; }
+  [ "${#raw}" -le 4096 ] && secondary_valid_text "$raw" 4096 || {
+    secondary_error "B 节点 URL 过长或包含控制字符。"
+    return 1
+  }
+  body=${raw%%#*}
+  if [ "$body" != "$raw" ]; then
+    label_raw=${raw#*#}
+    case "$label_raw" in *'#'*) secondary_error "URL fragment 中的 # 必须进行百分号编码。"; return 1 ;; esac
+  fi
+  sec_label=$(uri_percent_decode "$label_raw") || { secondary_error "URL 节点名称包含无效百分号编码。"; return 1; }
+  secondary_valid_text "$sec_label" 256 || { secondary_error "URL 节点名称过长或包含控制字符。"; return 1; }
+  case "$body" in *://*) ;; *) secondary_error "B 节点 URL 缺少协议头。"; return 1 ;; esac
+  scheme=$(printf '%s' "${body%%://*}" | tr 'A-Z' 'a-z')
+  rest=${body#*://}
+  case "$scheme" in
+    ss) secondary_parse_ss_url "$rest" ;;
+    socks5|http|https) secondary_parse_generic_url "$scheme" "$rest" ;;
+    *) secondary_error "不支持的 B 节点 URL：$scheme://（阶段一支持 ss、socks5、http、https）。"; return 1 ;;
+  esac
+}
+
+secondary_has_singbox_selection(){
+  local protocol
+  local -a secondary_check_protocols
+  IFS=',' read -r -a secondary_check_protocols <<< "$secondary_protocols"
+  for protocol in "${secondary_check_protocols[@]}"; do
+    [ "$(secondary_protocol_core "$protocol")" = sb ] && return 0
+  done
+  return 1
+}
+
+prepare_secondary_proxy(){
+  [ "$secondary_prepared" = yes ] && return 0
+  [ -n "$secp" ] || {
+    [ -z "$securl" ] || { secondary_error "设置 securl 时必须同时设置 secp。"; return 1; }
+    return 0
+  }
+  normalize_secondary_selectors || return 1
+  case ",$secondary_protocols," in
+    *,xdns,*)
+      valid_domain "$xdnsym" || {
+        secondary_error "secp 包含 xdns，但没有同时提供有效的 xdnsym=域名。"
+        return 1
+      }
+      ;;
+  esac
+  if [ -z "$securl" ]; then
+    [ -t 0 ] || {
+      secondary_error "非交互环境无法读取 B 节点 URL，请同时传入 securl='完整URL'。"
+      return 1
+    }
+    echo
+    printf '%s\n' "${C_CYAN}=========配置二级代理出站=========${C_RESET}"
+    echo "已选择协议：$secp"
+    printf "请粘贴 B VPS 的 ss://、socks5://、http:// 或 https:// URL（输入内容隐藏）："
+    IFS= read -r -s securl
+    echo
+  fi
+  parse_secondary_url "$securl" || return 1
+  unset securl
+  if secondary_has_singbox_selection && ! valid_ipv4 "$sec_server" && ! valid_ipv6 "$sec_server"; then
+    secondary_error "当前脚本兼容 Sing-box 1.11+；为避免新版域名解析字段不兼容，Sing-box 二级出站的 B 地址阶段一必须使用 IP。"
+    return 1
+  fi
+  secondary_prepared=yes
+  secondary_display_host="$sec_server"
+  valid_ipv6 "$sec_server" && secondary_display_host="[$sec_server]"
+  echo "二级代理出站已解析：$sec_scheme://$secondary_display_host:$sec_port（认证信息已隐藏）"
+  echo "应用二级出站的 A VPS 核心协议：$secp"
+}
+
+persist_secondary_proxy_state(){
+  if [ "$secondary_prepared" = yes ]; then
+    printf '%s\n' "$secp" > "$HOME/agsbx/secondary_secp"
+    printf '%s\n%s\n%s\n' "$sec_scheme" "$sec_server" "$sec_port" > "$HOME/agsbx/secondary_meta"
+    chmod 600 "$HOME/agsbx/secondary_secp" "$HOME/agsbx/secondary_meta" 2>/dev/null
+  fi
+}
+
+secondary_tag_for_protocol(){
+  local core="$1" protocol="$2"
+  case "$core:$protocol" in
+    xr:xhpt) printf 'xhttp-reality' ;;
+    xr:vlpt) printf 'reality-vision' ;;
+    xr:vxpt) printf 'vless-xhttp' ;;
+    xr:vwpt) printf 'vless-ws' ;;
+    xr:xhypt) printf 'hy2-xr' ;;
+    xr:xdns) printf 'vless-kcp-xdns' ;;
+    xr:xicmp) printf 'vless-kcp-xicmp' ;;
+    xr:xvcdnpt) printf 'vlessenc-xhttp-cdn' ;;
+    xr:xvargopt) printf 'vlessenc-xhttp-argo' ;;
+    xr:vmpt) printf 'vmess-xr' ;;
+    xr:sopt) printf 'socks5-xr' ;;
+    sb:shypt) printf 'hy2-sb' ;;
+    sb:tupt) printf 'tuic5-sb' ;;
+    sb:anpt) printf 'anytls-sb' ;;
+    sb:arpt) printf 'anyreality-sb' ;;
+    sb:sspt) printf 'ss-2022' ;;
+    sb:vmpt) printf 'vmess-sb' ;;
+    sb:sopt) printf 'socks5-sb' ;;
+    *) return 1 ;;
+  esac
+}
+
+secondary_append_runtime_tag(){
+  local core="$1" tag="$2" current
+  if [ "$core" = xr ]; then current="$secondary_xray_tags"; else current="$secondary_singbox_tags"; fi
+  case ",$current," in *",\"$tag\","*) return 0 ;; esac
+  if [ "$core" = xr ]; then
+    secondary_xray_tags="${current:+$current, }\"$tag\""
+  else
+    secondary_singbox_tags="${current:+$current, }\"$tag\""
+  fi
+}
+
+secondary_build_runtime_tags(){
+  local protocol core tag config_file
+  local -a protocols
+  secondary_xray_tags=''
+  secondary_singbox_tags=''
+  [ "$secondary_prepared" = yes ] || return 0
+  IFS=',' read -r -a protocols <<< "$secondary_protocols"
+  for protocol in "${protocols[@]}"; do
+    core=$(secondary_protocol_core "$protocol")
+    tag=$(secondary_tag_for_protocol "$core" "$protocol") || {
+      secondary_error "无法将 secp=$protocol 映射到 $core 内核入站 tag。"
+      return 1
+    }
+    if [ "$core" = xr ]; then config_file="$HOME/agsbx/xr.json"; else config_file="$HOME/agsbx/sb.json"; fi
+    [ -s "$config_file" ] && grep -q "\"$tag\"" "$config_file" 2>/dev/null || {
+      secondary_error "secp=$protocol 对应的 $core 入站 tag=$tag 未实际生成，已停止以防错误路由。"
+      return 1
+    }
+    secondary_append_runtime_tag "$core" "$tag"
+  done
+}
+
+append_xray_secondary_outbound(){
+  local address method password username auth_fields stream_fields tls_server_name
+  [ -n "$secondary_xray_tags" ] || return 0
+  address=$(json_escape "$sec_server")
+  method=$(json_escape "$sec_method")
+  password=$(json_escape "$sec_password")
+  username=$(json_escape "$sec_username")
+  auth_fields=''
+  if [ "$sec_has_auth" = yes ]; then
+    printf -v auth_fields ',\n        "user": "%s",\n        "pass": "%s"' "$username" "$password"
+  fi
+  stream_fields='"sockopt": {"dialerProxy": "direct"}'
+  if [ "$sec_tls_enabled" = true ]; then
+    tls_server_name="$address"
+    valid_ipv6 "$sec_server" && tls_server_name="[$address]"
+    stream_fields="\"security\": \"tls\", \"tlsSettings\": {\"serverName\": \"$tls_server_name\"}, $stream_fields"
+  fi
+  case "$sec_outbound_type" in
+    shadowsocks)
+      cat >> "$HOME/agsbx/xr.json" <<EOF
+    ,
+    {
+      "tag": "secondary-out",
+      "protocol": "shadowsocks",
+      "settings": {
+        "address": "$address",
+        "port": $sec_port,
+        "method": "$method",
+        "password": "$password"
+      },
+      "streamSettings": {$stream_fields}
+    }
+EOF
+      ;;
+    socks|http)
+      cat >> "$HOME/agsbx/xr.json" <<EOF
+    ,
+    {
+      "tag": "secondary-out",
+      "protocol": "$sec_outbound_type",
+      "settings": {
+        "address": "$address",
+        "port": $sec_port$auth_fields
+      },
+      "streamSettings": {$stream_fields}
+    }
+EOF
+      ;;
+  esac
+}
+
+append_singbox_secondary_outbound(){
+  local server method password username auth_fields tls_fields
+  [ -n "$secondary_singbox_tags" ] || return 0
+  server=$(json_escape "$sec_server")
+  method=$(json_escape "$sec_method")
+  password=$(json_escape "$sec_password")
+  username=$(json_escape "$sec_username")
+  auth_fields=''
+  if [ "$sec_has_auth" = yes ]; then
+    printf -v auth_fields ',\n      "username": "%s",\n      "password": "%s"' "$username" "$password"
+  fi
+  tls_fields=''
+  if [ "$sec_tls_enabled" = true ]; then
+    printf -v tls_fields ',\n      "tls": {"enabled": true, "server_name": "%s"}' "$server"
+  fi
+  case "$sec_outbound_type" in
+    shadowsocks)
+      cat >> "$HOME/agsbx/sb.json" <<EOF
+    ,
+    {
+      "type": "shadowsocks",
+      "tag": "secondary-out",
+      "server": "$server",
+      "server_port": $sec_port,
+      "method": "$method",
+      "password": "$password",
+      "detour": "direct"
+    }
+EOF
+      ;;
+    socks)
+      cat >> "$HOME/agsbx/sb.json" <<EOF
+    ,
+    {
+      "type": "socks",
+      "tag": "secondary-out",
+      "server": "$server",
+      "server_port": $sec_port,
+      "version": "5"$auth_fields,
+      "detour": "direct"
+    }
+EOF
+      ;;
+    http)
+      cat >> "$HOME/agsbx/sb.json" <<EOF
+    ,
+    {
+      "type": "http",
+      "tag": "secondary-out",
+      "server": "$server",
+      "server_port": $sec_port$auth_fields$tls_fields,
+      "detour": "direct"
+    }
+EOF
+      ;;
+  esac
+}
+
 xrsbout(){
+secondary_build_runtime_tags || exit 1
 if [ -e "$HOME/agsbx/xr.json" ]; then
 sed -i '$ s/,[[:space:]]*$//' "$HOME/agsbx/xr.json" 2>/dev/null || sed -i '$s/,$//' "$HOME/agsbx/xr.json"
 cat >> "$HOME/agsbx/xr.json" <<EOF
@@ -3300,6 +3899,7 @@ cat >> "$HOME/agsbx/xr.json" <<EOF
      }
     }
 EOF
+append_xray_secondary_outbound
 # WARP 隧道两端 (xr/sb) 均显式锁定 mtu=1280（官方 WARP 客户端取值）：
 # 内核默认 1420/1408 在 IPv6 外层封装下逼近 1500 上限，途经 PMTUD 黑洞时大包静默丢失，
 # 表现为"能握手、小流量正常、大流量卡死"，内层 IPv6 (s6/x6) 模式受害最深。
@@ -3346,6 +3946,17 @@ cat >> "$HOME/agsbx/xr.json" <<EOF
   "routing": {
     "domainStrategy": "IPOnDemand",
     "rules": [
+EOF
+if [ -n "$secondary_xray_tags" ]; then
+cat >> "$HOME/agsbx/xr.json" <<EOF
+      {
+        "type": "field",
+        "inboundTag": [$secondary_xray_tags],
+        "outboundTag": "secondary-out"
+      },
+EOF
+fi
+cat >> "$HOME/agsbx/xr.json" <<EOF
       {
         "type": "field",
         "ip": [ ${xip} ],
@@ -3440,6 +4051,9 @@ cat >> "$HOME/agsbx/sb.json" <<EOF
       "type": "direct",
       "tag": "direct"
     }
+EOF
+append_singbox_secondary_outbound
+cat >> "$HOME/agsbx/sb.json" <<EOF
   ]
 EOF
 if [ "$wap" = warp ]; then
@@ -3481,6 +4095,16 @@ cat >> "$HOME/agsbx/sb.json" <<EOF
         "action": "resolve",
         "strategy": "${sbyx}"
       },
+EOF
+if [ -n "$secondary_singbox_tags" ]; then
+cat >> "$HOME/agsbx/sb.json" <<EOF
+      {
+        "inbound": [$secondary_singbox_tags],
+        "outbound": "secondary-out"
+      },
+EOF
+fi
+cat >> "$HOME/agsbx/sb.json" <<EOF
       {
         "ip_cidr": [ ${sip} ],
         "outbound": "${s1outtag}"
@@ -3577,6 +4201,9 @@ if [ "$has_xray_sb" = yes ]; then
     xrsbout
   fi
 fi
+
+# 二级代理的凭据只保留在 xr.json/sb.json；状态卡仅落盘无密码的协议、地址与端口。
+persist_secondary_proxy_state
 
 # 双内核 Hysteria 2 跳跃端口规则解耦挂载
 # Sing-box 驱动的 Hysteria 2：shyjpt -> port_hy2
@@ -3849,6 +4476,18 @@ sxname=$(cat "$HOME/agsbx/name" 2>/dev/null)
 xvvmcdnym=$(cat "$HOME/agsbx/cdnym" 2>/dev/null)
 section "Airgosbx 脚本输出节点配置如下"
 echo
+if [ -s "$HOME/agsbx/secondary_secp" ] && [ -s "$HOME/agsbx/secondary_meta" ]; then
+secondary_saved_secp=$(cat "$HOME/agsbx/secondary_secp" 2>/dev/null)
+secondary_saved_scheme=$(sed -n '1p' "$HOME/agsbx/secondary_meta" 2>/dev/null)
+secondary_saved_server=$(sed -n '2p' "$HOME/agsbx/secondary_meta" 2>/dev/null)
+secondary_saved_port=$(sed -n '3p' "$HOME/agsbx/secondary_meta" 2>/dev/null)
+secondary_saved_display="$secondary_saved_server"
+valid_ipv6 "$secondary_saved_server" && secondary_saved_display="[$secondary_saved_server]"
+node_title "💣【 二级代理出站 】A VPS 经 B VPS 访问目标服务器："
+echo "生效范围（A VPS 核心协议）：$secondary_saved_secp"
+echo "上游端点（B VPS 入站）：$secondary_saved_scheme://$secondary_saved_display:$secondary_saved_port（认证信息已隐藏）"
+echo
+fi
 case "$server_ip" in
 104.28*|\[2a09*) echo "检测到有WARP的IP作为客户端地址 (104.28或者2a09开头的IP)，请把客户端地址上的WARP的IP手动更换为VPS本地IPV4或者IPV6地址" && sleep 3 ;;
 esac
@@ -4029,7 +4668,8 @@ fi
 if grep -q ss-2022 "$HOME/agsbx/sb.json" 2>/dev/null; then
 node_title "💣【 Shadowsocks-2022 】节点信息如下："
 port_ss=$(cat "$HOME/agsbx/port_ss")
-ss_link="ss://$(echo -n "2022-blake3-aes-128-gcm:$sskey@$server_ip:$port_ss" | safe_base64)#${sxname}Shadowsocks-2022-$hostname"
+ss_method="2022-blake3-aes-128-gcm"
+ss_link="ss://$(uri_percent_encode "$ss_method"):$(uri_percent_encode "$sskey")@$server_ip:$port_ss#$(uri_percent_encode "${sxname}Shadowsocks-2022-$hostname")"
 echo "$ss_link" >> "$HOME/agsbx/jh.txt"
 echo "$ss_link"
 echo
@@ -4284,11 +4924,13 @@ fi
 if grep -q socks5-xr "$HOME/agsbx/xr.json" 2>/dev/null || grep -q socks5-sb "$HOME/agsbx/sb.json" 2>/dev/null; then
 node_title "💣【 Socks5 】客户端信息如下："
 port_so=$(cat "$HOME/agsbx/port_so")
-echo "请配合其他应用内置代理使用，勿做节点直接使用"
+socks_link="socks5://$(uri_percent_encode "$uuid"):$(uri_percent_encode "$uuid")@$server_ip:$port_so#$(uri_percent_encode "${sxname}Socks5-$hostname")"
+echo "注意：SOCKS5 本身不加密；A→B 经公网时请确认能接受明文传输风险"
 echo "客户端地址：$server_ip"
 echo "客户端端口：$port_so"
 echo "客户端用户名：$uuid"
 echo "客户端密码：$uuid"
+echo "分享链接：$socks_link"
 echo
 fi
 # NaiveProxy(Caddy) 节点卡片：独立内核，配置存在即展示。仅打印到控制台，不并入聚合订阅 jh.txt / Clash
@@ -4865,8 +5507,9 @@ echo
 showmode
 exit
 elif [ "$1" = "rep" ]; then
+prepare_secondary_proxy || exit 1
 cleandel
-rm -rf "$HOME/agsbx"/{sb.json,xr.json,sbargoym.log,sbargotoken.log,argo.log,argoport.log,cdnym,name,Caddyfile,naive_user,naive_pass,naive_domain,caddy.log,caddy_storage}
+rm -rf "$HOME/agsbx"/{sb.json,xr.json,sbargoym.log,sbargotoken.log,argo.log,argoport.log,cdnym,name,Caddyfile,naive_user,naive_pass,naive_domain,caddy.log,caddy_storage,secondary_secp,secondary_meta}
 echo "Airgosbx重置协议完成，开始更新相关协议变量……" && sleep 2
 echo
 elif [ "$1" = "list" ]; then
@@ -4985,6 +5628,7 @@ fi
 # - 关联性: 必须置于脚本最尾部，以确保其调用前面所有段落声明的工具函数与安装函数时已由 Shell 完全预加载完毕。
 #============================================================
 if ! agsbx_running; then
+prepare_secondary_proxy || exit 1
 for P in /proc/[0-9]*; do if [ -L "$P/exe" ]; then TARGET=$(readlink -f "$P/exe" 2>/dev/null); if echo "$TARGET" | grep -qE '/agsbx/cloudflared|/agsbx/sing-box|/agsbx/xray'; then PID=$(basename "$P"); kill "$PID" 2>/dev/null && echo "Killed $PID ($TARGET)" || echo "Could not kill $PID ($TARGET)"; fi; fi; done
 kill -15 $(pgrep -f 'agsbx/sing-box' 2>/dev/null) $(pgrep -f 'agsbx/cloudflared' 2>/dev/null) $(pgrep -f 'agsbx/xray' 2>/dev/null) >/dev/null 2>&1
 
