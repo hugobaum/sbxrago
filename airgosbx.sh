@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SSL.com EAB 仅在 ACME 注册步骤按需读取，禁止无关子进程继承敏感凭据。
+export -n sslcom_eab_kid sslcom_eab_hmac 2>/dev/null || true
 # 说明：脚本使用了花括号展开、echo 转义等 Bash 语法，且安装后的 agsbx 快捷方式会按 shebang 执行；
 # 固定使用 bash 可避免在以 dash 作为 /bin/sh 的系统（如 Debian/Ubuntu）上 `agsbx rep` 等命令静默失效。
 #============================================================
@@ -112,7 +114,10 @@ vrow "certym"   "域名；兼容旧用法：单独设置时默认 HTTP-01"
 vrow "certwild" "DNS-01 时填 y，同时申请根域名与泛域名"
 vrow "certcrt"  "外部导入：证书(fullchain)文件路径"
 vrow "certkey"  "外部导入：私钥文件路径"
-vrow "acmem"    "ACME 注册邮箱（可选）"
+vrow "acmem"    "ACME 注册邮箱（ZeroSSL 备用签发需要）"
+vrow "acmetimeout" "单家 CA 签发超时秒数（默认 HTTP/IP/ALPN 60、DNS 120；范围 5-600）"
+vrow "sslcom_eab_kid" "SSL.com 第三备用 CA 的 EAB Key ID（可选）"
+vrow "sslcom_eab_hmac" "SSL.com 第三备用 CA 的 EAB HMAC Key（可选）"
 vrow "certdns"  "兼容旧用法：填 cf 走 Cloudflare DNS-01（免占用80/443端口）"
 vrow "CF_Token" "Cloudflare Token（Zone.DNS 编辑；自动发现时还需 Zone.Zone 读取）"
 vrow "CF_Account_ID" "Cloudflare 账户 ID（可选，用于缩小 Zone 查询范围）"
@@ -590,6 +595,9 @@ export certwild=${certwild:-''}
 export certcrt=${certcrt:-''}
 export certkey=${certkey:-''}
 export acmem=${acmem:-''}
+export acmetimeout=${acmetimeout:-''}
+sslcom_eab_kid=${sslcom_eab_kid:-''}
+sslcom_eab_hmac=${sslcom_eab_hmac:-''}
 export certdns=${certdns:-''}
 export shyjpt=${shyjpt:-''}
 export xhyjpt=${xhyjpt:-''}
@@ -1708,7 +1716,9 @@ local acme_cert_file="$HOME/agsbx/acmecer/cert.pem"
 local acme_key_file="$HOME/agsbx/acmecer/private.key"
 local acme_log="$HOME/agsbx/acme_issue.log"
 local input identifier source required_port reload_cmd cf_prompted=no index
-local -a identifiers issue_args
+local ca_index ca_server ca_label ca_status
+local ca_timeout register_timeout=15 selected_ca="" default_ca_server zerossl_ca_conf sslcom_ca_conf ca_succeeded=no
+local -a identifiers issue_args register_args ca_servers ca_labels
 mkdir -p "$HOME/agsbx/acmecer" "$acme_home"
 chmod 700 "$acme_home" 2>/dev/null
 case "$mode" in
@@ -1830,28 +1840,169 @@ else
   echo "ACME 验证方式：HTTP-01；申请标识须指向本机，公网 80/TCP 必须可达。"
 fi
 ensure_official_acme "$mode" || return 1
-: > "$acme_log"
-bash "$acme_script" --home "$acme_home" --set-default-ca --server letsencrypt >> "$acme_log" 2>&1 || return 1
-if [ -n "$acmem" ]; then
-  bash "$acme_script" --home "$acme_home" --register-account -m "$acmem" --server letsencrypt >> "$acme_log" 2>&1 || return 1
-else
-  bash "$acme_script" --home "$acme_home" --register-account --server letsencrypt >> "$acme_log" 2>&1 || return 1
+ca_timeout=$(printf '%s' "$acmetimeout" | tr -d '[:space:]')
+if [ -z "$ca_timeout" ]; then
+  if [ "$mode" = dns ]; then
+    ca_timeout=120
+  else
+    ca_timeout=60
+  fi
 fi
-chmod 600 "$acme_home/account.conf" 2>/dev/null
-issue_args=(--home "$acme_home" --issue --server letsencrypt --keylength ec-256)
-case "$mode" in
-  ip)
-    issue_args+=(--standalone --certificate-profile shortlived --days 4)
+case "$ca_timeout" in
+  ''|*[!0-9]*)
+    echo "错误：acmetimeout 必须是 5-600 之间的整数秒。"
+    return 1
     ;;
-  http) issue_args+=(--standalone) ;;
-  alpn) issue_args+=(--alpn) ;;
-  dns) issue_args+=(--dns dns_cf) ;;
 esac
-for identifier in "${identifiers[@]}"; do
-  issue_args+=(-d "$identifier")
+if [ "$ca_timeout" -lt 5 ] || [ "$ca_timeout" -gt 600 ]; then
+  echo "错误：acmetimeout=$ca_timeout 超出允许范围 5-600 秒。"
+  return 1
+fi
+command -v timeout >/dev/null 2>&1 || {
+  echo "错误：系统缺少 timeout 命令，无法安全执行多 CA 超时切换。"
+  return 1
+}
+
+# IP 短期证书使用 Let's Encrypt 的 shortlived profile；TLS-ALPN 也只使用已确认兼容的 CA。
+# 普通 HTTP-01 与 DNS-01 才启用三家 CA 容灾，顺序固定为 Let's Encrypt、ZeroSSL、SSL.com。
+case "$mode" in
+  ip|alpn)
+    ca_servers=(letsencrypt)
+    ca_labels=("Let's Encrypt")
+    echo "ACME CA：$mode 模式仅使用已确认兼容的 Let's Encrypt。"
+    ;;
+  *)
+    ca_servers=(letsencrypt zerossl sslcom)
+    ca_labels=("Let's Encrypt" "ZeroSSL" "SSL.com")
+    echo "ACME CA优先级：Let's Encrypt → ZeroSSL → SSL.com；注册上限 ${register_timeout} 秒，签发上限 ${ca_timeout} 秒。"
+    if [ -z "$acmem" ] && [ -t 0 ]; then
+      printf "请输入 ACME 注册邮箱（ZeroSSL/SSL.com 备用需要；回车则缺少凭据时跳过）：" >&2
+      read -r acmem
+      acmem=$(printf '%s' "$acmem" | tr -d '[:space:]')
+    fi
+    ;;
+esac
+
+: > "$acme_log"
+for ca_index in "${!ca_servers[@]}"; do
+  ca_server="${ca_servers[$ca_index]}"
+  ca_label="${ca_labels[$ca_index]}"
+
+  if [ "$ca_server" = zerossl ]; then
+    zerossl_ca_conf="$acme_home/ca/acme.zerossl.com/v2/DV90/ca.conf"
+    if [ -z "$acmem" ] && ! grep -q '^CA_EAB_KEY_ID=' "$zerossl_ca_conf" 2>/dev/null; then
+      echo "跳过 ZeroSSL：首次注册未提供 acmem，无法自动获取 EAB 凭据。"
+      printf '\n===== 跳过 ZeroSSL：首次注册缺少 acmem =====\n' >> "$acme_log"
+      continue
+    fi
+  fi
+  if [ "$ca_server" = sslcom ]; then
+    sslcom_ca_conf="$acme_home/ca/acme.ssl.com/sslcom-dv-ecc/ca.conf"
+    if ! { grep -q '^CA_EAB_KEY_ID=' "$sslcom_ca_conf" 2>/dev/null && grep -q '^CA_EAB_HMAC_KEY=' "$sslcom_ca_conf" 2>/dev/null; } \
+      && { [ -z "$sslcom_eab_kid" ] || [ -z "$sslcom_eab_hmac" ]; } && [ -t 0 ]; then
+      echo "SSL.com 作为第三备用 CA 需要预先从 SSL.com 账户获取 EAB 凭据。"
+      if [ -z "$sslcom_eab_kid" ]; then
+        printf "SSL.com EAB Key ID（回车跳过该 CA）：" >&2
+        read -r sslcom_eab_kid
+      fi
+      if [ -n "$sslcom_eab_kid" ] && [ -z "$sslcom_eab_hmac" ]; then
+        printf "SSL.com EAB HMAC Key（输入不回显）：" >&2
+        read -r -s sslcom_eab_hmac
+        echo >&2
+      fi
+    fi
+    if ! { grep -q '^CA_EAB_KEY_ID=' "$sslcom_ca_conf" 2>/dev/null && grep -q '^CA_EAB_HMAC_KEY=' "$sslcom_ca_conf" 2>/dev/null; }; then
+      if [ -z "$acmem" ]; then
+        echo "跳过 SSL.com：首次注册缺少 acmem。"
+        printf '\n===== 跳过 SSL.com：首次注册缺少邮箱 =====\n' >> "$acme_log"
+        continue
+      fi
+      if [ -z "$sslcom_eab_kid" ] || [ -z "$sslcom_eab_hmac" ]; then
+        echo "跳过 SSL.com：缺少 SSL.com EAB 凭据。"
+        printf '\n===== 跳过 SSL.com：缺少 EAB 凭据 =====\n' >> "$acme_log"
+        continue
+      fi
+      case "$sslcom_eab_kid" in
+        *[!A-Za-z0-9_-]*)
+          echo "跳过 SSL.com：EAB Key ID 含有非法字符。"
+          continue
+          ;;
+      esac
+      case "$sslcom_eab_hmac" in
+        *[!A-Za-z0-9_=-]*)
+          echo "跳过 SSL.com：EAB HMAC Key 不是有效的 Base64URL 字符串。"
+          continue
+          ;;
+      esac
+      (
+        umask 077
+        mkdir -p "$(dirname "$sslcom_ca_conf")" || exit 1
+        printf "CA_EAB_KEY_ID='%s'\nCA_EAB_HMAC_KEY='%s'\n" "$sslcom_eab_kid" "$sslcom_eab_hmac" >> "$sslcom_ca_conf"
+      ) || {
+        echo "跳过 SSL.com：无法安全写入 EAB 配置。"
+        continue
+      }
+      chmod 600 "$sslcom_ca_conf" 2>/dev/null
+    fi
+    if ! grep -q '^CA_EAB_KEY_ID=' "$sslcom_ca_conf" 2>/dev/null || ! grep -q '^CA_EAB_HMAC_KEY=' "$sslcom_ca_conf" 2>/dev/null; then
+      echo "跳过 SSL.com：缺少 acmem 或 SSL.com EAB 凭据。"
+      printf '\n===== 跳过 SSL.com：缺少邮箱或 EAB 凭据 =====\n' >> "$acme_log"
+      continue
+    fi
+  fi
+
+  echo "正在尝试 $ca_label（注册最多 ${register_timeout} 秒，签发最多 ${ca_timeout} 秒）..."
+  printf '\n===== CA 尝试：%s；注册超时：%s 秒；签发超时：%s 秒 =====\n' "$ca_label" "$register_timeout" "$ca_timeout" >> "$acme_log"
+  register_args=(bash "$acme_script" --home "$acme_home" --register-account --server "$ca_server")
+  [ -n "$acmem" ] && register_args+=(-m "$acmem")
+  [ "$ca_server" = sslcom ] && register_args+=(--ecc)
+  timeout -k 2 "$register_timeout" "${register_args[@]}" >> "$acme_log" 2>&1
+  ca_status=$?
+  if [ "$ca_server" = sslcom ]; then
+    unset sslcom_eab_kid sslcom_eab_hmac
+  fi
+  if [ "$ca_status" -ne 0 ]; then
+    if [ "$ca_status" -eq 124 ] || [ "$ca_status" -eq 137 ]; then
+      echo "$ca_label 注册超时，切换下一家 CA。"
+    else
+      echo "$ca_label 账户注册失败，切换下一家 CA。"
+    fi
+    continue
+  fi
+
+  issue_args=(--home "$acme_home" --issue --server "$ca_server" --keylength ec-256)
+  case "$mode" in
+    ip)
+      issue_args+=(--standalone --certificate-profile shortlived --days 4)
+      ;;
+    http) issue_args+=(--standalone) ;;
+    alpn) issue_args+=(--alpn) ;;
+    dns) issue_args+=(--dns dns_cf) ;;
+  esac
+  for identifier in "${identifiers[@]}"; do
+    issue_args+=(-d "$identifier")
+  done
+  timeout -k 2 "$ca_timeout" bash "$acme_script" "${issue_args[@]}" >> "$acme_log" 2>&1
+  ca_status=$?
+  if [ "$ca_status" -eq 0 ]; then
+    ca_succeeded=yes
+    selected_ca="$ca_label"
+    default_ca_server="$ca_server"
+    [ "$ca_server" = sslcom ] && default_ca_server="https://acme.ssl.com/sslcom-dv-ecc"
+    bash "$acme_script" --home "$acme_home" --set-default-ca --server "$default_ca_server" >> "$acme_log" 2>&1 || true
+    echo "$default_ca_server" > "$HOME/agsbx/acme_ca"
+    echo "$ca_label 签发成功。"
+    break
+  fi
+  if [ "$ca_status" -eq 124 ] || [ "$ca_status" -eq 137 ]; then
+    echo "$ca_label 在 ${ca_timeout} 秒内未完成签发，切换下一家 CA。"
+  else
+    echo "$ca_label 签发失败，切换下一家 CA。"
+  fi
 done
-if ! bash "$acme_script" "${issue_args[@]}" >> "$acme_log" 2>&1; then
-  echo "错误：ACME 签发失败，详情见 $acme_log"
+chmod 600 "$acme_home/account.conf" 2>/dev/null
+if [ "$ca_succeeded" != yes ]; then
+  echo "错误：所有可用 ACME CA 均未完成签发，详情见 $acme_log"
   return 1
 fi
 identifier="${identifiers[0]}"
@@ -1867,7 +2018,7 @@ echo "$identifier" > "$HOME/agsbx/sni.txt"
 echo "ca" > "$HOME/agsbx/cert_mode"
 record_cert_source "$source" "$identifier"
 record_tls_cert_paths "$acme_cert_file" "$acme_key_file"
-tls_cert_source="ACME 自动申请成功"
+tls_cert_source="ACME 自动申请成功（$selected_ca）"
 }
 setup_tls_certificate(){
   local reuse_cert reuse_key wanted wanted_type mode_hint dns_requested=no reuse_allowed=yes acme_requested=no choose_status retry_choice index
