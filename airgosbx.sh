@@ -4114,6 +4114,8 @@ append_singbox_secondary_outbound(){
   if [ "$sec_tls_enabled" = true ]; then
     printf -v tls_fields ',\n      "tls": {"enabled": true, "server_name": "%s"}' "$server"
   fi
+  # 不设置 detour=direct：当前 Sing-box 会在实际拨号时拒绝把空 direct 出站作为上游；
+  # 省略 detour 即由系统网络直接连接 B 节点，也不会重新进入入站路由形成递归。
   case "$sec_outbound_type" in
     shadowsocks)
       cat >> "$HOME/agsbx/sb.json" <<EOF
@@ -4124,8 +4126,7 @@ append_singbox_secondary_outbound(){
       "server": "$server",
       "server_port": $sec_port,
       "method": "$method",
-      "password": "$password",
-      "detour": "direct"
+      "password": "$password"
     }
 EOF
       ;;
@@ -4137,8 +4138,7 @@ EOF
       "tag": "secondary-out",
       "server": "$server",
       "server_port": $sec_port,
-      "version": "5"$auth_fields,
-      "detour": "direct"
+      "version": "5"$auth_fields
     }
 EOF
       ;;
@@ -4149,8 +4149,7 @@ EOF
       "type": "http",
       "tag": "secondary-out",
       "server": "$server",
-      "server_port": $sec_port$auth_fields$tls_fields,
-      "detour": "direct"
+      "server_port": $sec_port$auth_fields$tls_fields
     }
 EOF
       ;;
