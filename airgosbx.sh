@@ -3371,6 +3371,13 @@ cat >> "$caddyfile_tmp" <<EOF
 }
 EOF
 # 先用目标 Caddy 内核完整适配并预配模块；通过后再原子替换正式配置，失败时不注册服务、不覆盖旧配置。
+# rep 会复用已安装的 Caddy；若旧版收尾加固曾将其权限收紧为 600，这里先恢复执行权限再校验。
+if [ ! -x "$HOME/agsbx/caddy" ]; then
+chmod 700 "$HOME/agsbx/caddy" 2>/dev/null || {
+printf '%s\n' "${C_RED}错误：当前 Caddy(naive) 内核缺少执行权限且无法恢复，已终止 Caddy 安装。${C_RESET}"
+return 1
+}
+fi
 if ! "$HOME/agsbx/caddy" validate --config "$caddyfile_tmp" --adapter caddyfile >/dev/null 2>&1; then
 printf '%s\n' "${C_RED}错误：新 Caddyfile 与当前 Caddy(naive) 内核不兼容，已终止 Caddy 安装。${C_RESET}"
 "$HOME/agsbx/caddy" validate --config "$caddyfile_tmp" --adapter caddyfile 2>&1 | head -5
@@ -5832,7 +5839,7 @@ hr2
 # 安全加固：全局收紧敏感文件权限（阻断多用户环境下的未授权文件读取）
 find "$HOME/agsbx" -type d -exec chmod 700 {} + 2>/dev/null
 find "$HOME/agsbx" -type f -exec chmod 600 {} + 2>/dev/null
-chmod 700 "$HOME/agsbx/xray" "$HOME/agsbx/sing-box" "$HOME/agsbx/cloudflared" 2>/dev/null
+chmod 700 "$HOME/agsbx/xray" "$HOME/agsbx/sing-box" "$HOME/agsbx/cloudflared" "$HOME/agsbx/caddy" 2>/dev/null
 echo "相关快捷方式如下：(首次安装成功后需重连SSH，agsbx快捷方式才可生效)"
 showmode
 }
