@@ -22,19 +22,21 @@ is_root(){
   [ "$(id -u 2>/dev/null)" = "0" ]
 }
 
-# 进程探测助手：判断 agsbx 管理的 sing-box / xray / caddy 内核是否在运行。
+# 进程探测助手：判断 agsbx 管理的 sing-box / xray / caddy 内核或 Mieru 代理是否在运行。
 # 此前该长管道在第 1/8/12 段被逐字复制三次，现统一收敛为单一函数，杜绝逻辑漂移与维护遗漏。
 agsbx_running(){
   find /proc/*/exe -type l 2>/dev/null | grep -E '/proc/[0-9]+/exe' | xargs -r readlink 2>/dev/null | grep -Eq 'agsbx/(sing-box|xray|caddy)' \
     || pgrep -f 'agsbx/sing-box' >/dev/null 2>&1 \
     || pgrep -f 'agsbx/xray' >/dev/null 2>&1 \
-    || pgrep -f 'agsbx/caddy' >/dev/null 2>&1
+    || pgrep -f 'agsbx/caddy' >/dev/null 2>&1 \
+    || { [ -f "$HOME/agsbx/mita_managed" ] && command -v mita >/dev/null 2>&1 && mita status 2>/dev/null | grep -q 'RUNNING'; }
 }
 # 安装态探测：只要内核二进制还在磁盘上就视为"已安装"（rep 只重置配置、stop 只停进程，都不删二进制）。
 # 管理类命令(start/stop/restart/reload/list/...)应以"是否已安装"放行，而非"是否正在运行"——
 # 否则 stop 停掉最后一个内核后 agsbx_running 变 false，随后的 start 会被前置守卫误判为"未安装"而拦截。
 agsbx_installed(){
-  [ -s "$HOME/agsbx/sing-box" ] || [ -s "$HOME/agsbx/xray" ] || [ -s "$HOME/agsbx/caddy" ]
+  [ -s "$HOME/agsbx/sing-box" ] || [ -s "$HOME/agsbx/xray" ] || [ -s "$HOME/agsbx/caddy" ] \
+    || { [ -f "$HOME/agsbx/mita_managed" ] && command -v mita >/dev/null 2>&1; }
 }
 
 # 终端配色：仅在交互式 TTY 且未设置 NO_COLOR 时启用；输出被重定向到文件/管道时自动留空，
@@ -146,6 +148,13 @@ vrow "naiveuser" "basic_auth 用户名（留空＝naive）"
 vrow "naivepass" "basic_auth 密码（留空＝自动生成）"
 vrow "naivebuild" "内核获取：dl=下载预编译(仅amd64)／build=现场编译(arm64必走)"
 vrow "naivesite" "reverse_proxy 伪装站域名（留空＝默认公共镜像）"
+
+vg "⑫ Mieru（Mita 官方服务端·独立于 xray/sb）"
+vrow "mieru"      "y＝启用交互配置（推荐，只需记这个变量）"
+vrow "mierupt"    "可选预设：端口（留空＝随机高位端口）"
+vrow "mieruuser"  "可选预设：用户名（留空＝自动生成）"
+vrow "mierupass"  "可选预设：密码（留空＝自动生成）"
+vrow "mierutrans" "可选预设：tcp（默认）或 udp"
 echo
 hr
 echo "命令速查见 ${C_YELLOW}agsbx cmds${C_RESET} ｜ 完整帮助 ${C_YELLOW}agsbx help${C_RESET}"
@@ -172,12 +181,12 @@ vrow "cmds"     "命令速查表（本表）"
 vrow "help"     "完整帮助（vars + cmds）"
 
 vg "③ 内核启停（用法：agsbx <动作> [内核]）"
-echo "             内核 = xray ｜ sb ｜ caddy ｜ all(省略即全部 xray+sb；caddy 需单独指定)"
+echo "             内核 = xray ｜ sb ｜ caddy ｜ mita ｜ all(省略即全部 xray+sb；caddy/mita 需单独指定)"
 vrow "start"    "启动内核"
 vrow "stop"     "停止内核（释放其占用的端口）"
 vrow "restart"  "重启内核"
-vrow "reload"   "热重载配置（sb 支持；xray 无热载→自动转 restart）"
-vrow "res"      "一键重启全部内核（含 Argo，等价 restart all）"
+vrow "reload"   "热重载配置（sb/caddy/mita 支持；xray 自动 restart）"
+vrow "res"      "重启 Xray/Sing-box/Argo（不含 Caddy/Mita）"
 
 vg "④ 内核版本"
 vrow "upx"      "升级 Xray（upx [版本]，不带版本=最新）"
@@ -541,6 +550,15 @@ export LANG=en_US.UTF-8
 [ -z "${xicmp+x}" ] || xicp=yes
 [ -z "${xicmppt+x}" ] || xicp=yes
 [ -z "${xvcdnpt+x}" ] || xvcdn=yes
+case "${mieru:-}" in
+  y|Y|yes|YES|1|true|TRUE) mierup=yes ;;
+  ''|n|N|no|NO|0|false|FALSE) ;;
+  *) echo "错误：mieru 开关仅支持 y/yes/1 或 n/no/0。"; exit 1 ;;
+esac
+[ -z "${mierupt+x}" ] || { mierup=yes; mieru_port_preset=yes; }
+[ -z "${mieruuser+x}" ] || mieru_user_preset=yes
+[ -z "${mierupass+x}" ] || mieru_pass_preset=yes
+[ -z "${mierutrans+x}" ] || mieru_transport_preset=yes
 # vmag 是"存在可走 Argo 隧道的协议"总开关，决定第8段是否拉起 cloudflared。
 # 此前仅 vmpt/vwpt 置位，导致单独设 xvargopt+argo=xvargopt 时隧道被静默跳过；补齐 xvargo。
 [ -z "${xvargopt+x}" ] || { xvargo=yes; vmag=yes; }
@@ -551,10 +569,10 @@ case "${sub:-}" in y|yes|1) sub=yes ;; *) sub='' ;; esac
 [ -z "${subid+x}" ] || sub=yes
 if agsbx_running || agsbx_installed; then
 if [ "$1" = "rep" ]; then
-[ -n "$naive" ] || [ "$vwp" = yes ] || [ "$sop" = yes ] || [ "$vxp" = yes ] || [ "$ssp" = yes ] || [ "$vlp" = yes ] || [ "$vmp" = yes ] || [ "$hyp" = yes ] || [ "$tup" = yes ] || [ "$xhp" = yes ] || [ "$anp" = yes ] || [ "$arp" = yes ] || [ "$xhyp" = yes ] || [ "$xdns" = yes ] || [ "$xicp" = yes ] || [ "$xvcdn" = yes ] || [ "$xvargo" = yes ] || { echo "提示：rep重置协议时，请在脚本前至少设置一个协议变量哦! 💣"; exit; }
+[ -n "$naive" ] || [ "$mierup" = yes ] || [ "$vwp" = yes ] || [ "$sop" = yes ] || [ "$vxp" = yes ] || [ "$ssp" = yes ] || [ "$vlp" = yes ] || [ "$vmp" = yes ] || [ "$hyp" = yes ] || [ "$tup" = yes ] || [ "$xhp" = yes ] || [ "$anp" = yes ] || [ "$arp" = yes ] || [ "$xhyp" = yes ] || [ "$xdns" = yes ] || [ "$xicp" = yes ] || [ "$xvcdn" = yes ] || [ "$xvargo" = yes ] || { echo "提示：rep重置协议时，请在脚本前至少设置一个协议变量哦! 💣"; exit; }
 fi
 else
-[ "$1" = "del" ] || [ -n "$naive" ] || [ "$vwp" = yes ] || [ "$sop" = yes ] || [ "$vxp" = yes ] || [ "$ssp" = yes ] || [ "$vlp" = yes ] || [ "$vmp" = yes ] || [ "$hyp" = yes ] || [ "$tup" = yes ] || [ "$xhp" = yes ] || [ "$anp" = yes ] || [ "$arp" = yes ] || [ "$xhyp" = yes ] || [ "$xdns" = yes ] || [ "$xicp" = yes ] || [ "$xvcdn" = yes ] || [ "$xvargo" = yes ] || { echo "提示：未安装airgosbx脚本，请在脚本前至少设置一个协议变量哦！💣"; exit; }
+[ "$1" = "del" ] || [ -n "$naive" ] || [ "$mierup" = yes ] || [ "$vwp" = yes ] || [ "$sop" = yes ] || [ "$vxp" = yes ] || [ "$ssp" = yes ] || [ "$vlp" = yes ] || [ "$vmp" = yes ] || [ "$hyp" = yes ] || [ "$tup" = yes ] || [ "$xhp" = yes ] || [ "$anp" = yes ] || [ "$arp" = yes ] || [ "$xhyp" = yes ] || [ "$xdns" = yes ] || [ "$xicp" = yes ] || [ "$xvcdn" = yes ] || [ "$xvargo" = yes ] || { echo "提示：未安装airgosbx脚本，请在脚本前至少设置一个协议变量哦！💣"; exit; }
 fi
 export uuid=${uuid:-''}
 export obfs_pass=${obfs_pass:-''}
@@ -575,6 +593,7 @@ export flag_xicmp=${xicmppt:-''}
 export xdnsym=${xdnsym:-''}
 export port_xvcdn=${xvcdnpt:-''}
 export port_xvargo=${xvargopt:-''}
+export port_mieru=${mierupt:-''}
 export subpt=${subpt:-''}
 export subid=${subid:-''}
 export ym_vl_re=${reym:-''}
@@ -602,6 +621,19 @@ export certdns=${certdns:-''}
 export shyjpt=${shyjpt:-''}
 export xhyjpt=${xhyjpt:-''}
 export hyjpt=${hyjpt:-''}
+mieruuser=${mieruuser:-''}
+mierupass=${mierupass:-''}
+mierutrans=${mierutrans:-tcp}
+case "$mierutrans" in
+  tcp|TCP) mieru_protocol=TCP ;;
+  udp|UDP) mieru_protocol=UDP ;;
+  *)
+    if [ "$mierup" = yes ]; then
+      echo "错误：mierutrans 仅支持 tcp 或 udp。"
+      exit 1
+    fi
+    mieru_protocol=TCP ;;
+esac
 
 # 跳跃端口智能自适应回退：如果用户仅设置了全局 hyjpt 而未设置专属变量，
 # 则自动将 hyjpt 分配给当前激活的对应内核。
@@ -627,7 +659,7 @@ printf '%s\n' "${C_BOLD}核心命令速查（完整命令 ${C_YELLOW}agsbx cmds$
 echo "  · 主脚本：bash <(curl -Ls $agsbxurl)  或  bash <(wget -qO- $agsbxurl)"
 echo "  · 节点信息：agsbx list      ｜ 资源/流量：agsbx status"
 echo "  · 重置配置：变量组 agsbx rep ｜ 更新脚本：agsbx update ｜ 卸载：agsbx del"
-echo "  · 内核启停：agsbx start｜stop｜restart｜reload [xray｜sb｜caddy｜all]"
+echo "  · 内核启停：agsbx start｜stop｜restart｜reload [xray｜sb｜caddy｜mita｜all]"
 echo "  · 升级内核：agsbx upx/ups [版本]  ｜ 降级：agsbx downx/downs <版本>"
 hr
 echo
@@ -1340,6 +1372,441 @@ elif command -v netstat >/dev/null 2>&1; then
 else
   return 1
 fi
+}
+
+# Mieru 服务端使用官方 Mita 系统包。脚本仅管理带有 mita_managed 标记的安装，
+# 遇到用户自行安装的 mita 时立即停止，避免覆盖其配置或在卸载时误删。
+detect_mita_package_target(){
+  if [ -f /etc/debian_version ] && command -v dpkg >/dev/null 2>&1 && command -v dpkg-query >/dev/null 2>&1; then
+    mita_pkg_type=deb
+    case "$cpu" in amd64) mita_pkg_arch=amd64 ;; arm64) mita_pkg_arch=arm64 ;; *) return 1 ;; esac
+  elif command -v rpm >/dev/null 2>&1; then
+    mita_pkg_type=rpm
+    case "$cpu" in amd64) mita_pkg_arch=x86_64 ;; arm64) mita_pkg_arch=aarch64 ;; *) return 1 ;; esac
+  else
+    return 1
+  fi
+}
+
+mita_package_installed(){
+  case "$mita_pkg_type" in
+    deb) dpkg-query -W -f='${Status}' mita 2>/dev/null | grep -q '^install ok installed$' ;;
+    rpm) rpm -q mita >/dev/null 2>&1 ;;
+    *) return 1 ;;
+  esac
+}
+
+mita_package_present(){
+  case "$mita_pkg_type" in
+    deb) dpkg-query -W mita >/dev/null 2>&1 ;;
+    rpm) rpm -q mita >/dev/null 2>&1 ;;
+    *) return 1 ;;
+  esac
+}
+
+mita_system_residue_present(){
+  mita_package_present \
+    || command -v mita >/dev/null 2>&1 \
+    || [ -d /etc/mita ] \
+    || [ -d /var/lib/mita ] \
+    || [ -e /var/run/mita ] \
+    || [ -e /var/run/mita.sock ] \
+    || [ -e /var/spool/mail/mita ] \
+    || [ -e /lib/systemd/system/mita.service ] \
+    || [ -e /usr/lib/systemd/system/mita.service ] \
+    || [ -e /etc/systemd/system/mita.service ] \
+    || [ -d /etc/systemd/system/mita.service.d ] \
+    || [ -e /etc/sysctl.d/mieru_tcp_bbr.conf ] \
+    || id -u mita >/dev/null 2>&1 \
+    || { command -v getent >/dev/null 2>&1 && getent group mita >/dev/null 2>&1; }
+}
+
+validate_mita_platform(){
+  if ! pidof systemd >/dev/null 2>&1; then
+    echo "错误：Mieru 官方 Mita 安装方式需要 systemd；当前系统不支持。其他协议不受影响。"
+    return 1
+  fi
+  if ! detect_mita_package_target; then
+    echo "错误：Mita 目前仅接入 Debian/Ubuntu 的 deb 与 RHEL 系的 rpm，架构限 amd64/arm64。"
+    return 1
+  fi
+  if [ ! -f "$HOME/agsbx/mita_managed" ] && mita_system_residue_present; then
+    echo "错误：检测到并非由 Airgosbx 安装的 Mita，已停止以保护现有配置。"
+    echo "请先自行备份并卸载原 Mita，再重新执行 Mieru 安装。"
+    return 1
+  fi
+}
+
+mita_fetch(){
+  local url="$1" out="$2"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fLsS --retry 2 --connect-timeout 8 -o "$out" "$url"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -q --tries=2 --timeout=15 -O "$out" "$url"
+  else
+    return 1
+  fi
+}
+
+upmita(){
+  local stage="$HOME/agsbx/.stage_mita" api tag version current asset base expected actual install_log
+  validate_mita_platform || return 1
+  rm -rf "$stage"; mkdir -p "$stage"
+  api="$stage/release.json"
+  echo "正在读取 enfein/mieru 官方 Latest 发布信息……"
+  if ! mita_fetch "https://api.github.com/repos/enfein/mieru/releases/latest" "$api"; then
+    echo "错误：无法获取 Mieru 官方 Latest 版本。"; rm -rf "$stage"; return 1
+  fi
+  tag=$(grep '"tag_name"' "$api" | head -1 | sed -E 's/.*"tag_name"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')
+  if ! printf '%s' "$tag" | grep -Eq '^v[0-9]+(\.[0-9]+){2,3}([.-][A-Za-z0-9.-]+)?$'; then
+    echo "错误：官方 Latest 版本号格式异常，已停止安装。"; rm -rf "$stage"; return 1
+  fi
+  version=${tag#v}
+  case "$mita_pkg_type" in
+    deb) asset="mita_${version}_${mita_pkg_arch}.deb" ;;
+    rpm) asset="mita-${version}-1.${mita_pkg_arch}.rpm" ;;
+  esac
+  current=$(mita version 2>/dev/null | grep -Eo 'v?[0-9]+(\.[0-9]+){2,3}' | head -1 | sed 's/^v//')
+  if [ "$current" = "$version" ] && mita_package_installed; then
+    rm -rf "$stage"
+    echo "官方 Mita 已是 Latest：v$current"
+    return 0
+  fi
+  base="https://github.com/enfein/mieru/releases/download/${tag}"
+  echo "下载 Mita ${tag} 官方 ${mita_pkg_type} 包并校验 SHA256……"
+  if ! mita_fetch "$base/$asset" "$stage/$asset" || ! mita_fetch "$base/$asset.sha256.txt" "$stage/$asset.sha256.txt"; then
+    echo "错误：Mita 安装包或官方 SHA256 文件下载失败。"; rm -rf "$stage"; return 1
+  fi
+  if ! command -v sha256sum >/dev/null 2>&1; then
+    echo "错误：系统缺少 sha256sum，无法安全校验 Mita 安装包。"; rm -rf "$stage"; return 1
+  fi
+  expected=$(awk -v file="$asset" '$2 == file || $2 == "*" file {print $1; exit}' "$stage/$asset.sha256.txt" | tr 'A-F' 'a-f')
+  actual=$(sha256sum "$stage/$asset" 2>/dev/null | awk '{print $1}')
+  if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then
+    echo "错误：Mita 官方包 SHA256 校验失败，已停止安装。"
+    rm -rf "$stage"; return 1
+  fi
+  echo "SHA256 校验通过 ✓"
+  # 标记在包管理器写入前创建：即使安装中途失败，也能明确这次残留由脚本创建并允许后续安全清理。
+  touch "$HOME/agsbx/mita_managed" || { echo "错误：无法写入 Mita 归属标记。"; rm -rf "$stage"; return 1; }
+  install_log="$stage/install.log"
+  if [ "$mita_pkg_type" = deb ]; then
+    dpkg -i "$stage/$asset" >"$install_log" 2>&1
+  else
+    rpm -Uvh --force "$stage/$asset" >"$install_log" 2>&1
+  fi
+  if [ $? -ne 0 ]; then
+    echo "错误：Mita 系统包安装失败："
+    tail -n 5 "$install_log"
+    rm -rf "$stage"; return 1
+  fi
+  if ! command -v mita >/dev/null 2>&1 || ! mita_package_installed; then
+    echo "错误：包管理器执行完成，但未检测到可用的 mita 命令。"
+    rm -rf "$stage"; return 1
+  fi
+  rm -rf "$stage"
+  echo "已安装官方 Mita：$(mita version 2>/dev/null | head -1)"
+}
+
+configure_mieru_inputs(){
+  local choice candidate
+  if [ "$mieru_transport_preset" = yes ] && [ "$mieru_port_preset" = yes ] && \
+    [ "$mieru_user_preset" = yes ] && [ "$mieru_pass_preset" = yes ]; then
+    return 0
+  fi
+  [ -t 0 ] || return 0
+  echo
+  printf '%s\n' "${C_CYAN}========= Mieru 交互配置 =========${C_RESET}"
+  if [ "$mieru_transport_preset" != yes ]; then
+    while true; do
+      printf "传输协议 [1] TCP（推荐） [2] UDP（默认 1）："; read -r choice
+      case "$choice" in
+        ''|1|tcp|TCP) mierutrans=tcp; mieru_protocol=TCP; break ;;
+        2|udp|UDP) mierutrans=udp; mieru_protocol=UDP; break ;;
+        *) echo "请输入 1 或 2。" ;;
+      esac
+    done
+  fi
+  if [ "$mieru_port_preset" != yes ]; then
+    while true; do
+      printf "监听端口（回车＝随机高位端口，范围 1025～65535）："; read -r candidate
+      if [ -z "$candidate" ]; then
+        port_mieru=''
+        break
+      fi
+      if validate_mita_port_value "$candidate" >/dev/null 2>&1; then
+        port_mieru="$candidate"
+        break
+      fi
+      echo "端口必须是 1025～65535 的整数；443 不符合 Mita 官方范围。"
+    done
+  fi
+  if [ "$mieru_user_preset" != yes ]; then
+    printf "用户名（回车＝自动生成或沿用已有值）："; read -r mieruuser
+  fi
+  if [ "$mieru_pass_preset" != yes ]; then
+    printf "密码（回车＝自动生成或沿用已有值）："; IFS= read -r -s mierupass; echo
+  fi
+  hr
+}
+
+insmierucred(){
+  local user_len pass_len
+  if [ -n "$mieruuser" ]; then
+    printf '%s\n' "$mieruuser" > "$HOME/agsbx/mieru_user"
+  elif [ ! -s "$HOME/agsbx/mieru_user" ]; then
+    [ -n "$mieruuser" ] || mieruuser=$(tr -dc 'a-zA-Z0-9' </dev/urandom | head -c 20)
+    printf '%s\n' "$mieruuser" > "$HOME/agsbx/mieru_user"
+  fi
+  mieruuser=$(cat "$HOME/agsbx/mieru_user" 2>/dev/null)
+
+  if [ -n "$mierupass" ]; then
+    printf '%s\n' "$mierupass" > "$HOME/agsbx/mieru_pass"
+  elif [ ! -s "$HOME/agsbx/mieru_pass" ]; then
+    [ -n "$mierupass" ] || mierupass=$(tr -dc 'a-zA-Z0-9' </dev/urandom | head -c 20)
+    printf '%s\n' "$mierupass" > "$HOME/agsbx/mieru_pass"
+  fi
+  mierupass=$(cat "$HOME/agsbx/mieru_pass" 2>/dev/null)
+
+  user_len=$(LC_ALL=C printf '%s' "$mieruuser" | wc -c | tr -d ' ')
+  pass_len=$(LC_ALL=C printf '%s' "$mierupass" | wc -c | tr -d ' ')
+  if [ -z "$mieruuser" ] || [ -z "$mierupass" ] || [ "$user_len" -gt 64 ] || [ "$pass_len" -gt 64 ]; then
+    echo "错误：Mieru 用户名和密码必须为 1～64 字节。"; return 1
+  fi
+  if LC_ALL=C printf '%s' "$mieruuser$mierupass" | grep -q '[[:cntrl:]]'; then
+    echo "错误：Mieru 用户名或密码不能包含控制字符。"; return 1
+  fi
+  echo "Mieru 凭据已生成并保存。"
+}
+
+mita_port_is_listening(){
+  local port="$1" protocol="$2"
+  if command -v ss >/dev/null 2>&1; then
+    if [ "$protocol" = TCP ]; then
+      ss -ltn 2>/dev/null | awk -v suffix=":$port" '$4 ~ (suffix "$") {found=1} END {exit !found}'
+    else
+      ss -lun 2>/dev/null | awk -v suffix=":$port" '$4 ~ (suffix "$") {found=1} END {exit !found}'
+    fi
+  elif command -v netstat >/dev/null 2>&1; then
+    if [ "$protocol" = TCP ]; then
+      netstat -ltn 2>/dev/null | awk -v suffix=":$port" '$4 ~ (suffix "$") {found=1} END {exit !found}'
+    else
+      netstat -lun 2>/dev/null | awk -v suffix=":$port" '$4 ~ (suffix "$") {found=1} END {exit !found}'
+    fi
+  else
+    return 1
+  fi
+}
+
+mita_port_reserved_by_agsbx(){
+  local candidate="$1" requested port_file
+  for requested in "$port_vl_re" "$port_vm_ws" "$port_vw" "$port_hy2" "$port_xhy2" "$port_tu" "$port_xh" "$port_vx" "$port_an" "$port_ar" "$port_ss" "$port_so" "$port_xvcdn" "$port_xvargo" "$subpt"; do
+    [ -n "$requested" ] && [ "$candidate" = "$requested" ] && return 0
+  done
+  for port_file in "$HOME/agsbx"/port_*; do
+    [ -f "$port_file" ] || continue
+    [ "$port_file" = "$HOME/agsbx/port_mieru" ] && continue
+    [ "$(cat "$port_file" 2>/dev/null)" = "$candidate" ] && return 0
+  done
+  return 1
+}
+
+validate_mita_port_value(){
+  local value="$1"
+  case "$value" in ''|*[!0-9]*) echo "错误：Mieru 端口必须是 1025～65535 的整数。"; return 1 ;; esac
+  if [ "$value" -lt 1025 ] || [ "$value" -gt 65535 ]; then
+    echo "错误：Mieru 端口必须在 1025～65535 之间。"; return 1
+  fi
+}
+
+init_mita_port(){
+  local port_file="$HOME/agsbx/port_mieru" candidate attempt
+  if [ -n "$port_mieru" ]; then
+    validate_mita_port_value "$port_mieru" >&2 || return 1
+    if mita_port_reserved_by_agsbx "$port_mieru"; then
+      echo "错误：Mieru 端口 $port_mieru 已被其他 Airgosbx 协议保留。" >&2; return 1
+    fi
+    printf '%s\n' "$port_mieru" > "$port_file"
+  elif [ ! -s "$port_file" ]; then
+    for attempt in {1..100}; do
+      candidate=$(get_free_port)
+      if ! mita_port_reserved_by_agsbx "$candidate"; then
+        printf '%s\n' "$candidate" > "$port_file"
+        break
+      fi
+    done
+    [ -s "$port_file" ] || { echo "错误：无法为 Mieru 分配空闲端口。" >&2; return 1; }
+  fi
+  cat "$port_file"
+}
+
+ufw_is_active(){
+  command -v ufw >/dev/null 2>&1 || return 1
+  ufw status 2>/dev/null | head -1 | grep -qi '^Status:[[:space:]]*active'
+}
+
+ufw_rule_is_allowed(){
+  local rule="$1"
+  ufw status 2>/dev/null | awk -v rule="$rule" '$1 == rule && $0 ~ /ALLOW/ {found=1} END {exit !found}'
+}
+
+ufw_rule_is_configured(){
+  local rule="$1"
+  ufw show added 2>/dev/null | awk -v rule="$rule" '$0 ~ ("^ufw allow " rule "([[:space:]]|$)") {found=1} END {exit !found}'
+}
+
+cleanup_mieru_ufw(){
+  local marker="$HOME/agsbx/mieru_ufw_rule" rule
+  [ -s "$marker" ] || return 0
+  rule=$(cat "$marker" 2>/dev/null)
+  if ! command -v ufw >/dev/null 2>&1; then
+    echo "错误：找不到 ufw，无法回收 Airgosbx 创建的 Mieru 防火墙规则。"
+    return 1
+  fi
+  if ufw_rule_is_configured "$rule" && ! ufw --force delete allow "$rule" >/dev/null 2>&1; then
+    echo "错误：无法删除 Airgosbx 创建的 Mieru UFW 规则。"
+    return 1
+  fi
+  if ufw_rule_is_configured "$rule"; then
+    echo "错误：Mieru 的 UFW 规则未能完全删除，已保留卸载状态供重试。"
+    return 1
+  fi
+  rm -f "$marker"
+}
+
+ensure_mieru_ufw(){
+  local protocol rule marker="$HOME/agsbx/mieru_ufw_rule" old_rule
+  ufw_is_active || return 0
+  protocol=$(printf '%s' "$mieru_protocol" | tr 'A-Z' 'a-z')
+  rule="$port_mieru/$protocol"
+  old_rule=$(cat "$marker" 2>/dev/null)
+  if [ -n "$old_rule" ] && [ "$old_rule" != "$rule" ]; then
+    cleanup_mieru_ufw || return 1
+  fi
+  # 已有管理员规则时直接复用，不记录归属，del 时也不会删除它。
+  ufw_rule_is_allowed "$rule" && return 0
+  if ! ufw --force allow "$rule" comment 'Airgosbx-Mieru' >/dev/null 2>&1; then
+    echo "错误：UFW 已启用，但无法静默放行 Mieru 的 $rule。"
+    return 1
+  fi
+  printf '%s\n' "$rule" > "$marker"
+  if ! ufw_rule_is_allowed "$rule" || ! ufw_rule_is_configured "$rule"; then
+    ufw --force delete allow "$rule" >/dev/null 2>&1 || true
+    rm -f "$marker"
+    echo "错误：已执行 UFW 放行，但复查时未发现 Mieru 的 $rule。"
+    return 1
+  fi
+}
+
+reset_mita_config(){
+  [ -f "$HOME/agsbx/mita_managed" ] || return 0
+  command -v mita >/dev/null 2>&1 && mita stop >/dev/null 2>&1 || true
+  systemctl stop mita >/dev/null 2>&1 || true
+  # apply config 在不同 Mita 版本间曾有合并/替换差异；先清掉脚本拥有的内部配置，确保 rep 不残留旧端口和用户。
+  rm -f /etc/mita/server.conf.pb
+}
+
+wait_mita_daemon(){
+  local attempt
+  for attempt in {1..12}; do
+    if systemctl is-active --quiet mita && mita status >/dev/null 2>&1; then return 0; fi
+    sleep 1
+  done
+  return 1
+}
+
+wait_mita_running(){
+  local attempt
+  for attempt in {1..10}; do
+    mita status 2>&1 | grep -q 'RUNNING' && return 0
+    sleep 1
+  done
+  return 1
+}
+
+write_mita_config(){
+  local user_json pass_json
+  validate_mita_port_value "$port_mieru" || return 1
+  if mita_port_is_listening "$port_mieru" "$mieru_protocol"; then
+    echo "错误：Mieru 的 ${mieru_protocol} 端口 $port_mieru 已被其他程序占用。"; return 1
+  fi
+  user_json=$(json_escape "$mieruuser")
+  pass_json=$(json_escape "$mierupass")
+  cat > "$HOME/agsbx/mita.json" <<EOF
+{
+  "portBindings": [
+    {"port": $port_mieru, "protocol": "$mieru_protocol"}
+  ],
+  "users": [
+    {"name": "$user_json", "password": "$pass_json"}
+  ],
+  "loggingLevel": "INFO",
+  "mtu": 1400
+}
+EOF
+  printf '%s\n' "$mieru_protocol" > "$HOME/agsbx/mieru_protocol"
+  chmod 600 "$HOME/agsbx/mita.json" "$HOME/agsbx/mieru_user" "$HOME/agsbx/mieru_pass" "$HOME/agsbx/mieru_protocol"
+}
+
+installmita(){
+  local apply_out status_out
+  validate_mita_platform || return 1
+  configure_mieru_inputs
+  reset_mita_config
+  port_mieru=$(init_mita_port) || return 1
+  insmierucred || return 1
+  write_mita_config || return 1
+  upmita || return 1
+  # 官方包安装后会自动拉起 daemon；再次停止并清除内部配置，确保只应用当前脚本生成的单一用户/端口。
+  reset_mita_config
+  ensure_mieru_ufw || return 1
+  systemctl enable mita >/dev/null 2>&1 || { echo "错误：无法设置 Mita 开机启动。"; return 1; }
+  systemctl start mita >/dev/null 2>&1 || { echo "错误：Mita daemon 启动失败。"; return 1; }
+  if ! wait_mita_daemon; then
+    echo "错误：Mita daemon 未就绪，请运行 journalctl -u mita -n 30 --no-pager 检查。"; return 1
+  fi
+  apply_out=$(mita apply config "$HOME/agsbx/mita.json" 2>&1)
+  if [ $? -ne 0 ]; then
+    echo "错误：Mita 配置写入失败："; printf '%s\n' "$apply_out" | tail -n 5; return 1
+  fi
+  mita stop >/dev/null 2>&1 || true
+  if ! mita start >/dev/null 2>&1; then
+    echo "错误：Mieru 代理启动失败，请运行 mita describe config 检查。"; return 1
+  fi
+  if ! wait_mita_running; then
+    status_out=$(mita status 2>&1)
+    echo "错误：Mieru 代理未进入 RUNNING 状态：$status_out"; return 1
+  fi
+  echo "Mieru/Mita 已启动：${mieru_protocol} $port_mieru ✓"
+  echo "请确认云平台安全组及其他非 UFW 防火墙已放行 ${mieru_protocol} 端口 $port_mieru。"
+}
+
+uninstall_mita_managed(){
+  cleanup_mieru_ufw || return 1
+  [ -f "$HOME/agsbx/mita_managed" ] || return 0
+  detect_mita_package_target || { echo "错误：无法识别 Mita 包管理器，已保留 Mita 以免误删。"; return 1; }
+  reset_mita_config
+  systemctl disable mita >/dev/null 2>&1 || true
+  if [ "$mita_pkg_type" = deb ] && dpkg-query -W mita >/dev/null 2>&1; then
+    dpkg -P mita >/dev/null 2>&1 || { echo "错误：Mita deb 包卸载失败，已保留归属标记。"; return 1; }
+  elif [ "$mita_pkg_type" = rpm ] && rpm -q mita >/dev/null 2>&1; then
+    rpm -e mita >/dev/null 2>&1 || { echo "错误：Mita rpm 包卸载失败，已保留归属标记。"; return 1; }
+  fi
+  # 对齐官方 setup.py --uninstall 的清理范围，并补清 systemd 启用链接/覆盖目录与包路径残留。
+  rm -rf /etc/mita /var/lib/mita /var/run/mita /var/spool/mail/mita /etc/systemd/system/mita.service.d
+  rm -f /var/run/mita.sock /usr/bin/mita \
+    /lib/systemd/system/mita.service /usr/lib/systemd/system/mita.service /etc/systemd/system/mita.service \
+    /etc/systemd/system/multi-user.target.wants/mita.service /etc/sysctl.d/mieru_tcp_bbr.conf
+  userdel mita >/dev/null 2>&1 || true
+  groupdel mita >/dev/null 2>&1 || true
+  systemctl daemon-reload >/dev/null 2>&1 || true
+  systemctl reset-failed mita >/dev/null 2>&1 || true
+  hash -r 2>/dev/null || true
+  if mita_system_residue_present; then
+    echo "错误：检测到 Mita 系统残留，已保留 Airgosbx 目录和归属标记供再次卸载。"
+    return 1
+  fi
+  echo "已卸载由 Airgosbx 管理的 Mita。"
 }
 install_socat_if_needed(){
 command -v socat >/dev/null 2>&1 && return 0
@@ -4672,7 +5139,14 @@ fi
 # - 关联性: 由第 12 段 (主入口流程决策) 在判定为新安装或重置时调用，是串联整个 3300 行脚本全流程安装逻辑的核心中枢。
 #============================================================
 ins(){
+if [ "$mierup" = yes ]; then
+  validate_mita_platform || exit 1
+fi
 enable_system_bbr
+# Mieru/Mita 是独立系统服务，不参与 Xray/Sing-box 内核归属判断；设置 mieru=y（或预设 mierupt）时单独安装。
+if [ "$mierup" = yes ]; then
+  installmita || exit 1
+fi
 # Naive 二级出站的 Caddy 与 Sing-box 必须引用同一个持久化回环端口。
 secondary_init_naive_sidecar || exit 1
 # Caddy 必须先启动以获取证书；先落盘不含密码的链路契约，确保后续 sidecar 失败也能被状态页识别为失败关闭。
@@ -4898,6 +5372,7 @@ fi
 # - 关联性: 由第 12 段 (主入口) 在初始化完毕或第 11 段 (upx/ups内核更新/list查看) 时调用，是负责对用户渲染输出的最强表现层。
 #============================================================
 airgosbxstatus(){
+local procs mita_status mita_ver
 printf '%s\n' "${C_CYAN}========= 当前内核运行状态 =========${C_RESET}"
 procs=$(find /proc/*/exe -type l 2>/dev/null | grep -E '/proc/[0-9]+/exe' | xargs -r readlink 2>/dev/null)
 # 内核状态判定助手：进程是否在跑，叠加"配置 × 二进制"两个独立条件，共五种输出。
@@ -4939,6 +5414,21 @@ kstat "Sing-box" "$HOME/agsbx/sing-box"    "$HOME/agsbx/sb.json"      'agsbx/sin
 kstat "Xray"     "$HOME/agsbx/xray"        "$HOME/agsbx/xr.json"      'agsbx/xray'       xray "$HOME/agsbx/xray.log"
 kstat "Caddy"    "$HOME/agsbx/caddy"       "$HOME/agsbx/Caddyfile"    'agsbx/caddy'      caddy "$HOME/agsbx/caddy.log"
 kstat "Argo"     "$HOME/agsbx/cloudflared" "$HOME/agsbx/argoport.log" 'agsbx/cloudflared' argo "$HOME/agsbx/argo.log"
+if [ -f "$HOME/agsbx/mita_managed" ]; then
+  if [ ! -s "$HOME/agsbx/mita.json" ]; then
+    printf '%s\n' "Mita：已安装但未启用（执行 mieru=y agsbx rep 可重新启用）"
+  else
+    mita_status=$(mita status 2>&1)
+    mita_ver=$(mita version 2>/dev/null | head -1 | awk '{print $NF}' | sed 's/^v//')
+    if printf '%s' "$mita_status" | grep -q 'RUNNING'; then
+      printf '%s\n' "Mita (版本V${mita_ver})：${C_GREEN}Mieru 代理运行中${C_RESET}"
+    elif printf '%s' "$mita_status" | grep -q 'IDLE'; then
+      printf '%s\n' "Mita (版本V${mita_ver})：${C_YELLOW}daemon 在线，代理已停止${C_RESET}"
+    else
+      printf '%s\n' "Mita：${C_RED}daemon 不可用${C_RESET}（检查：systemctl status mita）"
+    fi
+  fi
+fi
 if secondary_saved_protocol_is_selected naive; then
   local caddy_online=no sb_online=no sidecar_ready=no sidecar_port
   if echo "$procs" | grep -q 'agsbx/caddy' || pgrep -f 'agsbx/caddy' >/dev/null 2>&1; then caddy_online=yes; fi
@@ -5024,7 +5514,7 @@ fi
 }
 ipchange
 rm -rf "$HOME/agsbx/jh.txt"
-uuid=$(cat "$HOME/agsbx/uuid")
+uuid=$(cat "$HOME/agsbx/uuid" 2>/dev/null)
 server_ip=$(cat "$HOME/agsbx/server_ip.log")
 sxname=$(cat "$HOME/agsbx/name" 2>/dev/null)
 xvvmcdnym=$(cat "$HOME/agsbx/cdnym" 2>/dev/null)
@@ -5501,6 +5991,19 @@ echo "分享链接(QUIC·H3，UDP)：naive+quic://$naiveuser:$naivepass@$naivedo
 echo "（用 NekoBox 等支持 naive 的客户端导入；SNI/端口已含在链接内，naive+quic 需放行 UDP/443；未并入 jh.txt / Clash 聚合订阅）"
 echo
 fi
+# Mieru 与 Naive 一样作为独立客户端生态展示：只在 list 末端打印分享链接，不写入 jh.txt / Clash。
+if [ -s "$HOME/agsbx/mita.json" ] && [ -s "$HOME/agsbx/mieru_user" ] && [ -s "$HOME/agsbx/mieru_pass" ] && [ -s "$HOME/agsbx/port_mieru" ]; then
+mieruuser=$(cat "$HOME/agsbx/mieru_user")
+mierupass=$(cat "$HOME/agsbx/mieru_pass")
+port_mieru=$(cat "$HOME/agsbx/port_mieru")
+mieru_protocol=$(cat "$HOME/agsbx/mieru_protocol" 2>/dev/null)
+[ -n "$mieru_protocol" ] || mieru_protocol=TCP
+mieru_link="mierus://$(uri_percent_encode "$mieruuser"):$(uri_percent_encode "$mierupass")@$server_ip?profile=default&port=$port_mieru&protocol=$mieru_protocol"
+node_title "💣【 Mieru 】节点信息如下："
+echo "$mieru_link"
+echo "Shadowrocket：User Hint 开｜UDP Relay 开"
+echo
+fi
 argodomain=$(cat "$HOME/agsbx/sbargoym.log" 2>/dev/null)
 if [ -z "$argodomain" ]; then
   argodomain=$(grep -oE '[a-zA-Z0-9.-]+\.trycloudflare\.com' "$HOME/agsbx/argo.log" 2>/dev/null | head -n1)
@@ -5834,7 +6337,7 @@ hr2
 echo
 fi
 hr
-echo "聚合节点信息，请进入 $HOME/agsbx/jh.txt 文件目录查看或者运行 cat $HOME/agsbx/jh.txt 查看"
+[ -s "$HOME/agsbx/jh.txt" ] && echo "聚合节点信息，请进入 $HOME/agsbx/jh.txt 文件目录查看或者运行 cat $HOME/agsbx/jh.txt 查看"
 hr2
 # 安全加固：全局收紧敏感文件权限（阻断多用户环境下的未授权文件读取）
 find "$HOME/agsbx" -type d -exec chmod 700 {} + 2>/dev/null
@@ -5855,6 +6358,11 @@ restore_xicmp_state
 cleanup_port_hopping
 for P in /proc/[0-9]*; do if [ -L "$P/exe" ]; then TARGET=$(readlink -f "$P/exe" 2>/dev/null); if echo "$TARGET" | grep -qE '/agsbx/cloudflared|/agsbx/sing-box|/agsbx/xray|/agsbx/caddy'; then PID=$(basename "$P"); kill "$PID" 2>/dev/null; fi; fi; done
 kill -15 $(pgrep -f 'agsbx/sing-box' 2>/dev/null) $(pgrep -f 'agsbx/cloudflared' 2>/dev/null) $(pgrep -f 'agsbx/xray' 2>/dev/null) $(pgrep -f 'agsbx/caddy' 2>/dev/null) $(pgrep -f 'websbx' 2>/dev/null) >/dev/null 2>&1
+if [ -f "$HOME/agsbx/mita_managed" ]; then
+  command -v mita >/dev/null 2>&1 && mita stop >/dev/null 2>&1 || true
+  systemctl stop mita >/dev/null 2>&1 || true
+  systemctl disable mita >/dev/null 2>&1 || true
+fi
 if [ -f ~/.bashrc ]; then
 sed -i '/agsbx/d' ~/.bashrc
 sed -i '/export PATH="\$HOME\/bin:\$PATH"/d' ~/.bashrc
@@ -5993,6 +6501,62 @@ kctl(){
   fi
 }
 
+# Mita 的 systemd daemon 与 Mieru 代理监听是两层状态；启停命令控制代理本身，stop 后 daemon 保持在线以便再次 start。
+mitactl(){
+  local action="$1" status_out
+  if [ ! -f "$HOME/agsbx/mita_managed" ]; then
+    echo "Mita：不属于 Airgosbx 管理，已拒绝操作。"; return 1
+  fi
+  if ! command -v mita >/dev/null 2>&1; then
+    echo "Mita：系统包不存在，无法执行 ${action}。"; return 1
+  fi
+  if [ "$action" != stop ] && [ ! -s "$HOME/agsbx/mita.json" ]; then
+    echo "Mita：已安装但没有 Mieru 配置，请先用 mieru=y agsbx rep 启用。"; return 1
+  fi
+  case "$action" in
+    start|restart|reload)
+      systemctl enable mita >/dev/null 2>&1 || true
+      systemctl start mita >/dev/null 2>&1 || { echo "Mita daemon 启动失败。"; return 1; }
+      wait_mita_daemon || { echo "Mita daemon 未就绪。"; return 1; } ;;
+  esac
+  status_out=$(mita status 2>&1)
+  case "$action" in
+    start)
+      if printf '%s' "$status_out" | grep -q 'RUNNING'; then
+        echo "Mieru：已在运行。"
+      elif mita start >/dev/null 2>&1 && wait_mita_running; then
+        echo "Mieru：已启动 ✓"
+      else
+        echo "Mieru：启动失败，请运行 mita describe config 检查。"; return 1
+      fi ;;
+    stop)
+      if ! systemctl is-active --quiet mita || printf '%s' "$status_out" | grep -q 'IDLE'; then
+        echo "Mieru：已停止。"
+      elif mita stop >/dev/null 2>&1; then
+        echo "Mieru：已停止（代理端口已释放，daemon 保持在线）。"
+      else
+        echo "Mieru：停止失败。"; return 1
+      fi ;;
+    restart)
+      printf '%s' "$status_out" | grep -q 'RUNNING' && mita stop >/dev/null 2>&1
+      if mita start >/dev/null 2>&1 && wait_mita_running; then
+        echo "Mieru：已重启 ✓"
+      else
+        echo "Mieru：重启失败。"; return 1
+      fi ;;
+    reload)
+      if ! printf '%s' "$status_out" | grep -q 'RUNNING'; then
+        echo "Mieru：代理未运行，无法 reload，请改用 start。"; return 1
+      fi
+      if mita reload >/dev/null 2>&1; then
+        echo "Mieru：已按官方方式热重载用户与日志设置 ✓"
+      else
+        echo "Mieru：热重载失败；端口或传输变更请使用 mieru=y agsbx rep。"; return 1
+      fi ;;
+    *) echo "未知动作：$action（可选 start｜stop｜restart｜reload）"; return 1 ;;
+  esac
+}
+
 # 内核资源 / 流量监控：纯读 /proc + ss，零依赖、不改动任何配置，兼容 busybox(无 ps -o 的精简系统)。
 # CPU% 用 /proc/<pid>/stat 的 utime+stime 做 1 秒前后采样差；内存取 VmRSS 常驻集；运行时长由 starttime 反推。
 showstats(){
@@ -6003,9 +6567,14 @@ section "Airgosbx 内核资源 / 流量监控"
 printf '%s\n' "${C_GREEN}${C_BOLD}【内核进程】${C_RESET}"
 printf "  ${C_CYAN}%-10s %-7s %-7s %-11s %-9s %-6s${C_RESET}\n" Core PID CPU% Mem-RSS Uptime Conn
 local any=0 kv k label pid s b0 st b1 cpu rss up conn
-for kv in "xray:Xray" "sing-box:Sing-box" "caddy:Caddy" "cloudflared:Argo"; do
+for kv in "xray:Xray" "sing-box:Sing-box" "caddy:Caddy" "cloudflared:Argo" "mita:Mita"; do
   k=${kv%%:*}; label=${kv##*:}
-  pid=$(pgrep -f "agsbx/$k" 2>/dev/null | head -1)
+  if [ "$k" = mita ]; then
+    [ -f "$HOME/agsbx/mita_managed" ] && [ -s "$HOME/agsbx/mita.json" ] || continue
+    pid=$(pgrep -x mita 2>/dev/null | head -1)
+  else
+    pid=$(pgrep -f "agsbx/$k" 2>/dev/null | head -1)
+  fi
   if [ -z "$pid" ] || [ ! -d "/proc/$pid" ]; then
     printf "  %-10s ${C_RED}%s${C_RESET}\n" "$label" "未运行"
     continue
@@ -6063,6 +6632,7 @@ echo
 #============================================================
 if [ "$1" = "del" ]; then
 cleandel
+uninstall_mita_managed || exit 1
 # 注：sbx_update 标记文件位于 $HOME/agsbx 内，随该目录一并删除；此前裸写的相对路径 sbx_update
 # 指向当前工作目录，既删不到目标又有误删同名文件的风险，已移除。$HOME/agsb 为旧版本遗留目录，保留以清理历史安装。
 rm -rf "$HOME/agsbx" "$HOME/agsb"
@@ -6074,7 +6644,9 @@ exit
 elif [ "$1" = "rep" ]; then
 prepare_secondary_proxy || exit 1
 cleandel
-rm -rf "$HOME/agsbx"/{sb.json,xr.json,sbargoym.log,sbargotoken.log,argo.log,argoport.log,cdnym,name,Caddyfile,naive_user,naive_pass,naive_domain,caddy.log,caddy_storage,secondary_secp,secondary_meta}
+cleanup_mieru_ufw || exit 1
+reset_mita_config
+rm -rf "$HOME/agsbx"/{sb.json,xr.json,sbargoym.log,sbargotoken.log,argo.log,argoport.log,cdnym,name,Caddyfile,naive_user,naive_pass,naive_domain,caddy.log,caddy_storage,secondary_secp,secondary_meta,mita.json,mieru_user,mieru_pass,port_mieru,mieru_protocol,mieru_ufw_rule}
 echo "Airgosbx重置协议完成，开始更新相关协议变量……" && sleep 2
 echo
 elif [ "$1" = "list" ]; then
@@ -6174,14 +6746,15 @@ else
 fi
 exit
 elif [ "$1" = "start" ] || [ "$1" = "stop" ] || [ "$1" = "restart" ] || [ "$1" = "reload" ]; then
-# 内核生命周期：agsbx <动作> [内核]，内核省略=all（展开为 xray+sb 两大代理内核；Argo 全量重启请用 res）
+# 内核生命周期：agsbx <动作> [内核]，内核省略=all（仅展开为 xray+sb；Caddy/Mita 维持显式操作）
 action="$1"; target="${2:-all}"
 case "$target" in
   all)         kctl "$action" xray; kctl "$action" sb ;;
   xray|x)      kctl "$action" xray ;;
   sb|sing-box) kctl "$action" sb ;;
   caddy)       kctl "$action" caddy ;;
-  *)           echo "未知内核：$target（可选 xray｜sb｜caddy｜all，省略=all）"; exit 1 ;;
+  mita|mieru)  mitactl "$action" ;;
+  *)           echo "未知内核：$target（可选 xray｜sb｜caddy｜mita｜all，省略=all）"; exit 1 ;;
 esac
 exit
 fi
