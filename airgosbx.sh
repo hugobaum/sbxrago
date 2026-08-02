@@ -4322,6 +4322,8 @@ EOF
 }
 
 xrsbout(){
+local naive_dns_strategy=prefer_ipv4
+valid_ipv6 "$sec_server" && naive_dns_strategy=prefer_ipv6
 secondary_build_runtime_tags || exit 1
 if [ -e "$HOME/agsbx/xr.json" ]; then
 sed -i '$ s/,[[:space:]]*$//' "$HOME/agsbx/xr.json" 2>/dev/null || sed -i '$s/,$//' "$HOME/agsbx/xr.json"
@@ -4523,6 +4525,28 @@ cat >> "$HOME/agsbx/sb.json" <<EOF
   ]
 EOF
 fi
+if secondary_protocol_is_selected naive; then
+# Naive 需要在 A 上保留解析结果以执行私网 ACL，但 DNS 查询本身必须经 B 发出。
+# 使用固定 IP 的 DoH 服务器可避免解析 DNS 服务器自身；Naive 模式已强制 B 节点地址为 IP，不会形成拨号循环。
+cat >> "$HOME/agsbx/sb.json" <<EOF
+  ,"dns": {
+    "servers": [
+      {
+        "type": "https",
+        "tag": "secondary-dns",
+        "server": "1.1.1.1",
+        "server_port": 443,
+        "path": "/dns-query",
+        "tls": {
+          "enabled": true,
+          "server_name": "cloudflare-dns.com"
+        },
+        "detour": "secondary-out"
+      }
+    ]
+  }
+EOF
+fi
 cat >> "$HOME/agsbx/sb.json" <<EOF
   ,"route": {
     "rules": [
@@ -4541,14 +4565,14 @@ cat >> "$HOME/agsbx/sb.json" <<EOF
       },
 EOF
 fi
-cat >> "$HOME/agsbx/sb.json" <<EOF
-      {
-        "action": "resolve",
-        "strategy": "${sbyx}"
-      },
-EOF
 if secondary_protocol_is_selected naive; then
 cat >> "$HOME/agsbx/sb.json" <<EOF
+      {
+        "inbound": ["naive-secondary-in"],
+        "action": "resolve",
+        "server": "secondary-dns",
+        "strategy": "${naive_dns_strategy}"
+      },
       {
         "inbound": ["naive-secondary-in"],
         "ip_cidr": [
@@ -4577,6 +4601,10 @@ cat >> "$HOME/agsbx/sb.json" <<EOF
 EOF
 fi
 cat >> "$HOME/agsbx/sb.json" <<EOF
+      {
+        "action": "resolve",
+        "strategy": "${sbyx}"
+      },
       {
         "ip_cidr": [ ${sip} ],
         "outbound": "${s1outtag}"
