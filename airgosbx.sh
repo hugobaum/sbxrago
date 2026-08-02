@@ -619,7 +619,9 @@ fi
 # - 关联性：由第 12 段（主入口流程决策）在检测到已有安装或用户输入无效协议时调用以展示帮助说明。
 #============================================================
 v46url="https://icanhazip.com"
-agsbxurl="https://raw.githubusercontent.com/hugobaum/sbxrago/main/airgosbx.sh"
+# secp 开发分支必须安装、重置和更新同一分支的脚本，避免首次运行新代码后被 main 旧代码覆盖。
+# 合并回 main 时将默认地址切回 main；显式传入 agsbxurl 仍可覆盖此开发分支默认值。
+agsbxurl="${agsbxurl:-https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/codex/secp/airgosbx.sh}"
 showmode(){
 printf '%s\n' "${C_BOLD}核心命令速查（完整命令 ${C_YELLOW}agsbx cmds${C_RESET}${C_BOLD} ｜ 变量 ${C_YELLOW}agsbx vars${C_RESET}${C_BOLD} ｜ 全部 ${C_YELLOW}agsbx help${C_RESET}${C_BOLD}）：${C_RESET}"
 echo "  · 主脚本：bash <(curl -Ls $agsbxurl)  或  bash <(wget -qO- $agsbxurl)"
@@ -3880,6 +3882,8 @@ secondary_validate_naive_server(){
     secondary_error "B 地址属于 A VPS 的本地接口，已停止以防递归：$sec_server"
     return 1
   }
+  # B 地址通过全部拒绝条件即为合法远端；必须显式成功，不能继承上一个“不是本机地址”的状态 1。
+  return 0
 }
 
 secondary_init_naive_sidecar(){
@@ -4178,10 +4182,11 @@ secondary_append_runtime_tag(){
 }
 
 secondary_build_runtime_tags(){
-  local protocol core tag config_file
+  local protocol core tag config_file current
   local -a protocols
   secondary_xray_tags=''
   secondary_singbox_tags=''
+  secondary_singbox_remote_dns_tags=''
   [ "$secondary_prepared" = yes ] || return 0
   IFS=',' read -r -a protocols <<< "$secondary_protocols"
   for protocol in "${protocols[@]}"; do
@@ -4196,6 +4201,15 @@ secondary_build_runtime_tags(){
       return 1
     }
     secondary_append_runtime_tag "$core" "$tag"
+    # 普通 Sing-box 入站应在 A 本地解析前直接送往 B，由 B 解析目标域名。
+    # Naive 仍需先解析并执行私网 IP 拦截，留在后面的专用规则中处理。
+    if [ "$core" = sb ] && [ "$protocol" != naive ]; then
+      current="$secondary_singbox_remote_dns_tags"
+      case ",$current," in
+        *",\"$tag\","*) ;;
+        *) secondary_singbox_remote_dns_tags="${current:+$current, }\"$tag\"" ;;
+      esac
+    fi
   done
 }
 
@@ -4210,11 +4224,13 @@ append_xray_secondary_outbound(){
   if [ "$sec_has_auth" = yes ]; then
     printf -v auth_fields ',\n        "user": "%s",\n        "pass": "%s"' "$username" "$password"
   fi
-  stream_fields='"sockopt": {"dialerProxy": "direct"}'
+  # 不设置 dialerProxy=direct：该字段表示通过另一个 Xray 出站建立连接，
+  # 省略后才是由当前协议出站直接连接 B 节点。
+  stream_fields=''
   if [ "$sec_tls_enabled" = true ]; then
     tls_server_name="$address"
     valid_ipv6 "$sec_server" && tls_server_name="[$address]"
-    stream_fields="\"security\": \"tls\", \"tlsSettings\": {\"serverName\": \"$tls_server_name\"}, $stream_fields"
+    printf -v stream_fields ',\n      "streamSettings": {"security": "tls", "tlsSettings": {"serverName": "%s"}}' "$tls_server_name"
   fi
   case "$sec_outbound_type" in
     shadowsocks)
@@ -4228,8 +4244,7 @@ append_xray_secondary_outbound(){
         "port": $sec_port,
         "method": "$method",
         "password": "$password"
-      },
-      "streamSettings": {$stream_fields}
+      }$stream_fields
     }
 EOF
       ;;
@@ -4242,8 +4257,7 @@ EOF
       "settings": {
         "address": "$address",
         "port": $sec_port$auth_fields
-      },
-      "streamSettings": {$stream_fields}
+      }$stream_fields
     }
 EOF
       ;;
@@ -4371,6 +4385,7 @@ cat >> "$HOME/agsbx/xr.json" <<EOF
     "rules": [
 EOF
 if [ -n "$secondary_xray_tags" ]; then
+# 二级代理规则必须保持在所有 IP 规则之前，避免 IPOnDemand 在 A 上触发目标域名解析。
 cat >> "$HOME/agsbx/xr.json" <<EOF
       {
         "type": "field",
@@ -4514,6 +4529,19 @@ cat >> "$HOME/agsbx/sb.json" <<EOF
       {
         "action": "sniff"
       },
+EOF
+# 普通 Sing-box 二级代理入站先执行最终路由，保留目标域名并交由 B VPS 解析。
+# Naive 不进入此标签组，继续执行后面的本地解析和私网 IP 拦截。
+if [ -n "$secondary_singbox_remote_dns_tags" ]; then
+cat >> "$HOME/agsbx/sb.json" <<EOF
+      {
+        "inbound": [$secondary_singbox_remote_dns_tags],
+        "action": "route",
+        "outbound": "secondary-out"
+      },
+EOF
+fi
+cat >> "$HOME/agsbx/sb.json" <<EOF
       {
         "action": "resolve",
         "strategy": "${sbyx}"
@@ -4539,19 +4567,12 @@ cat >> "$HOME/agsbx/sb.json" <<EOF
       {
         "inbound": ["naive-secondary-in"],
         "network": "tcp",
+        "action": "route",
         "outbound": "secondary-out"
       },
       {
         "inbound": ["naive-secondary-in"],
         "action": "reject"
-      },
-EOF
-fi
-if [ -n "$secondary_singbox_tags" ]; then
-cat >> "$HOME/agsbx/sb.json" <<EOF
-      {
-        "inbound": [$secondary_singbox_tags],
-        "outbound": "secondary-out"
       },
 EOF
 fi
