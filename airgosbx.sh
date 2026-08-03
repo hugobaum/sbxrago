@@ -143,8 +143,8 @@ vrow "obfs_pass" "Hysteria2 混淆密码（留空＝自动生成）"
 vrow "ippz"     "list时只显示指定栈：4 或 6（双栈VPS用）"
 
 vg "⑪ NaiveProxy（Caddy 内核·独立于 xray/sb，需真实域名）"
-vrow "naive"     "启用并指定域名（须已解析到本机，如 naive=p.example.com）"
-vrow "naiveuser" "basic_auth 用户名（留空＝naive）"
+vrow "naive"     "y＝交互输入域名；域名＝直接启用（须已解析到本机）"
+vrow "naiveuser" "basic_auth 用户名（留空＝自动生成）"
 vrow "naivepass" "basic_auth 密码（留空＝自动生成）"
 vrow "naivebuild" "内核获取：dl=下载预编译(仅amd64)／build=现场编译(arm64必走)"
 vrow "naivesite" "reverse_proxy 伪装站域名（留空＝默认公共镜像）"
@@ -1724,14 +1724,56 @@ wait_mita_running(){
   return 1
 }
 
+init_mieru_traffic_seed(){
+  local seed_file="$HOME/agsbx/mieru_traffic_seed" seed
+  seed=$(cat "$seed_file" 2>/dev/null)
+  case "$seed" in
+    ''|*[!0-9]*) seed='' ;;
+    *)
+      if [ "${#seed}" -gt 10 ] || [ "$seed" -lt 1 ] || [ "$seed" -gt 2147483647 ]; then seed=''; fi
+      ;;
+  esac
+  if [ -z "$seed" ]; then
+    if command -v od >/dev/null 2>&1; then
+      seed=$(od -An -N4 -tu4 /dev/urandom 2>/dev/null | tr -d '[:space:]')
+    fi
+    case "$seed" in ''|*[!0-9]*) seed=$(date +%s 2>/dev/null) ;; esac
+    seed=$((seed % 2147483647 + 1))
+    printf '%s\n' "$seed" > "$seed_file" || { echo "错误：无法保存 Mieru Traffic Pattern 种子。"; return 1; }
+  fi
+  chmod 600 "$seed_file"
+  printf '%s' "$seed"
+}
+
+validate_mieru_traffic_pattern(){
+  local pattern="$1"
+  case "$pattern" in
+    ''|*[!A-Za-z0-9+/_=-]*) return 1 ;;
+  esac
+}
+
+export_mieru_traffic_pattern(){
+  local pattern pattern_file="$HOME/agsbx/mieru_traffic_pattern"
+  pattern=$(mita export traffic-pattern 2>/dev/null)
+  if [ $? -ne 0 ] || ! validate_mieru_traffic_pattern "$pattern" || \
+    ! mita explain traffic-pattern "$pattern" >/dev/null 2>&1; then
+    rm -f "$pattern_file"
+    echo "错误：Mita 未能导出 Shadowrocket 所需的 Traffic Pattern。"
+    return 1
+  fi
+  printf '%s\n' "$pattern" > "$pattern_file" || { echo "错误：无法保存 Mieru Traffic Pattern。"; return 1; }
+  chmod 600 "$pattern_file"
+}
+
 write_mita_config(){
-  local user_json pass_json
+  local user_json pass_json traffic_seed
   validate_mita_port_value "$port_mieru" || return 1
   if mita_port_is_listening "$port_mieru" "$mieru_protocol"; then
     echo "错误：Mieru 的 ${mieru_protocol} 端口 $port_mieru 已被其他程序占用。"; return 1
   fi
   user_json=$(json_escape "$mieruuser")
   pass_json=$(json_escape "$mierupass")
+  traffic_seed=$(init_mieru_traffic_seed) || return 1
   cat > "$HOME/agsbx/mita.json" <<EOF
 {
   "portBindings": [
@@ -1741,11 +1783,16 @@ write_mita_config(){
     {"name": "$user_json", "password": "$pass_json"}
   ],
   "loggingLevel": "INFO",
-  "mtu": 1400
+  "mtu": 1400,
+  "trafficPattern": {
+    "seed": $traffic_seed,
+    "unlockAll": false
+  }
 }
 EOF
   printf '%s\n' "$mieru_protocol" > "$HOME/agsbx/mieru_protocol"
-  chmod 600 "$HOME/agsbx/mita.json" "$HOME/agsbx/mieru_user" "$HOME/agsbx/mieru_pass" "$HOME/agsbx/mieru_protocol"
+  chmod 600 "$HOME/agsbx/mita.json" "$HOME/agsbx/mieru_user" "$HOME/agsbx/mieru_pass" \
+    "$HOME/agsbx/mieru_protocol" "$HOME/agsbx/mieru_traffic_seed"
 }
 
 installmita(){
@@ -1777,6 +1824,7 @@ installmita(){
     status_out=$(mita status 2>&1)
     echo "错误：Mieru 代理未进入 RUNNING 状态：$status_out"; return 1
   fi
+  export_mieru_traffic_pattern || { mita stop >/dev/null 2>&1 || true; return 1; }
   echo "Mieru/Mita 已启动：${mieru_protocol} $port_mieru ✓"
   echo "请确认云平台安全组及其他非 UFW 防火墙已放行 ${mieru_protocol} 端口 $port_mieru。"
 }
@@ -5998,10 +6046,26 @@ mierupass=$(cat "$HOME/agsbx/mieru_pass")
 port_mieru=$(cat "$HOME/agsbx/port_mieru")
 mieru_protocol=$(cat "$HOME/agsbx/mieru_protocol" 2>/dev/null)
 [ -n "$mieru_protocol" ] || mieru_protocol=TCP
-mieru_link="mierus://$(uri_percent_encode "$mieruuser"):$(uri_percent_encode "$mierupass")@$server_ip?profile=default&port=$port_mieru&protocol=$mieru_protocol"
+mieru_traffic_pattern=$(cat "$HOME/agsbx/mieru_traffic_pattern" 2>/dev/null)
+mieru_address=${server_ip#[}
+mieru_address=${mieru_address%]}
+mieru_link="mierus://$(uri_percent_encode "$mieruuser"):$(uri_percent_encode "$mierupass")@$server_ip?profile=default&mtu=1400&port=$port_mieru&protocol=$mieru_protocol"
+if validate_mieru_traffic_pattern "$mieru_traffic_pattern"; then
+  mieru_link+="&traffic-pattern=$(uri_percent_encode "$mieru_traffic_pattern")"
+  mieru_traffic_display="$mieru_traffic_pattern"
+else
+  mieru_traffic_display="未配置，请执行 mieru=y agsbx rep"
+fi
 node_title "💣【 Mieru 】节点信息如下："
+echo "类型：Mieru"
+echo "地址：$mieru_address"
+echo "端口：$port_mieru"
+echo "用户名：$mieruuser"
+echo "密码：$mierupass"
+echo "Transport：$(printf '%s' "$mieru_protocol" | tr 'A-Z' 'a-z')"
+echo "Traffic Pattern：$mieru_traffic_display"
+echo "复制下一行完整链接导入："
 echo "$mieru_link"
-echo "Shadowrocket：User Hint 开｜UDP Relay 开"
 echo
 fi
 argodomain=$(cat "$HOME/agsbx/sbargoym.log" 2>/dev/null)
@@ -6646,7 +6710,7 @@ prepare_secondary_proxy || exit 1
 cleandel
 cleanup_mieru_ufw || exit 1
 reset_mita_config
-rm -rf "$HOME/agsbx"/{sb.json,xr.json,sbargoym.log,sbargotoken.log,argo.log,argoport.log,cdnym,name,Caddyfile,naive_user,naive_pass,naive_domain,caddy.log,caddy_storage,secondary_secp,secondary_meta,mita.json,mieru_user,mieru_pass,port_mieru,mieru_protocol,mieru_ufw_rule}
+rm -rf "$HOME/agsbx"/{sb.json,xr.json,sbargoym.log,sbargotoken.log,argo.log,argoport.log,cdnym,name,Caddyfile,naive_user,naive_pass,naive_domain,caddy.log,caddy_storage,secondary_secp,secondary_meta,mita.json,mieru_user,mieru_pass,port_mieru,mieru_protocol,mieru_traffic_seed,mieru_traffic_pattern,mieru_ufw_rule}
 echo "Airgosbx重置协议完成，开始更新相关协议变量……" && sleep 2
 echo
 elif [ "$1" = "list" ]; then
