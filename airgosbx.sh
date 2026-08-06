@@ -1159,6 +1159,14 @@ if [ -z "$method" ]; then
     fi
   fi
 fi
+# 只接受文档公开的两种方式，避免拼写错误静默落入现场编译分支。
+case "$method" in
+  dl|build) ;;
+  *)
+    echo "错误：naivebuild 仅支持 dl 或 build，当前值为：$method"
+    return 1
+    ;;
+esac
 # arm64 没有预编译，纵使误选 dl 也强制改为 build
 if [ "$method" = dl ] && [ "$cpu" != amd64 ]; then
   echo "注意：$cpu 无官方预编译，自动改为现场编译。"; method=build
@@ -1195,22 +1203,78 @@ if [ "$method" = dl ]; then
   fi
 else
   echo "正在引导 Go 工具链并用 xcaddy 编译 Caddy(naive)（下载约 150MB、耗时数分钟、建议 ≥1G 内存）……"
-  local gover
-  gover=$( (command -v curl >/dev/null 2>&1 && curl -s https://go.dev/VERSION?m=text | head -1) || (command -v wget >/dev/null 2>&1 && wget -qO- https://go.dev/VERSION?m=text | head -1) )
-  if [ -z "$gover" ]; then echo "错误：无法从 go.dev 获取 Go 版本号（网络不可达）。"; rm -rf "$cstage"; return 1; fi
-  local gotar="$cstage/go.tar.gz"
-  echo "下载 Go 官方 tarball：${gover}.linux-${cpu} ……"
-  (command -v curl >/dev/null 2>&1 && curl -Lo "$gotar" -# --retry 2 "https://go.dev/dl/${gover}.linux-${cpu}.tar.gz") || (command -v wget >/dev/null 2>&1 && wget -O "$gotar" --tries=2 "https://go.dev/dl/${gover}.linux-${cpu}.tar.gz")
-  tar -xzf "$gotar" -C "$cstage" 2>/dev/null
+  local go_version_text gover go_meta go_file go_sha go_actual gotar
+  go_version_text=$( (command -v curl >/dev/null 2>&1 && curl -fsSL --connect-timeout 10 --retry 2 "https://go.dev/VERSION?m=text") || (command -v wget >/dev/null 2>&1 && wget -qO- --timeout=10 --tries=2 "https://go.dev/VERSION?m=text") )
+  gover=$(printf '%s\n' "$go_version_text" | head -1)
+  if [[ ! "$gover" =~ ^go[0-9]+\.[0-9]+(\.[0-9]+)?((beta|rc)[0-9]+)?$ ]]; then
+    echo "错误：go.dev 未返回有效的 Go 版本号：${gover:-空值}"
+    rm -rf "$cstage"; return 1
+  fi
+  go_file="${gover}.linux-${cpu}.tar.gz"
+  go_meta=$( (command -v curl >/dev/null 2>&1 && curl -fsSL --connect-timeout 10 --retry 2 "https://go.dev/dl/?mode=json") || (command -v wget >/dev/null 2>&1 && wget -qO- --timeout=10 --tries=2 "https://go.dev/dl/?mode=json") )
+  if [ -z "$go_meta" ]; then echo "错误：无法从 go.dev 获取 Go 下载校验信息。"; rm -rf "$cstage"; return 1; fi
+  # 官方 JSON 中 filename 与 sha256 位于同一文件对象内；只提取当前版本、Linux、当前 CPU 对应归档的哈希。
+  go_sha=$(printf '%s\n' "$go_meta" | awk -v target="$go_file" '
+    index($0, target) && /"filename"/ { found=1 }
+    found && /"sha256"/ {
+      line=$0
+      sub(/^.*"sha256":[[:space:]]*"/, "", line)
+      sub(/".*$/, "", line)
+      print line
+      exit
+    }
+    found && /"filename"/ && !index($0, target) { exit }
+  ')
+  if [[ ! "$go_sha" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "错误：go.dev 未返回 $go_file 的有效 SHA256，已拒绝下载未验证的 Go 工具链。"
+    rm -rf "$cstage"; return 1
+  fi
+  if ! command -v sha256sum >/dev/null 2>&1; then
+    echo "错误：系统缺少 sha256sum，无法安全校验 Go 工具链。"
+    rm -rf "$cstage"; return 1
+  fi
+  gotar="$cstage/$go_file"
+  echo "下载 Go 官方 tarball：$go_file ……"
+  if ! ( (command -v curl >/dev/null 2>&1 && curl -fLo "$gotar" -# --connect-timeout 10 --retry 2 "https://go.dev/dl/$go_file") || (command -v wget >/dev/null 2>&1 && wget -O "$gotar" --timeout=10 --tries=2 "https://go.dev/dl/$go_file") ); then
+    echo "错误：Go 官方 tarball 下载失败。"; rm -rf "$cstage"; return 1
+  fi
+  go_actual=$(sha256sum "$gotar" 2>/dev/null | awk '{print $1}')
+  if [ "$go_actual" != "$go_sha" ]; then
+    echo "错误：Go 工具链 SHA256 校验失败，下载可能损坏或被篡改，已终止编译。"
+    echo "预期: $go_sha"
+    echo "实际: ${go_actual:-无法计算}"
+    rm -rf "$cstage"; return 1
+  fi
+  echo "Go 工具链 SHA256 校验通过 ✓ ($go_actual)"
+  if ! tar -xzf "$gotar" -C "$cstage" 2>/dev/null; then
+    echo "错误：Go 工具链解压失败。"; rm -rf "$cstage"; return 1
+  fi
   if [ ! -x "$cstage/go/bin/go" ]; then echo "错误：Go 解压失败。"; rm -rf "$cstage"; return 1; fi
-  # Go 全程关在暂存区子 shell：GOROOT/GOPATH 不外泄、不写 /usr/local、不改 .bashrc，随 cstage 一并清除。
-  if ! ( export GOROOT="$cstage/go" GOPATH="$cstage/gopath" PATH="$cstage/go/bin:$cstage/gopath/bin:$PATH"
-         echo "Go 就绪：$("$cstage/go/bin/go" version 2>/dev/null)"
-         echo "安装 xcaddy 构建器……"
-         "$cstage/go/bin/go" install github.com/caddyserver/xcaddy/cmd/xcaddy@latest &&
-         echo "编译 Caddy + forwardproxy@naive（请耐心等待）……" &&
+  # Go、xcaddy、模块/构建缓存、临时 HOME 与临时文件全部关在 cstage 子 shell；
+  # 禁用继承的 Go/xcaddy 定制项，强制官方模块代理与校验数据库，失败时不作不安全降级。
+  if ! mkdir -p "$cstage/home" "$cstage/gopath" "$cstage/gobin" "$cstage/gocache" "$cstage/gomodcache" "$cstage/gotmp" "$cstage/tmp" "$cstage/xdg_cache" "$cstage/xdg_config"; then
+    echo "错误：无法创建隔离的 Caddy 编译目录。"; rm -rf "$cstage"; return 1
+  fi
+  if ! (
+         unset GOBIN GOCACHE GOMODCACHE GOTMPDIR GOENV GOWORK GOPROXY GOSUMDB GOPRIVATE GONOPROXY GONOSUMDB GOINSECURE GOFLAGS GOAUTH GOEXPERIMENT GODEBUG GOVCS
+         unset GOOS GOARCH GOAMD64 GO386 GOARM GOARM64 GOMIPS GOMIPS64 GOPPC64 GORISCV64
+         unset CADDY_VERSION XCADDY_WHICH_GO XCADDY_GO_BUILD_FLAGS XCADDY_GO_MOD_FLAGS XCADDY_RACE_DETECTOR XCADDY_DEBUG XCADDY_SKIP_BUILD XCADDY_SETCAP
+         unset GIT_CONFIG_PARAMETERS GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_SSH GIT_SSH_COMMAND GIT_ASKPASS SSH_ASKPASS GIT_PROXY_COMMAND
+         export HOME="$cstage/home"
+         export GOROOT="$cstage/go" GOPATH="$cstage/gopath" GOBIN="$cstage/gobin"
+         export GOCACHE="$cstage/gocache" GOMODCACHE="$cstage/gomodcache" GOTMPDIR="$cstage/gotmp" TMPDIR="$cstage/tmp"
+         export XDG_CACHE_HOME="$cstage/xdg_cache" XDG_CONFIG_HOME="$cstage/xdg_config"
+         export GOENV=off GOWORK=off GO111MODULE=on GOTOOLCHAIN=local
+         export GOPROXY="https://proxy.golang.org,direct" GOSUMDB="sum.golang.org"
+         export GIT_TERMINAL_PROMPT=0 GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_COUNT=0
+         export PATH="$GOROOT/bin:$GOBIN:/usr/sbin:/usr/bin:/sbin:/bin"
+         echo "Go 就绪：$("$GOROOT/bin/go" version 2>/dev/null)"
+         echo "安装最新版 xcaddy 构建器……"
+         "$GOROOT/bin/go" install github.com/caddyserver/xcaddy/cmd/xcaddy@latest &&
+         echo "编译最新版 Caddy + forwardproxy@naive（请耐心等待）……" &&
          cd "$cstage" &&
-         "$cstage/gopath/bin/xcaddy" build --with github.com/caddyserver/forwardproxy=github.com/klzgrad/forwardproxy@naive ); then
+         "$GOBIN/xcaddy" build --output "$cstage/caddy" --with github.com/caddyserver/forwardproxy=github.com/klzgrad/forwardproxy@naive
+       ); then
     echo "错误：Go/xcaddy 编译失败（可看上方报错；网络或内存不足是常见原因）。"; rm -rf "$cstage"; return 1
   fi
 fi
@@ -1219,23 +1283,32 @@ local newcaddy="$cstage/caddy"
 [ -f "$newcaddy" ] || newcaddy=$(find "$cstage" -maxdepth 2 -type f -name caddy 2>/dev/null | head -1)
 if [ ! -s "$newcaddy" ]; then echo "错误：未找到 caddy 可执行文件。"; rm -rf "$cstage"; return 1; fi
 chmod +x "$newcaddy"
-# 功能性校验与安全特征审计：
-#   · version 可执行性=硬校验（架构不符/文件损坏才是真无法运行，必须拦截）。
-#   · forward_proxy 功能=软校验(仅警告)：下载分支哈希已证明是官方二进制（必含该模块），
-#     编译分支 xcaddy --with forwardproxy@naive 成功亦必含；list-modules 偶有输出差异，
-#     不应据此误拦合法内核而中断安装（此前的硬失败正是「官方包被拒、停止安装」的根因）。
+# 功能性硬校验：version 验证架构/文件可执行性，list-modules 精确确认 NaiveProxy 必需模块。
+# 任一校验失败均丢弃暂存产物，绝不把普通 Caddy 或损坏内核安装到正式路径。
 echo "正在对 Caddy(naive) 内核进行可执行性与功能组件校验……"
 if ! "$newcaddy" version >/dev/null 2>&1; then echo "错误：caddy 不可执行（架构不符或文件损坏）。"; rm -rf "$cstage"; return 1; fi
-if "$newcaddy" list-modules 2>/dev/null | grep -q 'forward_proxy'; then
-  echo "forward_proxy 模块校验通过 ✓（具备 NaiveProxy 功能，与自行编译效果一致）"
+if "$newcaddy" list-modules 2>/dev/null | grep -qx 'http.handlers.forward_proxy'; then
+  if [ "$method" = dl ]; then
+    echo "forward_proxy 模块校验通过 ✓（官方预编译内核已包含 NaiveProxy 插件）"
+  else
+    echo "forward_proxy 模块校验通过 ✓（Caddy + forwardproxy@naive 编译产物完整）"
+  fi
 else
-  printf '%s\n' "${C_YELLOW}警告：未在 caddy list-modules 输出中检出 forward_proxy 模块。${C_RESET}"
-  echo "已通过哈希/可执行校验，继续安装；若 naive 实际不可用，请改用 naivebuild=build 现场编译。"
+  if [ "$method" = dl ]; then
+    echo "错误：官方预编译 Caddy 中未检出 forward_proxy 模块，已拒绝安装。"
+  else
+    echo "错误：自行编译的 Caddy 中未检出 forward_proxy 模块，编译产物无效，已拒绝安装。"
+  fi
+  rm -rf "$cstage"; return 1
 fi
 
 mv -f "$newcaddy" "$HOME/agsbx/caddy"
 rm -rf "$cstage"
-echo "已安装 Caddy(naive) 内核：$("$HOME/agsbx/caddy" version 2>/dev/null | head -1)"
+if [ "$method" = dl ]; then
+  echo "已安装 Caddy(naive) 官方预编译内核：$("$HOME/agsbx/caddy" version 2>/dev/null | head -1)"
+else
+  echo "已安装 VPS 自行编译的 Caddy(naive) 内核：$("$HOME/agsbx/caddy" version 2>/dev/null | head -1)"
+fi
 }
 #============================================================
 # [第6段] UUID 生成 + 协议配置生成函数
