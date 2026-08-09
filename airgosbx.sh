@@ -675,7 +675,7 @@ printf '%s\n' "${C_CYAN}~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 printf '%s\n' "${C_BOLD}Airgosbx 小钢炮脚本 💣${C_RESET}"
 echo "项目地址：github.com/hugobaum/sbxrago"
 echo "基于 yonggekkk/argosbx"
-printf '%s\n' "当前版本：${C_GREEN}V26.06.14${C_RESET}"
+printf '%s\n' "当前版本：${C_GREEN}V26.08.05${C_RESET}"
 printf '%s\n' "${C_CYAN}~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~${C_RESET}"
 hostname=$(uname -n)
 op=$(cat /etc/redhat-release 2>/dev/null || cat /etc/os-release 2>/dev/null | grep -i pretty_name | cut -d \" -f2)
