@@ -3913,11 +3913,14 @@ fi
 # 生成 Caddyfile（硬化模板：代理优先、私网 ACL、统一伪装响应、净化回源请求头）
 local naivemail="${acmem:-admin@$naive}"
 local naivesite="${naivesite:-mirror.us.leaseweb.net}"
+local naivesite_regex
 local caddyfile_tmp="$HOME/agsbx/.Caddyfile.new"
 local caddy_admin_socket="$HOME/agsbx/caddy-admin.sock"
 local caddy_admin_address="unix/$caddy_admin_socket"
 # 容错：伪装站允许带或不带 scheme，统一剥离后由模板固定以 https 回源（伪装站须支持 HTTPS）
 naivesite="${naivesite#http://}"; naivesite="${naivesite#https://}"
+# Location 改写使用 RE2 正则；域名中的点必须转义，避免被解释为任意字符。
+naivesite_regex="${naivesite//./\\.}"
 # 持久化域名：供后续 agsbx list 渲染节点卡片时读取（彼时 naive 环境变量已不在作用域）
 echo "$naive" > "$HOME/agsbx/naive_domain"
 cat > "$caddyfile_tmp" <<EOF
@@ -4008,6 +4011,8 @@ cat >> "$caddyfile_tmp" <<EOF
     header_down -Server
     header_down -X-Powered-By
     header_down -Set-Cookie
+    # 源站常把 /debian 等目录规范化为带源站域名的绝对 Location；统一改回 Naive 自定义域名。
+    header_down Location "^https?://${naivesite_regex}([/?#].*)?$" "https://$naive\$1"
   }
 }
 EOF
