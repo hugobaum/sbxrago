@@ -181,12 +181,12 @@ vrow "cmds"     "命令速查表（本表）"
 vrow "help"     "完整帮助（vars + cmds）"
 
 vg "③ 内核启停（用法：agsbx <动作> [内核]）"
-echo "             内核 = xray ｜ sb ｜ caddy ｜ mita ｜ all(省略即全部 xray+sb；caddy/mita 需单独指定)"
+echo "             内核 = xray ｜ sb ｜ caddy ｜ mita ｜ all(省略即全部；已配置 Naive 时包含 Caddy，Mita 需单独指定)"
 vrow "start"    "启动内核"
 vrow "stop"     "停止内核（释放其占用的端口）"
 vrow "restart"  "重启内核"
 vrow "reload"   "热重载配置（sb/caddy/mita 支持；xray 自动 restart）"
-vrow "res"      "重启 Xray/Sing-box/Argo（不含 Caddy/Mita）"
+vrow "res"      "重启 Xray/Sing-box/Argo，并在已配置 Naive 时重启 Caddy（不含 Mita）"
 
 vg "④ 内核版本"
 vrow "upx"      "升级 Xray（upx [版本]，不带版本=最新）"
@@ -651,9 +651,8 @@ fi
 # - 关联性：由第 12 段（主入口流程决策）在检测到已有安装或用户输入无效协议时调用以展示帮助说明。
 #============================================================
 v46url="https://icanhazip.com"
-# secp 开发分支必须安装、重置和更新同一分支的脚本，避免首次运行新代码后被 main 旧代码覆盖。
-# 合并回 main 时将默认地址切回 main；显式传入 agsbxurl 仍可覆盖此开发分支默认值。
-agsbxurl="${agsbxurl:-https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/codex/secp/airgosbx.sh}"
+# 默认安装、重置和更新 main 分支脚本；显式传入 agsbxurl 时仍允许覆盖默认来源。
+agsbxurl="${agsbxurl:-https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/main/airgosbx.sh}"
 showmode(){
 printf '%s\n' "${C_BOLD}核心命令速查（完整命令 ${C_YELLOW}agsbx cmds${C_RESET}${C_BOLD} ｜ 变量 ${C_YELLOW}agsbx vars${C_RESET}${C_BOLD} ｜ 全部 ${C_YELLOW}agsbx help${C_RESET}${C_BOLD}）：${C_RESET}"
 echo "  · 主脚本：bash <(curl -Ls $agsbxurl)  或  bash <(wget -qO- $agsbxurl)"
@@ -3936,17 +3935,11 @@ cat > "$caddyfile_tmp" <<EOF
   tls $naivemail
   encode
 
-  # 1. 响应头安全加固与防爬防收录标记
+  # 1. 防收录标记与基础指纹收敛；避免加入会改变源站正常浏览行为的额外响应策略。
   header {
-    # 强制在 HTTP 协议层向所有探针与爬虫下达禁止索引与递归的指令
     X-Robots-Tag "noindex, nofollow, noarchive"
-    # 移除敏感 Server 指纹，防网络空间测绘扫描
     -Server
     -X-Powered-By
-    # 其它常规安全头
-    X-Content-Type-Options "nosniff"
-    X-Frame-Options "DENY"
-    Referrer-Policy "no-referrer"
   }
 
   # 2. 本地拦截 robots.txt 请求，防止爬虫进一步探索
@@ -3958,7 +3951,13 @@ Disallow: /"
     }
   }
 
-  # 3. NaiveProxy 代理核心组件
+  # 3. 只拦截主动声明身份的常见爬虫；不把普通浏览器、命令行客户端或探针当作爬虫。
+  @obvious_crawler header_regexp User-Agent (?i)(Googlebot|bingbot|Baiduspider|YandexBot|PetalBot|Applebot|DuckDuckBot|AhrefsBot|SemrushBot|MJ12bot|DotBot|BLEXBot|Bytespider|GPTBot|OAI-SearchBot|ClaudeBot|CCBot|Amazonbot|crawler|spider|scrapy)
+  handle @obvious_crawler {
+    respond 404
+  }
+
+  # 4. NaiveProxy 代理核心组件
   forward_proxy {
     basic_auth $naiveuser_caddy $naivepass_caddy
     hide_ip
@@ -3993,34 +3992,22 @@ fi
 cat >> "$caddyfile_tmp" <<EOF
   }
 
-  # 4. 未认证访问首页时，完整反代真实 Linux 镜像首页，维持可信的网站身份与内容特征。
-  handle / {
-    reverse_proxy https://$naivesite {
-      header_up Host {upstream_hostport}
-      header_up -Forwarded
-      header_up -Via
-      header_up -X-Forwarded-*
-      header_up -X-Real-IP
-      header_up -X-Client-IP
-      header_up -Proxy-Connection
-      header_up -Proxy-Authorization
-      header_up -Cookie
-      header_up -Origin
-      header_up -Referer
-      header_down -Server
-      header_down -X-Powered-By
-      header_down -Set-Cookie
-      transport http {
-        response_header_timeout 15s
-        max_conns_per_host 16
-        keepalive_idle_conns_per_host 8
-      }
-    }
-  }
-
-  # 5. 首页内的目录与下载链接跳转到真实镜像相同 URI，避免爬虫在自定义域名下递归抓取。
-  handle {
-    redir https://$naivesite{uri} 302
+  # 5. 未认证的普通网站请求全部反代到真实 Linux 镜像，保留原始 URI 与查询参数。
+  reverse_proxy https://$naivesite {
+    header_up Host {upstream_hostport}
+    header_up -Forwarded
+    header_up -Via
+    header_up -X-Forwarded-*
+    header_up -X-Real-IP
+    header_up -X-Client-IP
+    header_up -Proxy-Connection
+    header_up -Proxy-Authorization
+    header_up -Cookie
+    header_up -Origin
+    header_up -Referer
+    header_down -Server
+    header_down -X-Powered-By
+    header_down -Set-Cookie
   }
 }
 EOF
