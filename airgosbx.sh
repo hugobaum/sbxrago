@@ -1130,8 +1130,8 @@ upcaddy(){
 # NaiveProxy 服务端＝带 forwardproxy@naive 分支的 Caddy。两种获取方式，按 CPU 架构与用户选择决定：
 #   · 官方预编译（仅 amd64，klzgrad/forwardproxy 发布页）——1C1G 小机首选，零编译；
 #   · xcaddy 现场编译（arm64 必走 / amd64 可选）——用 go.dev 官方 tarball 引导唯一标准 Go，全程自包含在暂存区。
-# 预编译分支直接使用 GitHub Latest 永久链接，不在脚本内固定或回退到任何版本号。
-# GitHub API 仅用于展示实际 tag 与读取官方 SHA256；API 暂时不可用时仍可通过 Latest 链接下载。
+# 预编译分支每次动态解析 GitHub Latest，不在脚本内固定或回退到旧版本号。
+# 同一次 API 响应必须同时给出实际 tag、目标资产 URL 与该资产 SHA256；任一缺失都失败关闭。
 local method="$naivebuild" ans
 # 未显式指定获取方式时：交互终端按架构给菜单选一次；非交互(管道运行)则 amd64 默认下载、arm64 直接报错给指引。
 if [ -z "$method" ]; then
@@ -1174,29 +1174,54 @@ fi
 local cstage="$HOME/agsbx/.stage_caddy"
 rm -rf "$cstage"; mkdir -p "$cstage"
 if [ "$method" = dl ]; then
-  local caddy_api latest_tag caddy_digest caddy_actual
+  local caddy_api latest_tag caddy_digest caddy_actual caddy_asset caddy_url
+  caddy_asset="caddy-forwardproxy-naive.tar.xz"
   caddy_api=$( (command -v curl >/dev/null 2>&1 && curl -fsSL --connect-timeout 5 "https://api.github.com/repos/klzgrad/forwardproxy/releases/latest") || (command -v wget >/dev/null 2>&1 && wget -qO- --timeout=5 "https://api.github.com/repos/klzgrad/forwardproxy/releases/latest") )
   latest_tag=$(printf '%s' "$caddy_api" | grep '"tag_name":' | head -1 | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')
-  echo "正在从 klzgrad/forwardproxy 官方发布页下载最新版预编译 Caddy(naive)：${latest_tag:-GitHub Latest} ……"
-  local url="https://github.com/klzgrad/forwardproxy/releases/latest/download/caddy-forwardproxy-naive.tar.xz"
+  caddy_url=$(printf '%s\n' "$caddy_api" | awk -v target="$caddy_asset" '
+    /"name":[[:space:]]*"/ { wanted = index($0, "\"" target "\"") > 0 }
+    wanted && /"browser_download_url":[[:space:]]*"/ {
+      line=$0
+      sub(/^.*"browser_download_url":[[:space:]]*"/, "", line)
+      sub(/".*$/, "", line)
+      print line
+      exit
+    }
+  ')
+  caddy_digest=$(printf '%s\n' "$caddy_api" | awk -v target="$caddy_asset" '
+    /"name":[[:space:]]*"/ { wanted = index($0, "\"" target "\"") > 0 }
+    wanted && /"digest":[[:space:]]*"sha256:/ {
+      line=$0
+      sub(/^.*"digest":[[:space:]]*"sha256:/, "", line)
+      sub(/".*$/, "", line)
+      print line
+      exit
+    }
+  ')
+  if [ -z "$latest_tag" ] || [ -z "$caddy_url" ]; then
+    echo "错误：无法从 GitHub Latest API 确认当前版本及目标资产，已拒绝无来源下载。"
+    rm -rf "$cstage"; return 1
+  fi
+  if ! printf '%s' "$caddy_digest" | grep -Eq '^[0-9a-f]{64}$'; then
+    echo "错误：当前 Latest 版本 $latest_tag 未提供资产 $caddy_asset 的有效 SHA256，已终止安装。"
+    rm -rf "$cstage"; return 1
+  fi
+  echo "正在从 klzgrad/forwardproxy 官方发布页下载最新版预编译 Caddy(naive)：$latest_tag ……"
+  local url="$caddy_url"
   local tmp="$cstage/caddy.tar.xz"
   (command -v curl >/dev/null 2>&1 && curl -fLo "$tmp" -# --retry 2 "$url") || (command -v wget >/dev/null 2>&1 && wget -O "$tmp" --tries=2 "$url")
   if [ ! -s "$tmp" ]; then echo "错误：Caddy 最新版下载失败（网络不可达或 Latest 发布缺少对应资源）。"; rm -rf "$cstage"; return 1; fi
-  # SHA256 完整性校验：klzgrad/forwardproxy 未提供独立 checksums.txt，但 GitHub Release API 为每个资产
-  # 暴露 "digest":"sha256:..."。据此比对下载归档，防篡改/防误下假包(如 404 HTML)。取不到 digest 时降级为信任 HTTPS。
-  caddy_digest=$(printf '%s' "$caddy_api" | grep -oE '"digest":[[:space:]]*"sha256:[0-9a-f]{64}"' | head -1 | grep -oE '[0-9a-f]{64}')
-  if [ -n "$caddy_digest" ]; then
-    caddy_actual=$(sha256sum "$tmp" 2>/dev/null | awk '{print $1}')
-    if [ "$caddy_digest" != "$caddy_actual" ]; then
-      echo "错误：Caddy 文件 SHA256 校验失败！下载可能已被篡改或资源损坏，终止安装。"
-      echo "预期: $caddy_digest"
-      echo "实际: $caddy_actual"
-      rm -rf "$cstage"; return 1
-    fi
-    echo "SHA256 校验通过 ✓ ($caddy_actual)"
-  else
-    echo "警告：未能从 GitHub API 获取官方 SHA256，跳过哈希校验，信任 HTTPS 连接。"
+  # SHA256 必须来自同一 Latest API 响应中、名称精确匹配的目标资产；取不到时已在下载前失败关闭。
+  caddy_actual=$(sha256sum "$tmp" 2>/dev/null | awk '{print $1}')
+  if [ "$caddy_digest" != "$caddy_actual" ]; then
+    echo "错误：Caddy 文件 SHA256 校验失败！下载可能已被篡改或资源损坏，终止安装。"
+    echo "预期: $caddy_digest"
+    echo "实际: $caddy_actual"
+    rm -rf "$cstage"; return 1
   fi
+  echo "SHA256 校验通过 ✓ ($caddy_actual)"
+  printf 'source=github-release\ntag=%s\nasset=%s\nsha256=%s\n' \
+    "$latest_tag" "$caddy_asset" "$caddy_digest" > "$cstage/caddy-build-info"
   # .tar.xz 解压：优先 GNU tar -J，缺则用 xz 管道兜底（兼容 busybox tar）。xz 已在 ensure_deps 中预置。
   if ! ( tar -xJf "$tmp" -C "$cstage" 2>/dev/null || ( xz -dc "$tmp" 2>/dev/null | tar -xf - -C "$cstage" 2>/dev/null ) ); then
     echo "错误：解压失败，可能缺少 xz 工具。请确认已安装 xz/xz-utils 后重试。"; rm -rf "$cstage"; return 1
@@ -1269,11 +1294,18 @@ else
          export GIT_TERMINAL_PROMPT=0 GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_COUNT=0
          export PATH="$GOROOT/bin:$GOBIN:/usr/sbin:/usr/bin:/sbin:/bin"
          echo "Go 就绪：$("$GOROOT/bin/go" version 2>/dev/null)"
-         echo "安装最新版 xcaddy 构建器……"
-         "$GOROOT/bin/go" install github.com/caddyserver/xcaddy/cmd/xcaddy@latest &&
-         echo "编译最新版 Caddy + forwardproxy@naive（请耐心等待）……" &&
+         caddy_version=$("$GOROOT/bin/go" list -m -f '{{.Version}}' github.com/caddyserver/caddy/v2@latest) &&
+         xcaddy_version=$("$GOROOT/bin/go" list -m -f '{{.Version}}' github.com/caddyserver/xcaddy@latest) &&
+         forwardproxy_api=$( (command -v curl >/dev/null 2>&1 && curl -fsSL --connect-timeout 5 "https://api.github.com/repos/klzgrad/forwardproxy/branches/naive") || (command -v wget >/dev/null 2>&1 && wget -qO- --timeout=5 "https://api.github.com/repos/klzgrad/forwardproxy/branches/naive") ) &&
+         forwardproxy_commit=$(printf '%s\n' "$forwardproxy_api" | grep '"sha":' | head -1 | sed -E 's/.*"sha": *"([0-9a-f]+)".*/\1/') &&
+         [ -n "$caddy_version" ] && [ -n "$xcaddy_version" ] && printf '%s' "$forwardproxy_commit" | grep -Eq '^[0-9a-f]{40}$' &&
+         echo "安装当前最新版 xcaddy 构建器：$xcaddy_version ……" &&
+         "$GOROOT/bin/go" install github.com/caddyserver/xcaddy/cmd/xcaddy@"$xcaddy_version" &&
+         echo "编译当前最新版 Caddy $caddy_version + forwardproxy naive@$forwardproxy_commit（请耐心等待）……" &&
          cd "$cstage" &&
-         "$GOBIN/xcaddy" build --output "$cstage/caddy" --with github.com/caddyserver/forwardproxy=github.com/klzgrad/forwardproxy@naive
+         "$GOBIN/xcaddy" build "$caddy_version" --output "$cstage/caddy" --with github.com/caddyserver/forwardproxy=github.com/klzgrad/forwardproxy@"$forwardproxy_commit" &&
+         printf 'source=xcaddy-build\ncaddy=%s\nxcaddy=%s\nforwardproxy=%s\n' \
+           "$caddy_version" "$xcaddy_version" "$forwardproxy_commit" > "$cstage/caddy-build-info"
        ); then
     echo "错误：Go/xcaddy 编译失败（可看上方报错；网络或内存不足是常见原因）。"; rm -rf "$cstage"; return 1
   fi
@@ -1303,6 +1335,7 @@ else
 fi
 
 mv -f "$newcaddy" "$HOME/agsbx/caddy"
+[ -s "$cstage/caddy-build-info" ] && mv -f "$cstage/caddy-build-info" "$HOME/agsbx/caddy_build_info"
 rm -rf "$cstage"
 if [ "$method" = dl ]; then
   echo "已安装 Caddy(naive) 官方预编译内核：$("$HOME/agsbx/caddy" version 2>/dev/null | head -1)"
@@ -3831,9 +3864,38 @@ fi
 if [ "$interactive_naive" = 1 ]; then
 [ -z "$naivesite" ] && { printf "伪装站域名（直接回车=默认 mirror.us.leaseweb.net）："; read -r naivesite; }
 fi
-# 获取/编译 caddy 二进制（按架构交互选择）；失败则放弃，不影响其它内核。
-if [ ! -s "$HOME/agsbx/caddy" ]; then
-upcaddy || { echo "NaiveProxy 内核未就位，已跳过 Caddy 配置。"; return 1; }
+# 在更新内核或覆盖配置前先确认 Airgosbx 专属服务名没有被其他软件占用。
+if pidof systemd >/dev/null 2>&1 && is_root; then
+  if { systemctl cat agsbx-caddy.service >/dev/null 2>&1 && [ ! -e /etc/systemd/system/agsbx-caddy.service ]; } || \
+     [ -L /etc/systemd/system/agsbx-caddy.service ] || \
+     { [ -e /etc/systemd/system/agsbx-caddy.service ] && ! grep -Fq "ExecStart=$HOME/agsbx/caddy run" /etc/systemd/system/agsbx-caddy.service; }; then
+    echo "错误：agsbx-caddy.service 已存在但不属于 Airgosbx，已拒绝覆盖。"
+    return 1
+  fi
+elif command -v rc-service >/dev/null 2>&1 && is_root; then
+  if [ -L /etc/init.d/agsbx-caddy ] || \
+     { [ -e /etc/init.d/agsbx-caddy ] && ! grep -Fq "command=\"$HOME/agsbx/caddy\"" /etc/init.d/agsbx-caddy; }; then
+    echo "错误：OpenRC agsbx-caddy 服务已存在但不属于 Airgosbx，已拒绝覆盖。"
+    return 1
+  fi
+fi
+# 获取/编译 Caddy 二进制。已有内核默认复用；显式指定 naivebuild 或交互确认后，才更新到当时的最新版。
+if [ -s "$HOME/agsbx/caddy" ]; then
+  echo "检测到现有 Caddy(naive) 内核：$("$HOME/agsbx/caddy" version 2>/dev/null | head -1)"
+  local refresh_caddy=no refresh_answer
+  if [ -n "$naivebuild" ]; then
+    refresh_caddy=yes
+  elif [ -t 1 ] || [ -t 2 ]; then
+    printf "是否重新获取并校验当前最新版 Caddy(naive)？[y/N]："; read -r refresh_answer
+    case "$refresh_answer" in y|Y|yes|YES) refresh_caddy=yes ;; esac
+  fi
+  if [ "$refresh_caddy" = yes ]; then
+    upcaddy || { echo "Caddy 最新版更新失败，原内核已保留，已停止本次 NaiveProxy 配置生成。"; return 1; }
+  else
+    echo "继续复用现有 Caddy(naive) 内核；如需非交互更新，可显式指定 naivebuild=dl 或 naivebuild=build。"
+  fi
+else
+  upcaddy || { echo "NaiveProxy 内核未就位，已跳过 Caddy 配置。"; return 1; }
 fi
 insnaivecred
 secondary_validate_naive_credentials || return 1
@@ -3844,15 +3906,17 @@ if secondary_protocol_is_selected naive; then
   naive_upstream_user=$(uri_percent_encode "$naive_secondary_user")
   naive_upstream_pass=$(uri_percent_encode "$naive_secondary_pass")
 fi
-# [80端口占用预检] Caddy 自管 ACME 需要 80 端口做 HTTP-01 验证/跳转；占用则告警（不强制中断）。
-if command -v ss >/dev/null 2>&1 && ss -tuln 2>/dev/null | grep -qE '(:80[[:space:]]|:80$)'; then
-printf '%s\n' "${C_YELLOW}警告：检测到 80 端口已被占用，Caddy 自动申请证书可能失败。${C_RESET}"
-echo "如有其它服务占用 80/443（如 nginx 或脚本内 acme.sh），可先停掉再装，或装好后用 agsbx stop caddy 让出端口。"
+# [80/443端口占用预检] Caddy 自管 ACME 与 Naive 入站需要这些端口；占用则告警，最终由服务启动结果判定成败。
+if command -v ss >/dev/null 2>&1 && ss -tuln 2>/dev/null | grep -qE ':(80|443)([[:space:]]|$)'; then
+printf '%s\n' "${C_YELLOW}警告：检测到 80 或 443 端口已被占用，Caddy 证书申请或 NaiveProxy 启动可能失败。${C_RESET}"
+echo "如有其它服务占用端口（如 nginx 或独立 Caddy），请先确认归属；Airgosbx 不会接管不属于自己的服务。"
 fi
 # 生成 Caddyfile（硬化模板：代理优先、私网 ACL、统一伪装响应、净化回源请求头）
 local naivemail="${acmem:-admin@$naive}"
 local naivesite="${naivesite:-mirror.us.leaseweb.net}"
 local caddyfile_tmp="$HOME/agsbx/.Caddyfile.new"
+local caddy_admin_socket="$HOME/agsbx/caddy-admin.sock"
+local caddy_admin_address="unix/$caddy_admin_socket"
 # 容错：伪装站允许带或不带 scheme，统一剥离后由模板固定以 https 回源（伪装站须支持 HTTPS）
 naivesite="${naivesite#http://}"; naivesite="${naivesite#https://}"
 # 持久化域名：供后续 agsbx list 渲染节点卡片时读取（彼时 naive 环境变量已不在作用域）
@@ -3861,6 +3925,8 @@ cat > "$caddyfile_tmp" <<EOF
 {
   # 认证代理请求必须最先进入 forward_proxy；未认证请求再落到后面的统一伪装站路由。
   order forward_proxy first
+  # 管理 API 仅绑定在 /root/agsbx 的权限化 Unix socket；不再暴露默认 localhost:2019。
+  admin ${caddy_admin_address}|0600
   storage file_system "$HOME/agsbx/caddy_storage"
   log {
     exclude http.log.error
@@ -3985,18 +4051,41 @@ if secondary_protocol_is_selected naive; then
     after sing-box"
 fi
 if pidof systemd >/dev/null 2>&1 && is_root; then
-cat > /etc/systemd/system/caddy.service <<EOF
+local caddy_unit="/etc/systemd/system/agsbx-caddy.service"
+local caddy_unit_tmp="$HOME/agsbx/.agsbx-caddy.service.new"
+local legacy_caddy_unit="/etc/systemd/system/caddy.service"
+if [ -L "$caddy_unit" ] || { [ -e "$caddy_unit" ] && ! grep -Fq "ExecStart=$HOME/agsbx/caddy run" "$caddy_unit"; }; then
+  echo "错误：$caddy_unit 已存在但不属于 Airgosbx，已拒绝覆盖。"
+  return 1
+fi
+if [ -f "$legacy_caddy_unit" ] && grep -Fq "ExecStart=$HOME/agsbx/caddy run" "$legacy_caddy_unit"; then
+  systemctl stop caddy >/dev/null 2>&1 || true
+  if systemctl is-active --quiet caddy; then
+    echo "错误：旧版 Airgosbx caddy.service 无法停止，已保留原 Unit 并终止迁移。"
+    return 1
+  fi
+  systemctl disable caddy >/dev/null 2>&1 || { echo "错误：无法禁用旧版 Airgosbx caddy.service，已终止迁移。"; return 1; }
+  rm -f "$legacy_caddy_unit" || { echo "错误：无法移除旧版 Airgosbx caddy.service。"; return 1; }
+fi
+cat > "$caddy_unit_tmp" <<EOF
 [Unit]
-Description=caddy naiveproxy service
+Description=Airgosbx Caddy NaiveProxy Service
 $caddy_systemd_after
 $caddy_systemd_wants
 [Service]
-Type=simple
+Type=notify
 NoNewPrivileges=yes
-AmbientCapabilities=CAP_NET_BIND_SERVICE
+PrivateTmp=true
+ProtectSystem=full
+UMask=0077
+LimitNOFILE=1048576
 TimeoutStartSec=0
+TimeoutStopSec=5s
+WorkingDirectory=$HOME/agsbx
+ExecStartPre=-/bin/rm -f $caddy_admin_socket
 ExecStart=$HOME/agsbx/caddy run --config $HOME/agsbx/Caddyfile
-ExecReload=$HOME/agsbx/caddy reload --config $HOME/agsbx/Caddyfile --force
+ExecReload=$HOME/agsbx/caddy reload --config $HOME/agsbx/Caddyfile --address $caddy_admin_address --force
+RestartPreventExitStatus=1
 Restart=on-failure
 RestartSec=5s
 StandardOutput=journal
@@ -4004,27 +4093,59 @@ StandardError=journal
 [Install]
 WantedBy=multi-user.target
 EOF
-systemctl daemon-reload >/dev/null 2>&1
-systemctl enable caddy >/dev/null 2>&1
-systemctl start caddy >/dev/null 2>&1
+mv -f "$caddy_unit_tmp" "$caddy_unit" || { echo "错误：无法安装 $caddy_unit。"; return 1; }
+systemctl daemon-reload >/dev/null 2>&1 || { echo "错误：systemctl daemon-reload 失败。"; return 1; }
+systemctl enable agsbx-caddy >/dev/null 2>&1 || { echo "错误：无法启用 agsbx-caddy.service。"; return 1; }
+if ! systemctl restart agsbx-caddy >/dev/null 2>&1 || ! systemctl is-active --quiet agsbx-caddy; then
+  echo "错误：agsbx-caddy.service 启动失败，请运行 journalctl -u agsbx-caddy -n 30 --no-pager 查看日志。"
+  return 1
+fi
 elif command -v rc-service >/dev/null 2>&1 && is_root; then
-cat > /etc/init.d/caddy <<EOF
+local caddy_init="/etc/init.d/agsbx-caddy"
+local caddy_init_tmp="$HOME/agsbx/.agsbx-caddy.init.new"
+local legacy_caddy_init="/etc/init.d/caddy"
+if [ -L "$caddy_init" ] || { [ -e "$caddy_init" ] && ! grep -Fq "command=\"$HOME/agsbx/caddy\"" "$caddy_init"; }; then
+  echo "错误：$caddy_init 已存在但不属于 Airgosbx，已拒绝覆盖。"
+  return 1
+fi
+if [ -f "$legacy_caddy_init" ] && grep -Fq "command=\"$HOME/agsbx/caddy\"" "$legacy_caddy_init"; then
+  rc-service caddy stop >/dev/null 2>&1 || true
+  rc-update del caddy default >/dev/null 2>&1 || true
+  rm -f "$legacy_caddy_init" || { echo "错误：无法移除旧版 Airgosbx OpenRC caddy 服务。"; return 1; }
+fi
+cat > "$caddy_init_tmp" <<EOF
 #!/sbin/openrc-run
-description="caddy naiveproxy service"
+description="Airgosbx Caddy NaiveProxy Service"
 command="$HOME/agsbx/caddy"
 command_args="run --config $HOME/agsbx/Caddyfile"
 command_background=yes
-pidfile="/run/caddy.pid"
+pidfile="/run/agsbx-caddy.pid"
+start_pre() {
+    rm -f "$caddy_admin_socket"
+}
 depend() {
 need net
 $caddy_openrc_sidecar
 }
 EOF
-chmod +x /etc/init.d/caddy >/dev/null 2>&1
-rc-update add caddy default >/dev/null 2>&1
-rc-service caddy start >/dev/null 2>&1
+mv -f "$caddy_init_tmp" "$caddy_init" || { echo "错误：无法安装 $caddy_init。"; return 1; }
+chmod 700 "$caddy_init" || { echo "错误：无法设置 $caddy_init 权限。"; return 1; }
+rc-update add agsbx-caddy default >/dev/null 2>&1 || { echo "错误：无法启用 OpenRC agsbx-caddy 服务。"; return 1; }
+rc-service agsbx-caddy stop >/dev/null 2>&1 || true
+if ! rc-service agsbx-caddy start >/dev/null 2>&1 || ! pgrep -f 'agsbx/caddy' >/dev/null 2>&1; then
+  echo "错误：OpenRC agsbx-caddy 服务启动失败，请查看 $HOME/agsbx/caddy.log 或系统日志。"
+  return 1
+fi
 else
+rm -f "$caddy_admin_socket"
+kill -15 $(pgrep -f 'agsbx/caddy' 2>/dev/null) >/dev/null 2>&1
+sleep 1
 nohup "$HOME/agsbx/caddy" run --config "$HOME/agsbx/Caddyfile" > "$HOME/agsbx/caddy.log" 2>&1 &
+sleep 1
+if ! pgrep -f 'agsbx/caddy' >/dev/null 2>&1; then
+  echo "错误：Caddy 后台进程启动失败，请查看 $HOME/agsbx/caddy.log。"
+  return 1
+fi
 fi
 # 等待并检测 Caddy 证书生成情况
 local detect_sec=60
@@ -4058,7 +4179,7 @@ if [ -s "$caddy_cert" ] && [ -s "$caddy_key" ] && openssl x509 -noout -in "$cadd
 else
   printf '%s\n' "${C_YELLOW}提示：60 秒内未检测到 Caddy 生成的有效 TLS 证书。${C_RESET}"
   echo "Caddy 可能仍在后台获取证书中，或者 80/443 端口被占用/DNS 解析未生效。"
-  echo "建议稍后运行 journalctl -u caddy -f 或查看 $HOME/agsbx/caddy.log 查看具体证书申请进度。"
+  echo "建议稍后运行 journalctl -u agsbx-caddy -f 或查看 $HOME/agsbx/caddy.log 查看具体证书申请进度。"
 fi
 
 echo "NaiveProxy(Caddy) 已部署：https://$naive"
@@ -5455,7 +5576,7 @@ sed -i '/agsbx\/caddy run/d' "$cron_tmp"
 # Naive 二级链路在裸环境中使用同一条启动任务：先启动 Sing-box，有限等待回环端口，再启动 Caddy。
 # 即使等待超时仍启动 Caddy，以保留 TLS/伪装站；upstream 不可达时代理请求保持失败关闭。
 if secondary_protocol_is_selected naive && [ -s "$HOME/agsbx/sing-box" ] && [ -s "$HOME/agsbx/sb.json" ] && [ -s "$HOME/agsbx/caddy" ] && [ -s "$HOME/agsbx/Caddyfile" ]; then
-echo '@reboot sleep 10 && /bin/sh -c "nohup $HOME/agsbx/sing-box run -c $HOME/agsbx/sb.json > $HOME/agsbx/sing-box.log 2>&1 & i=0; while [ \$i -lt 20 ]; do if command -v ss >/dev/null 2>&1; then ss -ltn 2>/dev/null | grep -q 127.0.0.1:'"$naive_secondary_port"' && break; elif command -v netstat >/dev/null 2>&1; then netstat -ltn 2>/dev/null | grep -q 127.0.0.1:'"$naive_secondary_port"' && break; fi; i=\$((i + 1)); sleep 1; done; nohup $HOME/agsbx/caddy run --config $HOME/agsbx/Caddyfile > $HOME/agsbx/caddy.log 2>&1 &"' >> "$cron_tmp"
+echo '@reboot sleep 10 && /bin/sh -c "nohup $HOME/agsbx/sing-box run -c $HOME/agsbx/sb.json > $HOME/agsbx/sing-box.log 2>&1 & i=0; while [ \$i -lt 20 ]; do if command -v ss >/dev/null 2>&1; then ss -ltn 2>/dev/null | grep -q 127.0.0.1:'"$naive_secondary_port"' && break; elif command -v netstat >/dev/null 2>&1; then netstat -ltn 2>/dev/null | grep -q 127.0.0.1:'"$naive_secondary_port"' && break; fi; i=\$((i + 1)); sleep 1; done; rm -f $HOME/agsbx/caddy-admin.sock; nohup $HOME/agsbx/caddy run --config $HOME/agsbx/Caddyfile > $HOME/agsbx/caddy.log 2>&1 &"' >> "$cron_tmp"
 else
 if find /proc/*/exe -type l 2>/dev/null | grep -E '/proc/[0-9]+/exe' | xargs -r readlink 2>/dev/null | grep -q 'agsbx/sing-box' || pgrep -f 'agsbx/sing-box' >/dev/null 2>&1 ; then
 echo '@reboot sleep 10 && /bin/sh -c "nohup $HOME/agsbx/sing-box run -c $HOME/agsbx/sb.json > $HOME/agsbx/sing-box.log 2>&1 &"' >> "$cron_tmp"
@@ -5465,7 +5586,7 @@ if find /proc/*/exe -type l 2>/dev/null | grep -E '/proc/[0-9]+/exe' | xargs -r 
 echo '@reboot sleep 10 && /bin/sh -c "nohup $HOME/agsbx/xray run -c $HOME/agsbx/xr.json > $HOME/agsbx/xray.log 2>&1 &"' >> "$cron_tmp"
 fi
 if ! secondary_protocol_is_selected naive && [ -n "$naive" ] && [ -s "$HOME/agsbx/caddy" ]; then
-echo '@reboot sleep 10 && /bin/sh -c "nohup $HOME/agsbx/caddy run --config $HOME/agsbx/Caddyfile > $HOME/agsbx/caddy.log 2>&1 &"' >> "$cron_tmp"
+echo '@reboot sleep 10 && /bin/sh -c "rm -f $HOME/agsbx/caddy-admin.sock; nohup $HOME/agsbx/caddy run --config $HOME/agsbx/Caddyfile > $HOME/agsbx/caddy.log 2>&1 &"' >> "$cron_tmp"
 fi
 fi
 sed -i '/agsbx\/cloudflared/d' "$cron_tmp"
@@ -6517,18 +6638,41 @@ crontab "$cron_tmp" >/dev/null 2>&1
 rm -f "$cron_tmp"
 rm -rf "$HOME/bin/agsbx" /usr/local/bin/agsbx /usr/bin/agsbx "$HOME/websbx"
 if pidof systemd >/dev/null 2>&1; then
-for svc in xr sb argo caddy; do
+for svc in xr sb argo; do
 systemctl stop "$svc" >/dev/null 2>&1
 systemctl disable "$svc" >/dev/null 2>&1
 done
-rm -rf /etc/systemd/system/{xr.service,sb.service,argo.service,caddy.service}
+rm -rf /etc/systemd/system/{xr.service,sb.service,argo.service}
+# Caddy 只清理能由 ExecStart 证明属于 Airgosbx 的 Unit；同名的系统包或人工服务一律不碰。
+if [ -f /etc/systemd/system/agsbx-caddy.service ] && grep -Fq "ExecStart=$HOME/agsbx/caddy run" /etc/systemd/system/agsbx-caddy.service; then
+  systemctl stop agsbx-caddy >/dev/null 2>&1 || true
+  systemctl disable agsbx-caddy >/dev/null 2>&1 || true
+  rm -f /etc/systemd/system/agsbx-caddy.service
+fi
+if [ -f /etc/systemd/system/caddy.service ] && grep -Fq "ExecStart=$HOME/agsbx/caddy run" /etc/systemd/system/caddy.service; then
+  systemctl stop caddy >/dev/null 2>&1 || true
+  systemctl disable caddy >/dev/null 2>&1 || true
+  rm -f /etc/systemd/system/caddy.service
+fi
+systemctl daemon-reload >/dev/null 2>&1 || echo "警告：systemctl daemon-reload 失败，请手动检查服务状态。"
 elif command -v rc-service >/dev/null 2>&1; then
-for svc in sing-box xray argo caddy; do
+for svc in sing-box xray argo; do
 rc-service "$svc" stop >/dev/null 2>&1
 rc-update del "$svc" default >/dev/null 2>&1
 done
-rm -rf /etc/init.d/{sing-box,xray,argo,caddy} /etc/local.d/alpinesubsbx.start
+rm -rf /etc/init.d/{sing-box,xray,argo} /etc/local.d/alpinesubsbx.start
+if [ -f /etc/init.d/agsbx-caddy ] && grep -Fq "command=\"$HOME/agsbx/caddy\"" /etc/init.d/agsbx-caddy; then
+  rc-service agsbx-caddy stop >/dev/null 2>&1 || true
+  rc-update del agsbx-caddy default >/dev/null 2>&1 || true
+  rm -f /etc/init.d/agsbx-caddy
 fi
+if [ -f /etc/init.d/caddy ] && grep -Fq "command=\"$HOME/agsbx/caddy\"" /etc/init.d/caddy; then
+  rc-service caddy stop >/dev/null 2>&1 || true
+  rc-update del caddy default >/dev/null 2>&1 || true
+  rm -f /etc/init.d/caddy
+fi
+fi
+rm -f "$HOME/agsbx/caddy-admin.sock"
 }
 xrestart(){
 kill -15 $(pgrep -f 'agsbx/xray' 2>/dev/null) >/dev/null 2>&1
@@ -6551,16 +6695,17 @@ nohup $HOME/agsbx/sing-box run -c $HOME/agsbx/sb.json > "$HOME/agsbx/sing-box.lo
 fi
 }
 # 内核生命周期统一入口：start / stop / restart / reload，自适应 systemd / openrc / 裸 nohup 三种后端。
-# 用法：kctl <动作> <内核>，内核 ∈ xray｜sb｜caddy（all 由调用方展开为 xray+sb）。
+# 用法：kctl <动作> <内核>，内核 ∈ xray｜sb｜caddy（all 在已配置 Naive 时也包含 Caddy）。
 # 关键约束：
 #   · stop/start 在 systemd/openrc 下必须经服务管理器，否则 Restart 策略会立刻把内核重新拉起，停不掉、端口释放不了。
 #   · reload：sing-box 支持 SIGHUP 热重载（校验后重建实例）；Xray 官方不支持热重载 → 自动改为 restart；caddy 预留。
 kctl(){
   local action="$1" kernel="$2" name bin cfg pat sd rc log
+  local caddy_admin_address="unix/$HOME/agsbx/caddy-admin.sock"
   case "$kernel" in
     xray|x)      name="Xray";     bin="$HOME/agsbx/xray";     cfg="$HOME/agsbx/xr.json"; pat='agsbx/xray';     sd="xr"; rc="xray";     log="$HOME/agsbx/xray.log" ;;
     sb|sing-box) name="Sing-box"; bin="$HOME/agsbx/sing-box"; cfg="$HOME/agsbx/sb.json"; pat='agsbx/sing-box'; sd="sb"; rc="sing-box"; log="$HOME/agsbx/sing-box.log" ;;
-    caddy)       name="Caddy";     bin="$HOME/agsbx/caddy";     cfg="$HOME/agsbx/Caddyfile"; pat='agsbx/caddy';    sd="caddy"; rc="caddy";    log="$HOME/agsbx/caddy.log" ;;
+    caddy)       name="Caddy";     bin="$HOME/agsbx/caddy";     cfg="$HOME/agsbx/Caddyfile"; pat='agsbx/caddy';    sd="agsbx-caddy"; rc="agsbx-caddy"; log="$HOME/agsbx/caddy.log" ;;
     *)           echo "未知内核：$kernel（可选 xray｜sb｜caddy｜all）"; return 1 ;;
   esac
   if [ ! -s "$bin" ]; then echo "${name}：内核未下载，无法执行 ${action}。"; return 1; fi
@@ -6569,7 +6714,7 @@ kctl(){
     echo "Xray 不支持配置热重载（官方设计），已自动改为 restart。"; action="restart"
   fi
   # Caddy：start/restart/reload 前先做配置语法预检，坏配置直接拦截，不推上线、不动正在运行的服务
-  if [ "$sd" = caddy ] && { [ "$action" = start ] || [ "$action" = restart ] || [ "$action" = reload ]; } && [ -s "$cfg" ]; then
+  if [ "$kernel" = caddy ] && { [ "$action" = start ] || [ "$action" = restart ] || [ "$action" = reload ]; } && [ -s "$cfg" ]; then
     if ! "$bin" validate --config "$cfg" >/dev/null 2>&1; then
       echo "Caddy：配置校验未通过，已拦截 ${action}（不影响正在运行的服务）："
       "$bin" validate --config "$cfg" 2>&1 | grep -iE 'error|invalid' | head -3
@@ -6577,19 +6722,28 @@ kctl(){
     fi
   fi
   # 启动参数：xray/sing-box 用 run -c，caddy 用 run --config
-  local runflag="-c"; [ "$sd" = caddy ] && runflag="--config"
+  local runflag="-c"; [ "$kernel" = caddy ] && runflag="--config"
   case "$action" in
     start|restart)
       if pidof systemd >/dev/null 2>&1; then
-        systemctl "$action" "$sd" >/dev/null 2>&1
+        if ! systemctl "$action" "$sd" >/dev/null 2>&1; then
+          echo "${name}：systemctl ${action} ${sd} 失败 ✗"
+          echo "    journalctl -u $sd -n 30 --no-pager"
+          return 1
+        fi
       elif command -v rc-service >/dev/null 2>&1; then
-        rc-service "$rc" "$action" >/dev/null 2>&1
+        if ! rc-service "$rc" "$action" >/dev/null 2>&1; then
+          echo "${name}：OpenRC ${action} ${rc} 失败 ✗"
+          return 1
+        fi
       else
         kill -15 $(pgrep -f "$pat" 2>/dev/null) >/dev/null 2>&1
+        [ "$kernel" = caddy ] && rm -f "$HOME/agsbx/caddy-admin.sock"
         nohup "$bin" run "$runflag" "$cfg" > "$log" 2>&1 &
       fi
       sleep 1
-      if pgrep -f "$pat" >/dev/null 2>&1; then
+      if { pidof systemd >/dev/null 2>&1 && systemctl is-active --quiet "$sd"; } || \
+         { ! pidof systemd >/dev/null 2>&1 && pgrep -f "$pat" >/dev/null 2>&1; }; then
         [ "$action" = start ] && echo "${name}：已启动 ✓" || echo "${name}：已重启 ✓"
       else
         echo "${name}：${action} 后进程未起来 ✗，请查看日志定位原因："
@@ -6598,23 +6752,37 @@ kctl(){
         else
           echo "    tail -n 30 $log"
         fi
+        return 1
       fi ;;
     stop)
       if pidof systemd >/dev/null 2>&1; then
-        systemctl stop "$sd" >/dev/null 2>&1
+        systemctl stop "$sd" >/dev/null 2>&1 || { echo "${name}：systemctl stop ${sd} 失败 ✗"; return 1; }
       elif command -v rc-service >/dev/null 2>&1; then
-        rc-service "$rc" stop >/dev/null 2>&1
+        rc-service "$rc" stop >/dev/null 2>&1 || { echo "${name}：OpenRC stop ${rc} 失败 ✗"; return 1; }
       else
         kill -15 $(pgrep -f "$pat" 2>/dev/null) >/dev/null 2>&1
       fi
+      sleep 1
+      if pgrep -f "$pat" >/dev/null 2>&1; then
+        echo "${name}：停止命令已执行，但进程仍在运行 ✗"
+        return 1
+      fi
+      [ "$kernel" = caddy ] && rm -f "$HOME/agsbx/caddy-admin.sock"
       echo "${name}：已停止（占用端口已释放）。" ;;
     reload)
-      if [ "$sd" = caddy ]; then
+      if [ "$kernel" = caddy ]; then
         # caddy 原生热重载（配置已在上方预检通过）：systemd 下走 systemctl reload，否则直接 caddy reload
         if pidof systemd >/dev/null 2>&1; then
-          systemctl reload "$sd" >/dev/null 2>&1
+          systemctl reload "$sd" >/dev/null 2>&1 || {
+            echo "Caddy：systemctl reload ${sd} 失败 ✗"
+            echo "    journalctl -u $sd -n 30 --no-pager"
+            return 1
+          }
         else
-          "$bin" reload --config "$cfg" >/dev/null 2>&1
+          "$bin" reload --config "$cfg" --address "$caddy_admin_address" >/dev/null 2>&1 || {
+            echo "Caddy：通过权限化管理 socket 热重载失败 ✗，请查看 $log"
+            return 1
+          }
         fi
         echo "Caddy：配置校验通过，已热重载（连接不断）✓"
       elif pgrep -f "$pat" >/dev/null 2>&1; then
@@ -6628,7 +6796,7 @@ kctl(){
   if secondary_saved_protocol_is_selected naive; then
     if [ "$sd" = sb ] && [ "$action" = stop ]; then
       echo "提示：Naive 二级链路已失败关闭；Caddy 伪装站仍可继续访问，不会回退为 A VPS 直连目标。"
-    elif [ "$sd" = caddy ] && { [ "$action" = start ] || [ "$action" = restart ] || [ "$action" = reload ]; } && \
+    elif [ "$kernel" = caddy ] && { [ "$action" = start ] || [ "$action" = restart ] || [ "$action" = reload ]; } && \
       ! pgrep -f 'agsbx/sing-box' >/dev/null 2>&1; then
       echo "提示：Sing-box sidecar 未运行；Caddy 伪装站可用，但 Naive 二级代理保持失败关闭。"
     elif [ "$sd" = sb ] && { [ "$action" = start ] || [ "$action" = restart ] || [ "$action" = reload ]; } && \
@@ -6830,6 +6998,7 @@ elif [ "$1" = "status" ] || [ "$1" = "stats" ] || [ "$1" = "top" ]; then
 showstats
 exit
 elif [ "$1" = "res" ]; then
+res_failed=0
 for P in /proc/[0-9]*; do
 [ -L "$P/exe" ] || continue
 TARGET=$(readlink -f "$P/exe" 2>/dev/null) || continue
@@ -6864,6 +7033,10 @@ fi
 ;;
 esac
 done
+if [ -s "$HOME/agsbx/caddy" ] && [ -s "$HOME/agsbx/Caddyfile" ]; then
+  kctl restart caddy || res_failed=1
+fi
+[ "$res_failed" = 0 ] || { echo "重启未全部完成：Caddy 重启失败。"; exit 1; }
 sleep 5 && echo "重启完成" && sleep 3 && cip
 exit
 elif [ "$1" = "update" ]; then
@@ -6883,10 +7056,19 @@ else
 fi
 exit
 elif [ "$1" = "start" ] || [ "$1" = "stop" ] || [ "$1" = "restart" ] || [ "$1" = "reload" ]; then
-# 内核生命周期：agsbx <动作> [内核]，内核省略=all（仅展开为 xray+sb；Caddy/Mita 维持显式操作）
+# 内核生命周期：agsbx <动作> [内核]，内核省略=all；已配置 Naive 时按依赖顺序一并处理 Caddy，Mita 仍显式操作。
 action="$1"; target="${2:-all}"
 case "$target" in
-  all)         kctl "$action" xray; kctl "$action" sb ;;
+  all)
+    if [ "$action" = stop ] && [ -s "$HOME/agsbx/caddy" ] && [ -s "$HOME/agsbx/Caddyfile" ]; then
+      kctl "$action" caddy
+    fi
+    kctl "$action" xray
+    kctl "$action" sb
+    if [ "$action" != stop ] && [ -s "$HOME/agsbx/caddy" ] && [ -s "$HOME/agsbx/Caddyfile" ]; then
+      kctl "$action" caddy
+    fi
+    ;;
   xray|x)      kctl "$action" xray ;;
   sb|sing-box) kctl "$action" sb ;;
   caddy)       kctl "$action" caddy ;;
