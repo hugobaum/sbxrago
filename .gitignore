@@ -5,3 +5,6 @@
 !.gitignore
 !LICENSE
 !airgosbx.sh
+
+# 本地审计报告，不同步到远程仓库
+/auditreport.md

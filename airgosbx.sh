@@ -31,6 +31,89 @@ agsbx_running(){
     || pgrep -f 'agsbx/caddy' >/dev/null 2>&1 \
     || { [ -f "$HOME/agsbx/mita_managed" ] && command -v mita >/dev/null 2>&1 && mita status 2>/dev/null | grep -q 'RUNNING'; }
 }
+
+# 安装完成判定必须按本轮必需组件逐项检查，不能由另一个仍存活的内核掩盖失败。
+agsbx_component_running(){
+  local component="$1" expected_exe proc_exe resolved
+  case "$component" in
+    xray) expected_exe="$HOME/agsbx/xray" ;;
+    sing-box) expected_exe="$HOME/agsbx/sing-box" ;;
+    caddy) expected_exe="$HOME/agsbx/caddy" ;;
+    cloudflared) expected_exe="$HOME/agsbx/cloudflared" ;;
+    *) return 1 ;;
+  esac
+  [ -x "$expected_exe" ] || return 1
+  for proc_exe in /proc/[0-9]*/exe; do
+    [ -L "$proc_exe" ] || continue
+    resolved=$(readlink -f "$proc_exe" 2>/dev/null) || continue
+    [ "$resolved" = "$expected_exe" ] && return 0
+  done
+  return 1
+}
+
+wait_agsbx_component(){
+  local component="$1" attempt
+  for attempt in {1..5}; do
+    agsbx_component_running "$component" && return 0
+    sleep 1
+  done
+  return 1
+}
+
+subscription_http_is_running(){
+  pgrep -f '(busybox|busybox-extras)[[:space:]]+httpd.*[[:space:]]-h[[:space:]]+[^[:space:]]*/websbx' >/dev/null 2>&1
+}
+
+subscription_http_is_listening(){
+  local port="$1" port_hex
+  case "$port" in ''|*[!0-9]*) return 1 ;; esac
+  if command -v ss >/dev/null 2>&1; then
+    ss -ltn 2>/dev/null | awk -v suffix=":$port" '$4 ~ (suffix "$") {found=1} END {exit !found}'
+  elif command -v netstat >/dev/null 2>&1; then
+    netstat -ltn 2>/dev/null | awk -v suffix=":$port" '$4 ~ (suffix "$") {found=1} END {exit !found}'
+  else
+    printf -v port_hex '%04X' "$port"
+    awk -v suffix=":$port_hex" '$2 ~ (suffix "$") && $4 == "0A" {found=1} END {exit !found}' /proc/net/tcp /proc/net/tcp6 2>/dev/null
+  fi
+}
+
+verify_install_required_components(){
+  local include_subscription="${1:-no}" failed=no
+  if [ "$install_required_xray" = yes ] && ! wait_agsbx_component xray; then
+    echo "错误：本轮要求的 Xray 进程未运行。"
+    failed=yes
+  fi
+  if [ "$install_required_singbox" = yes ] && ! wait_agsbx_component sing-box; then
+    echo "错误：本轮要求的 Sing-box 进程未运行。"
+    failed=yes
+  fi
+  if [ "$install_required_caddy" = yes ] && ! wait_agsbx_component caddy; then
+    echo "错误：本轮要求的 Caddy 进程未运行。"
+    failed=yes
+  fi
+  if secondary_protocol_is_selected naive && ! port_is_listening "$naive_secondary_port"; then
+    echo "错误：Naive 二级链路的 Sing-box 回环转交端口未监听。"
+    failed=yes
+  fi
+  if [ "$install_required_mita" = yes ]; then
+    if ! command -v mita >/dev/null 2>&1 || ! mita status 2>/dev/null | grep -q 'RUNNING' \
+      || ! mita_port_is_listening "$port_mieru" "$mieru_protocol"; then
+      echo "错误：本轮要求的 Mieru/Mita 未处于 RUNNING 状态或未监听预期端口。"
+      failed=yes
+    fi
+  fi
+  if [ "$install_required_argo" = yes ] && ! wait_agsbx_component cloudflared; then
+    echo "错误：本轮要求的 Cloudflared Argo 进程未运行。"
+    failed=yes
+  fi
+  if [ "$include_subscription" = yes ] && [ "$install_required_subscription" = yes ]; then
+    if ! subscription_http_is_running || ! subscription_http_is_listening "$subport_real"; then
+      echo "错误：本轮要求的订阅 HTTP 服务未运行或未监听预期端口。"
+      failed=yes
+    fi
+  fi
+  [ "$failed" = no ]
+}
 # 安装态探测：只要内核二进制还在磁盘上就视为"已安装"（rep 只重置配置、stop 只停进程，都不删二进制）。
 # 管理类命令(start/stop/restart/reload/list/...)应以"是否已安装"放行，而非"是否正在运行"——
 # 否则 stop 停掉最后一个内核后 agsbx_running 变 false，随后的 start 会被前置守卫误判为"未安装"而拦截。
@@ -170,7 +253,7 @@ printf '%s\n' "${C_BOLD}用法：agsbx <命令> [参数]　（已安装后任意
 
 vg "① 脚本管理"
 vrow "update"   "更新脚本自身到最新版（不动配置与内核）"
-vrow "rep"      "重置协议配置（在前面配合协议变量组重新生成）"
+vrow "rep"      "事务重置非Caddy协议；保留Naive/Caddy与证书（变更它们须先del）"
 vrow "del"      "卸载 agsbx（清进程/服务/定时任务/文件）"
 
 vg "② 查看 / 信息"
@@ -658,6 +741,7 @@ printf '%s\n' "${C_BOLD}核心命令速查（完整命令 ${C_YELLOW}agsbx cmds$
 echo "  · 主脚本：bash <(curl -Ls $agsbxurl)  或  bash <(wget -qO- $agsbxurl)"
 echo "  · 节点信息：agsbx list      ｜ 资源/流量：agsbx status"
 echo "  · 重置配置：变量组 agsbx rep ｜ 更新脚本：agsbx update ｜ 卸载：agsbx del"
+echo "    rep 保留 Naive/Caddy 与全部证书；如需变更这些内容，必须先 agsbx del 再重装"
 echo "  · 内核启停：agsbx start｜stop｜restart｜reload [xray｜sb｜caddy｜mita｜all]"
 echo "  · 升级内核：agsbx upx/ups [版本]  ｜ 降级：agsbx downx/downs <版本>"
 hr
@@ -1904,13 +1988,17 @@ installmita(){
   local apply_out status_out
   validate_mita_platform || return 1
   configure_mieru_inputs
-  reset_mita_config
+  reset_mita_config || return 1
   port_mieru=$(init_mita_port) || return 1
   insmierucred || return 1
   write_mita_config || return 1
-  upmita || return 1
+  if [ "$rep_mode" = yes ] && [ -f "$HOME/agsbx/mita_managed" ] && command -v mita >/dev/null 2>&1; then
+    echo "rep 模式：复用现有 Mita 系统包，只重建并验证 Mieru 配置。"
+  else
+    upmita || return 1
+  fi
   # 官方包安装后会自动拉起 daemon；再次停止并清除内部配置，确保只应用当前脚本生成的单一用户/端口。
-  reset_mita_config
+  reset_mita_config || return 1
   ensure_mieru_ufw || return 1
   systemctl enable mita >/dev/null 2>&1 || { echo "错误：无法设置 Mita 开机启动。"; return 1; }
   systemctl start mita >/dev/null 2>&1 || { echo "错误：Mita daemon 启动失败。"; return 1; }
@@ -2267,7 +2355,7 @@ local source identifier
 source=$(cat "$HOME/agsbx/cert_source" 2>/dev/null)
 [ -n "$source" ] || source=acme-http
 case "$source" in
-  acme-ip|acme-http|acme-alpn|acme-dns) ;;
+  acme-ip|acme-http|acme-alpn|acme-dns|external) ;;
   *) return 1 ;;
 esac
 identifier=$(cat "$HOME/agsbx/cert_identifier" 2>/dev/null)
@@ -2643,16 +2731,19 @@ record_tls_cert_paths "$acme_cert_file" "$acme_key_file"
 tls_cert_source="ACME 自动申请成功（$selected_ca）"
 }
 setup_tls_certificate(){
-  local reuse_cert reuse_key wanted wanted_type mode_hint dns_requested=no reuse_allowed=yes acme_requested=no choose_status retry_choice index
+  local reuse_cert reuse_key reuse_identifier wanted wanted_type mode_hint dns_requested=no reuse_allowed=yes acme_requested=no choose_status retry_choice index
   local -a wanted_identifiers
   if [ "$tls_cert_ready" = yes ]; then
     return 0
   fi
-  # Caddy 内置 ACME 仍保持最高优先级；这里只复用其现成证书，不干预 Caddy 自己的申请与续期。
+  # Caddy 内置 ACME 仍保持最高优先级；新进程复用磁盘上的既有证书时重新校验一次，
+  # 同一进程内刚由 installcaddy 校验通过的证书则由 tls_cert_ready 直接复用。
   if [ -n "$naive" ] && [ "$(cat "$HOME/agsbx/cert_mode" 2>/dev/null)" = "caddy" ]; then
     reuse_cert=$(cat "$HOME/agsbx/cert_file_path" 2>/dev/null)
     reuse_key=$(cat "$HOME/agsbx/key_file_path" 2>/dev/null)
-    if [ -s "$reuse_cert" ] && [ -s "$reuse_key" ] && openssl x509 -checkend 0 -noout -in "$reuse_cert" >/dev/null 2>&1; then
+    reuse_identifier=$(cat "$HOME/agsbx/cert_identifier" 2>/dev/null)
+    [ -n "$reuse_identifier" ] || reuse_identifier=$(cat "$HOME/agsbx/naive_domain" 2>/dev/null)
+    if [ -n "$reuse_identifier" ] && validate_certificate_bundle "$reuse_cert" "$reuse_key" caddy "$reuse_identifier"; then
       tls_cert_file="$reuse_cert"
       tls_key_file="$reuse_key"
       write_cert_fingerprint
@@ -2660,6 +2751,11 @@ setup_tls_certificate(){
       show_tls_cert_summary "复用 Caddy(naive) 已签发证书" "$(cat "$HOME/agsbx/naive_domain" 2>/dev/null)"
       tls_cert_ready=yes
       return 0
+    fi
+    if [ "$rep_mode" = yes ]; then
+      echo "错误：rep 保留的 Caddy 证书未通过有效期、SAN 或私钥匹配校验。"
+      echo "如需更换或重新申请 Caddy 证书，请先执行 agsbx del，再重新运行脚本。"
+      return 1
     fi
   fi
   if [ "$sub" != "yes" ] && [ "$hyp" != "yes" ] && [ "$xhyp" != "yes" ] && [ "$tup" != "yes" ] && [ "$ssp" != "yes" ] && [ "$anp" != "yes" ] && [ "$xvcdn" != "yes" ] && [ "$xvargo" != "yes" ]; then
@@ -2728,6 +2824,11 @@ setup_tls_certificate(){
     show_tls_cert_summary "$tls_cert_source" "$(cat "$HOME/agsbx/sni.txt" 2>/dev/null)"
     tls_cert_ready=yes
     return 0
+  fi
+  if [ "$rep_mode" = yes ] && [ "$(cat "$HOME/agsbx/cert_mode" 2>/dev/null)" = ca ]; then
+    echo "错误：rep 保留的 ACME/外部受信任证书未通过复用验证。"
+    echo "如需更换或重新申请证书，请先执行 agsbx del，再重新运行脚本。"
+    return 1
   fi
   is_yes "$alns" && acme_requested=yes
   [ -n "$acmemode" ] && acme_requested=yes
@@ -2870,8 +2971,9 @@ echo
 printf '%s\n' "${C_CYAN}=========启用xray内核=========${C_RESET}"
 mkdir -p "$HOME/agsbx/xrk"
 if [ ! -e "$HOME/agsbx/xray" ]; then
-upxray
+upxray || return 1
 fi
+[ -x "$HOME/agsbx/xray" ] || { echo "错误：Xray 内核不存在或不可执行。"; return 1; }
 cat > "$HOME/agsbx/xr.json" <<EOF
 {
   "log": {
@@ -3614,25 +3716,31 @@ fi
 installsb(){
 echo
 printf '%s\n' "${C_CYAN}=========启用sing-box内核=========${C_RESET}"
+local min_sb_ver="1.12.0" local_sb_ver sb_version_state
 if [ ! -e "$HOME/agsbx/sing-box" ]; then
-upsingbox
+upsingbox || return 1
 else
-  # 🎯 架构兼容性加固：检查本地已有 sing-box 文件的版本。由于后续配置中强依赖 1.11.0+ 引入的顶级 endpoints 对象，
-  # 如果本地内核版本低于 1.11.0，则必须自动触发无人值守升级，否则新配置会导致内核因 unknown field 报错崩溃。
+  # 1.12.0 只是最低准入门槛，不是目标下载版本；upsingbox 不传版本时始终获取最新稳定版。
+  # 当前脚本生成的配置要求稳定版 Sing-box >= 1.12.0。
+  # 低于门槛或版本不可识别时先升级；升级失败或升级后仍不合格则停止，不能继续生成配置。
   local_sb_ver=$("$HOME/agsbx/sing-box" version 2>/dev/null | awk '/version/{print $NF}' | tr -d 'v')
-  sb_major=$(echo "$local_sb_ver" | cut -d. -f1)
-  sb_minor=$(echo "$local_sb_ver" | cut -d. -f2)
-  if [ -n "$sb_major" ] && [ -n "$sb_minor" ]; then
-    if [ "$sb_major" -lt 1 ] || { [ "$sb_major" -eq 1 ] && [ "$sb_minor" -lt 11 ]; }; then
-      echo "检测到本地已有的 Sing-box 版本为 v$local_sb_ver（低于 1.11.0 架构需求）。"
-      echo "系统正在自动执行无人值守的平滑升级，以确保完美兼容 endpoints 顶层配置..."
-      upsingbox
+  if printf '%s' "$local_sb_ver" | grep -Eq '^[0-9]+(\.[0-9]+){2}$'; then
+    sb_version_state=$(vercmp "$local_sb_ver" "$min_sb_ver")
+    if [ "$sb_version_state" = lt ]; then
+      echo "检测到本地已有的 Sing-box 版本为 v$local_sb_ver（低于最低合格版本 v$min_sb_ver）。"
+      echo "系统正在自动执行无人值守的平滑升级，以满足 Sing-box 1.12.0+ 配置要求..."
+      upsingbox || return 1
     fi
   else
     echo "无法识别本地已有的 Sing-box 版本信息。"
-    echo "系统正在自动执行无人值守的平滑升级，以确保完美兼容 endpoints 顶层配置..."
-    upsingbox
+    echo "系统正在自动执行无人值守的平滑升级，以满足 Sing-box 1.12.0+ 配置要求..."
+    upsingbox || return 1
   fi
+fi
+local_sb_ver=$("$HOME/agsbx/sing-box" version 2>/dev/null | awk '/version/{print $NF}' | tr -d 'v')
+if ! printf '%s' "$local_sb_ver" | grep -Eq '^[0-9]+(\.[0-9]+){2}$' || [ "$(vercmp "$local_sb_ver" "$min_sb_ver")" = lt ]; then
+  echo "错误：当前 Sing-box 版本 v${local_sb_ver:-未知} 未达到最低合格版本 v$min_sb_ver，已停止生成配置。"
+  return 1
 fi
 if secondary_protocol_is_selected naive && [ ! -s "$HOME/agsbx/sing-box" ]; then
   secondary_error "Naive 二级出站依赖 Sing-box sidecar，但内核未成功下载或不可用。"
@@ -4139,16 +4247,18 @@ if ! pgrep -f 'agsbx/caddy' >/dev/null 2>&1; then
   return 1
 fi
 fi
-# 等待并检测 Caddy 证书生成情况
+# 等待并完整校验 Caddy 证书生成情况
 local detect_sec=60
 local caddy_cert=""
 local caddy_key=""
+local caddy_cert_valid=no
 printf "正在等待 Caddy 自动托管申请证书（最长 60 秒，签发成功将立刻退出）"
 while [ $detect_sec -gt 0 ]; do
   printf "."
   caddy_cert=$(find "$HOME/agsbx" -type f -iname "$naive.crt" 2>/dev/null | head -1)
   caddy_key=$(find "$HOME/agsbx" -type f -iname "$naive.key" 2>/dev/null | head -1)
-  if [ -s "$caddy_cert" ] && [ -s "$caddy_key" ]; then
+  if validate_certificate_bundle "$caddy_cert" "$caddy_key" caddy "$naive"; then
+    caddy_cert_valid=yes
     echo " [成功]"
     break
   fi
@@ -4157,21 +4267,26 @@ while [ $detect_sec -gt 0 ]; do
 done
 echo
 
-if [ -s "$caddy_cert" ] && [ -s "$caddy_key" ] && openssl x509 -noout -in "$caddy_cert" >/dev/null 2>&1; then
+if [ "$caddy_cert_valid" = yes ]; then
   echo "caddy" > "$HOME/agsbx/cert_mode"
   record_cert_source "caddy" "$naive"
   echo "$caddy_cert" > "$HOME/agsbx/cert_file_path"
   echo "$caddy_key" > "$HOME/agsbx/key_file_path"
   echo "$naive" > "$HOME/agsbx/sni.txt"
+  # 本次运行已经完成有效期、SAN 和私钥匹配校验；缓存结果，避免后续 TLS 节点重复校验。
+  tls_cert_file="$caddy_cert"
+  tls_key_file="$caddy_key"
+  tls_cert_ready=yes
   write_cert_fingerprint
   # 调用 show_tls_cert_summary 展示详细证书信息并标记来源
   show_tls_cert_summary "Caddy 自动托管申请成功" "$naive"
   # 注册续期联动重载：Caddy 自动续期后，复用该证书的 xray/sing-box 能加载到新证书
   setup_caddy_cert_reload
 else
-  printf '%s\n' "${C_YELLOW}提示：60 秒内未检测到 Caddy 生成的有效 TLS 证书。${C_RESET}"
+  printf '%s\n' "${C_RED}错误：60 秒内未检测到通过有效期、SAN 与私钥匹配校验的 Caddy TLS 证书。${C_RESET}"
   echo "Caddy 可能仍在后台获取证书中，或者 80/443 端口被占用/DNS 解析未生效。"
   echo "建议稍后运行 journalctl -u agsbx-caddy -f 或查看 $HOME/agsbx/caddy.log 查看具体证书申请进度。"
+  return 1
 fi
 
 echo "NaiveProxy(Caddy) 已部署：https://$naive"
@@ -4833,7 +4948,7 @@ prepare_secondary_proxy(){
   parse_secondary_url "$securl" || return 1
   unset securl
   if secondary_has_singbox_selection && ! valid_ipv4 "$sec_server" && ! valid_ipv6 "$sec_server"; then
-    secondary_error "当前脚本兼容 Sing-box 1.11+；为避免新版域名解析字段不兼容，Sing-box 二级出站的 B 地址必须使用 IP。"
+    secondary_error "当前脚本要求 Sing-box 1.12+；为避免新版域名解析字段不兼容，Sing-box 二级出站的 B 地址必须使用 IP。"
     return 1
   fi
   secondary_validate_naive_server || return 1
@@ -5029,10 +5144,105 @@ EOF
   esac
 }
 
+validate_generated_core_config(){
+  local core="$1" binary config output
+  case "$core" in
+    xray)
+      binary="$HOME/agsbx/xray"
+      config="$HOME/agsbx/xr.json"
+      [ -x "$binary" ] && [ -s "$config" ] || { echo "错误：Xray 内核或配置文件不存在。"; return 1; }
+      output=$("$binary" run -test -c "$config" 2>&1) || {
+        echo "错误：Xray 配置检查失败，未注册服务。"
+        printf '%s\n' "$output" | tail -n 5
+        return 1
+      }
+      ;;
+    sing-box)
+      binary="$HOME/agsbx/sing-box"
+      config="$HOME/agsbx/sb.json"
+      [ -x "$binary" ] && [ -s "$config" ] || { echo "错误：Sing-box 内核或配置文件不存在。"; return 1; }
+      output=$("$binary" check -c "$config" 2>&1) || {
+        echo "错误：Sing-box 配置检查失败，未注册服务。"
+        printf '%s\n' "$output" | tail -n 5
+        return 1
+      }
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+start_agsbx_core(){
+  local core="$1" binary config service init_name description unit_path init_path core_pid
+  case "$core" in
+    xray)
+      binary="$HOME/agsbx/xray"; config="$HOME/agsbx/xr.json"; service="xr"; init_name="xray"; description="xr service"
+      ;;
+    sing-box)
+      binary="$HOME/agsbx/sing-box"; config="$HOME/agsbx/sb.json"; service="sb"; init_name="sing-box"; description="sb service"
+      ;;
+    *) return 1 ;;
+  esac
+
+  validate_generated_core_config "$core" || return 1
+  if pidof systemd >/dev/null 2>&1 && is_root; then
+    unit_path="/etc/systemd/system/${service}.service"
+    cat > "$unit_path" <<EOF
+[Unit]
+Description=$description
+After=network.target
+[Service]
+Type=simple
+NoNewPrivileges=yes
+TimeoutStartSec=0
+ExecStart=$binary run -c $config
+Restart=on-failure
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+[Install]
+WantedBy=multi-user.target
+EOF
+    if [ $? -ne 0 ]; then
+      echo "错误：无法写入 $unit_path。"
+      return 1
+    fi
+    systemctl daemon-reload >/dev/null 2>&1 || { echo "错误：systemctl daemon-reload 失败。"; return 1; }
+    systemctl enable "$service" >/dev/null 2>&1 || { echo "错误：无法启用 ${service}.service。"; return 1; }
+    systemctl start "$service" >/dev/null 2>&1 || { echo "错误：无法启动 ${service}.service。"; return 1; }
+    systemctl is-active --quiet "$service" || { echo "错误：${service}.service 启动后未保持 active。"; return 1; }
+  elif command -v rc-service >/dev/null 2>&1 && is_root; then
+    init_path="/etc/init.d/$init_name"
+    cat > "$init_path" <<EOF
+#!/sbin/openrc-run
+description="$description"
+command="$binary"
+command_args="run -c $config"
+command_background=yes
+pidfile="/run/${init_name}.pid"
+depend() {
+need net
+}
+EOF
+    if [ $? -ne 0 ]; then
+      echo "错误：无法写入 $init_path。"
+      return 1
+    fi
+    chmod 700 "$init_path" || { echo "错误：无法设置 $init_path 执行权限。"; return 1; }
+    rc-update add "$init_name" default >/dev/null 2>&1 || { echo "错误：无法启用 OpenRC $init_name 服务。"; return 1; }
+    rc-service "$init_name" start >/dev/null 2>&1 || { echo "错误：无法启动 OpenRC $init_name 服务。"; return 1; }
+  else
+    nohup "$binary" run -c "$config" > "$HOME/agsbx/${core}.log" 2>&1 &
+    core_pid=$!
+    sleep 1
+    kill -0 "$core_pid" >/dev/null 2>&1 || { echo "错误：$core 后台进程启动失败。"; return 1; }
+  fi
+  wait_agsbx_component "$core" || { echo "错误：$core 启动后未检测到对应进程。"; return 1; }
+}
+
 xrsbout(){
 local naive_dns_strategy=prefer_ipv4
 valid_ipv6 "$sec_server" && naive_dns_strategy=prefer_ipv6
-secondary_build_runtime_tags || exit 1
+secondary_build_runtime_tags || return 1
 if [ -e "$HOME/agsbx/xr.json" ]; then
 sed -i '$ s/,[[:space:]]*$//' "$HOME/agsbx/xr.json" 2>/dev/null || sed -i '$s/,$//' "$HOME/agsbx/xr.json"
 cat >> "$HOME/agsbx/xr.json" <<EOF
@@ -5120,45 +5330,7 @@ cat >> "$HOME/agsbx/xr.json" <<EOF
   }
 }
 EOF
-if pidof systemd >/dev/null 2>&1 && is_root; then
-cat > /etc/systemd/system/xr.service <<EOF
-[Unit]
-Description=xr service
-After=network.target
-[Service]
-Type=simple
-NoNewPrivileges=yes
-TimeoutStartSec=0
-ExecStart=$HOME/agsbx/xray run -c $HOME/agsbx/xr.json
-Restart=on-failure
-RestartSec=5s
-StandardOutput=journal
-StandardError=journal
-[Install]
-WantedBy=multi-user.target
-EOF
-systemctl daemon-reload >/dev/null 2>&1
-systemctl enable xr >/dev/null 2>&1
-systemctl start xr >/dev/null 2>&1
-elif command -v rc-service >/dev/null 2>&1 && is_root; then
-cat > /etc/init.d/xray <<EOF
-#!/sbin/openrc-run
-description="xr service"
-command="$HOME/agsbx/xray"
-command_args="run -c $HOME/agsbx/xr.json"
-command_background=yes
-pidfile="/run/xray.pid"
-command_background="yes"
-depend() {
-need net
-}
-EOF
-chmod +x /etc/init.d/xray >/dev/null 2>&1
-rc-update add xray default >/dev/null 2>&1
-rc-service xray start >/dev/null 2>&1
-else
-nohup "$HOME/agsbx/xray" run -c "$HOME/agsbx/xr.json" > "$HOME/agsbx/xray.log" 2>&1 &
-fi
+start_agsbx_core xray || return 1
 fi
 if [ -e "$HOME/agsbx/sb.json" ]; then
 # ------------------------------------------------------------
@@ -5324,45 +5496,7 @@ cat >> "$HOME/agsbx/sb.json" <<EOF
   }
 }
 EOF
-if pidof systemd >/dev/null 2>&1 && is_root; then
-cat > /etc/systemd/system/sb.service <<EOF
-[Unit]
-Description=sb service
-After=network.target
-[Service]
-Type=simple
-NoNewPrivileges=yes
-TimeoutStartSec=0
-ExecStart=$HOME/agsbx/sing-box run -c $HOME/agsbx/sb.json
-Restart=on-failure
-RestartSec=5s
-StandardOutput=journal
-StandardError=journal
-[Install]
-WantedBy=multi-user.target
-EOF
-systemctl daemon-reload >/dev/null 2>&1
-systemctl enable sb >/dev/null 2>&1
-systemctl start sb >/dev/null 2>&1
-elif command -v rc-service >/dev/null 2>&1 && is_root; then
-cat > /etc/init.d/sing-box <<EOF
-#!/sbin/openrc-run
-description="sb service"
-command="$HOME/agsbx/sing-box"
-command_args="run -c $HOME/agsbx/sb.json"
-command_background=yes
-pidfile="/run/sing-box.pid"
-command_background="yes"
-depend() {
-need net
-}
-EOF
-chmod +x /etc/init.d/sing-box >/dev/null 2>&1
-rc-update add sing-box default >/dev/null 2>&1
-rc-service sing-box start >/dev/null 2>&1
-else
-nohup "$HOME/agsbx/sing-box" run -c "$HOME/agsbx/sb.json" > "$HOME/agsbx/sing-box.log" 2>&1 &
-fi
+start_agsbx_core sing-box || return 1
 fi
 }
 #============================================================
@@ -5373,10 +5507,25 @@ fi
 # - 关联性: 由第 12 段 (主入口流程决策) 在判定为新安装或重置时调用，是串联整个 3300 行脚本全流程安装逻辑的核心中枢。
 #============================================================
 ins(){
+local argo_pid
+install_required_xray=no
+install_required_singbox=no
+install_required_caddy=no
+install_required_mita=no
+install_required_argo=no
+install_required_subscription=no
+if [ "$rep_mode" = yes ]; then
+  install_required_caddy="${rep_preserved_caddy_running:-no}"
+else
+  [ -n "$naive" ] && install_required_caddy=yes
+fi
+[ "$mierup" = yes ] && install_required_mita=yes
+[ -n "$argo" ] && [ -n "$vmag" ] && install_required_argo=yes
+[ "$sub" = yes ] && install_required_subscription=yes
 if [ "$mierup" = yes ]; then
   validate_mita_platform || exit 1
 fi
-enable_system_bbr
+[ "$rep_mode" = yes ] || enable_system_bbr
 # Mieru/Mita 是独立系统服务，不参与 Xray/Sing-box 内核归属判断；设置 mieru=y（或预设 mierupt）时单独安装。
 if [ "$mierup" = yes ]; then
   installmita || exit 1
@@ -5388,11 +5537,13 @@ secondary_protocol_is_selected naive && persist_secondary_proxy_state
 # NaiveProxy（Caddy）优先装配：先让 Caddy 起来并自动托管签发真实域名证书，
 # 之后 hy2/tuic/anytls/xhy2 等 TLS 节点在 setup_tls_certificate 中复用该证书（SNI=naive 域名）。
 # 仅当显式设置 naive=<域名> 时执行，与 xray/sing-box 隔离并存；Caddy 用独立端口(443)，不与代理内核抢占。
-if [ -n "$naive" ]; then
+if [ -n "$naive" ] && [ "$rep_mode" = yes ]; then
+  echo "rep 模式：保留现有 Naive/Caddy 服务、配置和证书，不重新安装或重载 Caddy。"
+elif [ -n "$naive" ]; then
   if secondary_protocol_is_selected naive; then
     installcaddy || { secondary_error "Naive 二级出站依赖 Caddy，配置失败后已停止安装。"; exit 1; }
   else
-    installcaddy
+    installcaddy || { echo "NaiveProxy(Caddy) 配置或证书校验失败，已停止安装。"; exit 1; }
   fi
 fi
 local need_xray=no need_singbox=no
@@ -5410,29 +5561,31 @@ if [ "$vmp" = yes ] || [ "$sop" = yes ]; then
   if [ "$secondary_common_core" = sb ]; then need_singbox=yes; else need_xray=yes; fi
 fi
 secondary_protocol_is_selected naive && need_singbox=yes
+install_required_xray="$need_xray"
+install_required_singbox="$need_singbox"
 
 if [ "$need_xray" = yes ] || [ "$need_singbox" = yes ]; then
   if [ "$need_xray" = yes ] && [ "$need_singbox" = no ]; then
-    installxray
+    installxray || return 1
     xrsbvm
     xrsbso
     warpsx
-    xrsbout
+    xrsbout || return 1
     hyp="shyptargo"; tup="tuptargo"; anp="anptargo"; arp="arptargo"; ssp="ssptargo"
   elif [ "$need_xray" = no ] && [ "$need_singbox" = yes ]; then
-    installsb || { secondary_protocol_is_selected naive && exit 1; }
+    installsb || return 1
     xrsbvm
     xrsbso
     warpsx
-    xrsbout
+    xrsbout || return 1
     xhp="xhptargo"; vlp="vlptargo"; vxp="vxptargo"; vwp="vwptargo"; xhyp="xhyptargo"; xdns="xdnstargo"; xicp="xicptargo"; xvcdn="xvcdnptargo"; xvargo="xvargoptargo"
   else
-    installsb || { secondary_protocol_is_selected naive && exit 1; }
-    installxray
+    installsb || return 1
+    installxray || return 1
     xrsbvm
     xrsbso
     warpsx
-    xrsbout
+    xrsbout || return 1
   fi
 fi
 
@@ -5465,7 +5618,12 @@ argocore=$({ command -v curl >/dev/null 2>&1 && curl -Ls https://data.jsdelivr.c
 echo "下载Cloudflared-argo最新正式版内核：$argocore"
 # 注意：此处下载的是数十 MB 的二进制文件，不可像 IP 探测那样套用 timeout 3，否则 wget 必然被中途掐断
 url="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-$cpu"; out="$HOME/agsbx/cloudflared"; (command -v curl >/dev/null 2>&1 && curl -Lo "$out" -# --retry 2 "$url") || (command -v wget >/dev/null 2>&1 && wget -O "$out" --tries=2 "$url")
-chmod +x "$HOME/agsbx/cloudflared"
+if [ ! -s "$out" ]; then
+  echo "错误：Cloudflared 下载失败或文件为空。"
+  return 1
+fi
+chmod +x "$HOME/agsbx/cloudflared" || { echo "错误：无法设置 Cloudflared 执行权限。"; return 1; }
+"$HOME/agsbx/cloudflared" --version >/dev/null 2>&1 || { echo "错误：Cloudflared 文件不可执行或架构不兼容。"; return 1; }
 fi
 if [ "$argo" = "vmpt" ]; then argoport=$(cat "$HOME/agsbx/port_vm_ws" 2>/dev/null); echo "Vmess" > "$HOME/agsbx/vlvm"; elif [ "$argo" = "vwpt" ]; then argoport=$(cat "$HOME/agsbx/port_vw" 2>/dev/null); echo "Vless" > "$HOME/agsbx/vlvm"; elif [ "$argo" = "xvargopt" ]; then argoport=$(cat "$HOME/agsbx/port_xvargo" 2>/dev/null); echo "Vlessenc-xhttp-tls-vision-fm" > "$HOME/agsbx/vlvm"; fi; echo "$argoport" > "$HOME/agsbx/argoport.log"
 # Argo 隧道本地回源协议自适应：vmess-ws / vless-ws 入站为明文，回源走 http；
@@ -5489,9 +5647,11 @@ RestartSec=5s
 [Install]
 WantedBy=multi-user.target
 EOF
-systemctl daemon-reload >/dev/null 2>&1
-systemctl enable argo >/dev/null 2>&1
-systemctl start argo >/dev/null 2>&1
+if [ $? -ne 0 ]; then echo "错误：无法写入 argo.service。"; return 1; fi
+systemctl daemon-reload >/dev/null 2>&1 || { echo "错误：Argo systemd daemon-reload 失败。"; return 1; }
+systemctl enable argo >/dev/null 2>&1 || { echo "错误：无法启用 argo.service。"; return 1; }
+systemctl start argo >/dev/null 2>&1 || { echo "错误：无法启动 argo.service。"; return 1; }
+systemctl is-active --quiet argo || { echo "错误：argo.service 启动后未保持 active。"; return 1; }
 elif command -v rc-service >/dev/null 2>&1 && is_root; then
 cat > /etc/init.d/argo <<EOF
 #!/sbin/openrc-run
@@ -5504,11 +5664,15 @@ depend() {
 need net
 }
 EOF
-chmod +x /etc/init.d/argo >/dev/null 2>&1
-rc-update add argo default >/dev/null 2>&1
-rc-service argo start >/dev/null 2>&1
+if [ $? -ne 0 ]; then echo "错误：无法写入 OpenRC argo 服务。"; return 1; fi
+chmod 700 /etc/init.d/argo || { echo "错误：无法设置 OpenRC argo 服务权限。"; return 1; }
+rc-update add argo default >/dev/null 2>&1 || { echo "错误：无法启用 OpenRC argo 服务。"; return 1; }
+rc-service argo start >/dev/null 2>&1 || { echo "错误：无法启动 OpenRC argo 服务。"; return 1; }
 else
 nohup "$HOME/agsbx/cloudflared" tunnel --no-autoupdate --edge-ip-version auto --protocol http2 run --token "${ARGO_AUTH}" > "$HOME/agsbx/argo.log" 2>&1 &
+argo_pid=$!
+sleep 1
+kill -0 "$argo_pid" >/dev/null 2>&1 || { echo "错误：Cloudflared Argo 后台进程启动失败。"; return 1; }
 fi
 echo "${ARGO_DOMAIN}" > "$HOME/agsbx/sbargoym.log"
 echo "${ARGO_AUTH}" > "$HOME/agsbx/sbargotoken.log"
@@ -5516,6 +5680,9 @@ echo "${ARGO_AUTH}" > "$HOME/agsbx/sbargotoken.log"
 else
 argoname='临时'
 nohup "$HOME/agsbx/cloudflared" tunnel --url ${argoscheme}://localhost:$(cat $HOME/agsbx/argoport.log) ${argoxtls}--edge-ip-version auto --no-autoupdate --protocol http2 > $HOME/agsbx/argo.log 2>&1 &
+argo_pid=$!
+sleep 1
+kill -0 "$argo_pid" >/dev/null 2>&1 || { echo "错误：临时 Argo 后台进程启动失败。"; return 1; }
 fi
 echo "申请Argo$argoname隧道中……请稍等"
 sleep 2
@@ -5535,36 +5702,43 @@ if [ -n "${argodomain}" ]; then
 echo "Argo$argoname隧道申请成功"
 else
 echo "Argo$argoname隧道申请失败，请稍后再试"
+return 1
 fi
 fi
 # NaiveProxy（Caddy）已在本函数开头优先装配并签发证书（供 TLS 节点复用），此处不再重复。
 sleep 5
 echo
-if agsbx_running ; then
+verify_install_required_components no || return 1
 # 把 agsbx 装进 /usr/local/bin（root 默认 PATH 内）：安装完当前 SSH 会话即可直接用 agsbx，
 # 无需改 PATH、无需退出重连。旧版装在 $HOME/bin 并往 .bashrc 注入 PATH，因子进程改不了父 shell 环境才被迫要重登录。
-# 此处一并清理旧版残留：$HOME/bin/agsbx 文件 + .bashrc 里注入的 PATH 行。
-[ -f ~/.bashrc ] && {
-sed -i '/agsbx/d' ~/.bashrc
-sed -i '/export PATH="\$HOME\/bin:\$PATH"/d' ~/.bashrc
-sed -i '/export PATH="\$PATH:\$HOME\/bin"/d' ~/.bashrc
-}
-rm -f "$HOME/bin/agsbx"
+# 首次安装/完整重装时清理旧版残留；rep 不处理用户 shell 配置或旧快捷方式。
+if [ "$rep_mode" != yes ]; then
+  [ -f ~/.bashrc ] && {
+  sed -i '/agsbx/d' ~/.bashrc
+  sed -i '/export PATH="\$HOME\/bin:\$PATH"/d' ~/.bashrc
+  sed -i '/export PATH="\$PATH:\$HOME\/bin"/d' ~/.bashrc
+  }
+  rm -f "$HOME/bin/agsbx"
+fi
 if [ -d /usr/local/bin ] || mkdir -p /usr/local/bin 2>/dev/null; then
 SCRIPT_PATH="/usr/local/bin/agsbx"
 else
 SCRIPT_PATH="/usr/bin/agsbx"
 fi
-(command -v curl >/dev/null 2>&1 && curl -sL "$agsbxurl" -o "$SCRIPT_PATH") || (command -v wget >/dev/null 2>&1 && wget -qO "$SCRIPT_PATH" "$agsbxurl")
+if ! { (command -v curl >/dev/null 2>&1 && curl -sL "$agsbxurl" -o "$SCRIPT_PATH") || (command -v wget >/dev/null 2>&1 && wget -qO "$SCRIPT_PATH" "$agsbxurl"); }; then
+  echo "错误：agsbx 快捷命令下载失败。"
+  return 1
+fi
+[ -s "$SCRIPT_PATH" ] || { echo "错误：agsbx 快捷命令文件为空。"; return 1; }
 # 700：仅 root 可读/执行，非 root 用户连读取或运行 agsbx 都被拒；root 因 /usr/local/bin 在其 PATH 中仍可立即使用。
-chmod 700 "$SCRIPT_PATH"
-cron_tmp=$(mktemp)
+chmod 700 "$SCRIPT_PATH" || { echo "错误：无法设置 agsbx 快捷命令权限。"; return 1; }
+cron_tmp=$(mktemp) || { echo "错误：无法创建 crontab 临时文件。"; return 1; }
 crontab -l > "$cron_tmp" 2>/dev/null
 if ! pidof systemd >/dev/null 2>&1 && ! command -v rc-service >/dev/null 2>&1; then
 sed -i '/agsbx\/sing-box/d' "$cron_tmp"
 sed -i '/agsbx\/xray/d' "$cron_tmp"
-# 仅清理 @reboot 的 caddy 运行守护行，保留 setup_caddy_cert_reload 注册的续期联动 cron(caddy_cert_reload.sh)。
-sed -i '/agsbx\/caddy run/d' "$cron_tmp"
+# 首次安装/完整重装才重建 Caddy 的 @reboot 行；rep 保留现有 Caddy cron 原文。
+[ "$rep_mode" = yes ] || sed -i '/agsbx\/caddy run/d' "$cron_tmp"
 # Naive 二级链路在裸环境中使用同一条启动任务：先启动 Sing-box，有限等待回环端口，再启动 Caddy。
 # 即使等待超时仍启动 Caddy，以保留 TLS/伪装站；upstream 不可达时代理请求保持失败关闭。
 if secondary_protocol_is_selected naive && [ -s "$HOME/agsbx/sing-box" ] && [ -s "$HOME/agsbx/sb.json" ] && [ -s "$HOME/agsbx/caddy" ] && [ -s "$HOME/agsbx/Caddyfile" ]; then
@@ -5577,7 +5751,7 @@ fi
 if find /proc/*/exe -type l 2>/dev/null | grep -E '/proc/[0-9]+/exe' | xargs -r readlink 2>/dev/null | grep -q 'agsbx/xray' || pgrep -f 'agsbx/xray' >/dev/null 2>&1 ; then
 echo '@reboot sleep 10 && /bin/sh -c "nohup $HOME/agsbx/xray run -c $HOME/agsbx/xr.json > $HOME/agsbx/xray.log 2>&1 &"' >> "$cron_tmp"
 fi
-if ! secondary_protocol_is_selected naive && [ -n "$naive" ] && [ -s "$HOME/agsbx/caddy" ]; then
+if [ "$rep_mode" != yes ] && ! secondary_protocol_is_selected naive && [ -n "$naive" ] && [ -s "$HOME/agsbx/caddy" ]; then
 echo '@reboot sleep 10 && /bin/sh -c "rm -f $HOME/agsbx/caddy-admin.sock; nohup $HOME/agsbx/caddy run --config $HOME/agsbx/Caddyfile > $HOME/agsbx/caddy.log 2>&1 &"' >> "$cron_tmp"
 fi
 fi
@@ -5591,12 +5765,8 @@ else
 echo '@reboot sleep 10 && /bin/sh -c "nohup $HOME/agsbx/cloudflared tunnel --url '"$argoscheme"'://localhost:$(cat $HOME/agsbx/argoport.log) '"$argoxtls"'--edge-ip-version auto --no-autoupdate --protocol http2 > $HOME/agsbx/argo.log 2>&1 &"' >> "$cron_tmp"
 fi
 fi
-crontab "$cron_tmp" >/dev/null 2>&1
+crontab "$cron_tmp" >/dev/null 2>&1 || { rm -f "$cron_tmp"; echo "错误：无法写入开机启动任务。"; return 1; }
 rm -f "$cron_tmp"
-echo "Airgosbx脚本进程启动成功，安装完毕" && sleep 2
-else
-echo "Airgosbx脚本进程未启动，安装失败" && exit
-fi
 }
 #============================================================
 # [第9段] 状态查询与节点大卡片渲染函数
@@ -6217,11 +6387,15 @@ if [ -s "$HOME/agsbx/naive_domain" ]; then
 naivedomain=$(cat "$HOME/agsbx/naive_domain")
 naiveuser=$(cat "$HOME/agsbx/naive_user" 2>/dev/null)
 naivepass=$(cat "$HOME/agsbx/naive_pass" 2>/dev/null)
+naiveuser_uri=$(uri_percent_encode "$naiveuser")
+naivepass_uri=$(uri_percent_encode "$naivepass")
+naive_h2_title=$(uri_percent_encode "${sxname}naive-h2-$hostname")
+naive_h3_title=$(uri_percent_encode "${sxname}naive-h3-$hostname")
 node_title "💣【 NaiveProxy 】Caddy 转发代理，节点信息如下："
 echo "账号：$naiveuser"
 echo "密码：$naivepass"
-echo "分享链接(HTTPS·H1/H2，TCP)：naive+https://$naiveuser:$naivepass@$naivedomain:443?security=tls&sni=$naivedomain&insecure=0&allowInsecure=0#${sxname}naive-h2-$hostname"
-echo "分享链接(QUIC·H3，UDP)：naive+quic://$naiveuser:$naivepass@$naivedomain:443?congestion_control=bbr&security=tls&sni=$naivedomain&insecure=0&allowInsecure=0#${sxname}naive-h3-$hostname"
+echo "分享链接(HTTPS·H1/H2，TCP)：naive+https://${naiveuser_uri}:${naivepass_uri}@$naivedomain:443?security=tls&sni=$naivedomain&insecure=0&allowInsecure=0#${naive_h2_title}"
+echo "分享链接(QUIC·H3，UDP)：naive+quic://${naiveuser_uri}:${naivepass_uri}@$naivedomain:443?congestion_control=bbr&security=tls&sni=$naivedomain&insecure=0&allowInsecure=0#${naive_h3_title}"
 echo "（用 NekoBox 等支持 naive 的客户端导入；SNI/端口已含在链接内，naive+quic 需放行 UDP/443；未并入 jh.txt / Clash 聚合订阅）"
 echo
 fi
@@ -6524,10 +6698,10 @@ echo "$subtoken" > "$HOME/agsbx/subtoken.log"
 # - 端口机制：读取前置 (installxray/installsb) 注入时持久化保存的独立回源端口 subport_real 予以启动。
 # - 关联映射：自启动和 crontab 守护任务将天然与该随机回源端口绑定，对前文的 TLS 卸载 Inbound 提供闭环数据响应。
 # ------------------------------------------------------------
-setup_tls_certificate
+setup_tls_certificate || return 1
 if [ ! -s "$tls_cert_file" ] || [ ! -s "$tls_key_file" ]; then
   echo "错误：订阅服务所需的 TLS 证书未准备完成，终止安装。"
-  exit 1
+  return 1
 fi
 
 subport_show=$(init_port "$subpt" subport.log)
@@ -6535,28 +6709,48 @@ subport_real=$(init_subport_real "$subport_show")
 sub_protocol="https"
 
 kill -15 $(pgrep -f 'websbx' 2>/dev/null) >/dev/null 2>&1
-mkdir -p "$HOME/websbx/$subtoken"
-ln -sf "$HOME/agsbx/clmi.yaml" "$HOME/websbx/$subtoken/clmi.yaml"
-ln -sf "$HOME/agsbx/jh.txt" "$HOME/websbx/$subtoken/jhsub.txt"
+mkdir -p "$HOME/websbx/$subtoken" || { echo "错误：无法创建订阅目录。"; return 1; }
+ln -sf "$HOME/agsbx/clmi.yaml" "$HOME/websbx/$subtoken/clmi.yaml" || { echo "错误：无法创建 Clash 订阅链接。"; return 1; }
+ln -sf "$HOME/agsbx/jh.txt" "$HOME/websbx/$subtoken/jhsub.txt" || { echo "错误：无法创建聚合订阅链接。"; return 1; }
+
+local subscription_pid subscription_ready=no subscription_attempt
 
 if command -v apk >/dev/null 2>&1; then
+  command -v busybox-extras >/dev/null 2>&1 || { echo "错误：系统缺少 busybox-extras，无法启动订阅服务。"; return 1; }
   busybox-extras httpd -f -p $subport_real -h "$HOME/websbx" > /dev/null 2>&1 &
+  subscription_pid=$!
+  sleep 1
+  kill -0 "$subscription_pid" >/dev/null 2>&1 || { echo "错误：BusyBox 订阅服务启动失败。"; return 1; }
   cat > /etc/local.d/alpinesubsbx.start <<EOF
 #!/bin/bash
 sleep 10
 busybox-extras httpd -f -p $subport_real -h $HOME/websbx > /dev/null 2>&1 &
 EOF
-  chmod +x /etc/local.d/alpinesubsbx.start
-  rc-update add local default >/dev/null 2>&1
+  if [ $? -ne 0 ]; then echo "错误：无法写入 Alpine 订阅启动脚本。"; return 1; fi
+  chmod 700 /etc/local.d/alpinesubsbx.start || { echo "错误：无法设置 Alpine 订阅启动脚本权限。"; return 1; }
+  rc-update add local default >/dev/null 2>&1 || { echo "错误：无法启用 Alpine local 启动服务。"; return 1; }
 else
+  command -v busybox >/dev/null 2>&1 || { echo "错误：系统缺少 busybox，无法启动订阅服务。"; return 1; }
   busybox httpd -f -p $subport_real -h "$HOME/websbx" > /dev/null 2>&1 &
-  cron_tmp=$(mktemp)
+  subscription_pid=$!
+  sleep 1
+  kill -0 "$subscription_pid" >/dev/null 2>&1 || { echo "错误：BusyBox 订阅服务启动失败。"; return 1; }
+  cron_tmp=$(mktemp) || { echo "错误：无法创建订阅 crontab 临时文件。"; return 1; }
   crontab -l 2>/dev/null > "$cron_tmp"
   sed -i '/websbx/d' "$cron_tmp"
   echo "@reboot sleep 10 && /bin/bash -c \"busybox httpd -f -p $subport_real -h $HOME/websbx > /dev/null 2>&1 &\"" >> "$cron_tmp"
-  crontab "$cron_tmp" >/dev/null 2>&1
+  crontab "$cron_tmp" >/dev/null 2>&1 || { rm -f "$cron_tmp"; echo "错误：无法写入订阅开机启动任务。"; return 1; }
   rm -f "$cron_tmp"
 fi
+
+for subscription_attempt in {1..5}; do
+  if subscription_http_is_running && subscription_http_is_listening "$subport_real"; then
+    subscription_ready=yes
+    break
+  fi
+  sleep 1
+done
+[ "$subscription_ready" = yes ] || { echo "错误：订阅 HTTP 服务未监听预期端口 $subport_real。"; return 1; }
 
 subdomain=$(cat "$HOME/agsbx/cdnym" 2>/dev/null)
 # 复用 Caddy 真实证书时(cert_mode=caddy)，订阅地址优先用 naive 域名，使客户端 HTTPS 证书校验直接通过、
@@ -6590,9 +6784,22 @@ hr
 [ -s "$HOME/agsbx/jh.txt" ] && echo "聚合节点信息，请进入 $HOME/agsbx/jh.txt 文件目录查看或者运行 cat $HOME/agsbx/jh.txt 查看"
 hr2
 # 安全加固：全局收紧敏感文件权限（阻断多用户环境下的未授权文件读取）
-find "$HOME/agsbx" -type d -exec chmod 700 {} + 2>/dev/null
-find "$HOME/agsbx" -type f -exec chmod 600 {} + 2>/dev/null
-chmod 700 "$HOME/agsbx/xray" "$HOME/agsbx/sing-box" "$HOME/agsbx/cloudflared" "$HOME/agsbx/caddy" 2>/dev/null
+if [ "$rep_mode" = yes ]; then
+  for permission_path in "$HOME/agsbx"/* "$HOME/agsbx"/.[!.]* "$HOME/agsbx"/..?*; do
+    [ -e "$permission_path" ] || [ -L "$permission_path" ] || continue
+    rep_entry_is_preserved "${permission_path##*/}" && continue
+    if [ -d "$permission_path" ]; then
+      find "$permission_path" -type d -exec chmod 700 {} + 2>/dev/null
+      find "$permission_path" -type f -exec chmod 600 {} + 2>/dev/null
+    fi
+    [ -f "$permission_path" ] && chmod 600 "$permission_path" 2>/dev/null
+  done
+  chmod 700 "$HOME/agsbx/xray" "$HOME/agsbx/sing-box" "$HOME/agsbx/cloudflared" 2>/dev/null
+else
+  find "$HOME/agsbx" -type d -exec chmod 700 {} + 2>/dev/null
+  find "$HOME/agsbx" -type f -exec chmod 600 {} + 2>/dev/null
+  chmod 700 "$HOME/agsbx/xray" "$HOME/agsbx/sing-box" "$HOME/agsbx/cloudflared" "$HOME/agsbx/caddy" 2>/dev/null
+fi
 echo "相关快捷方式如下：(首次安装成功后需重连SSH，agsbx快捷方式才可生效)"
 showmode
 }
@@ -6603,17 +6810,425 @@ showmode
 # - 本大段包含 cleandel() (系统级清理服务与进程、清洗除 ACME 定时检查外的 crontab 任务)、xrestart()/sbrestart() (Xray/Sing-box的重启自愈与前后台运行方式平滑自适应)。
 # - 关联性: 为后续第 11 段 (命令路由) 处理 del(卸载)、rep(重置协议) 或 res(重启) 提供底层物理清理与状态复原支撑。
 #============================================================
+rep_entry_is_preserved(){
+  case "$1" in
+    caddy|caddy*|.caddy*|Caddyfile|naive_*|acme*|acmecer|dnsapi|ca.conf|sbx_update)
+      return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+rep_validate_preserved_certificate(){
+  local mode source cert_file key_file identifier
+  if [ "$sub" != yes ] && [ "$hyp" != yes ] && [ "$xhyp" != yes ] \
+    && [ "$tup" != yes ] && [ "$ssp" != yes ] && [ "$anp" != yes ] \
+    && [ "$xvcdn" != yes ] && [ "$xvargo" != yes ]; then
+    return 0
+  fi
+  mode=$(cat "$HOME/agsbx/cert_mode" 2>/dev/null)
+  if [ "$rep_preserved_caddy" = yes ] && [ "$mode" != caddy ]; then
+    echo "错误：检测到需要保留的 Caddy，但现有证书模式不是 caddy；为避免错误复用，请先执行 agsbx del。"
+    return 1
+  fi
+  case "$mode" in
+    caddy)
+      if [ "$rep_preserved_caddy" != yes ]; then
+        echo "错误：检测到 Caddy 证书状态，但缺少可安全保留的 Caddy 配置；请先执行 agsbx del。"
+        return 1
+      fi
+      cert_file=$(cat "$HOME/agsbx/cert_file_path" 2>/dev/null)
+      key_file=$(cat "$HOME/agsbx/key_file_path" 2>/dev/null)
+      identifier=$(cat "$HOME/agsbx/cert_identifier" 2>/dev/null)
+      [ -n "$identifier" ] || identifier="$rep_preserved_naive_domain"
+      if ! valid_domain "$identifier" \
+        || ! validate_certificate_bundle "$cert_file" "$key_file" caddy "$identifier"; then
+        echo "错误：rep 保留的 Caddy 证书未通过有效期、SAN 或私钥匹配校验。"
+        echo "如需更换或重新申请 Caddy 证书，请先执行 agsbx del，再重新运行脚本。"
+        return 1
+      fi
+      tls_cert_source="rep 前置校验通过的 Caddy 证书"
+      ;;
+    ca)
+      cert_file=$(cat "$HOME/agsbx/cert_file_path" 2>/dev/null)
+      key_file=$(cat "$HOME/agsbx/key_file_path" 2>/dev/null)
+      [ -n "$cert_file" ] || cert_file="$HOME/agsbx/acmecer/cert.pem"
+      [ -n "$key_file" ] || key_file="$HOME/agsbx/acmecer/private.key"
+      source=$(cat "$HOME/agsbx/cert_source" 2>/dev/null)
+      identifier=$(cat "$HOME/agsbx/cert_identifier" 2>/dev/null)
+      [ -n "$identifier" ] || identifier=$(cat "$HOME/agsbx/sni.txt" 2>/dev/null)
+      case "$source" in
+        acme-ip|acme-http|acme-alpn|acme-dns|external) ;;
+        *)
+          echo "错误：rep 保留的受信任证书来源无法识别；请先执行 agsbx del。"
+          return 1 ;;
+      esac
+      if { ! valid_ip "$identifier" && ! valid_domain "$identifier"; } \
+        || ! validate_certificate_bundle "$cert_file" "$key_file" "$source" "$identifier"; then
+        echo "错误：rep 保留的 ACME/外部证书未通过有效期、SAN 或私钥匹配校验。"
+        echo "如需更换或重新申请证书，请先执行 agsbx del，再重新运行脚本。"
+        return 1
+      fi
+      tls_cert_source="rep 前置校验通过的本地受信任证书"
+      ;;
+    selfsigned|"")
+      return 0
+      ;;
+    *)
+      echo "错误：无法识别现有证书模式 $mode；为避免 rep 误改证书，请先执行 agsbx del。"
+      return 1
+      ;;
+  esac
+  tls_cert_file="$cert_file"
+  tls_key_file="$key_file"
+  write_cert_fingerprint || {
+    echo "错误：rep 无法记录已验证证书的 SHA-256 指纹。"
+    return 1
+  }
+  tls_cert_ready=yes
+  echo "rep 前置检查：现有 $mode 证书已重新验证，本次运行后续直接复用且不重复校验。"
+}
+
+rep_validate_preserved_scope(){
+  local option value
+  for option in naive naiveuser naivepass naivebuild naivesite alns acmemode certip certym certwild certcrt certkey acmem acmetimeout certdns CF_Token CF_Account_ID CF_Zone_ID sslcom_eab_kid sslcom_eab_hmac; do
+    value=${!option-}
+    if [ -n "$value" ]; then
+      echo "错误：agsbx rep 不允许设置 $option；rep 不修改 Naive/Caddy 或任何证书。"
+      echo "如需变更这些内容，请先执行 agsbx del，再重新运行脚本。"
+      return 1
+    fi
+  done
+  case ",$(printf '%s' "$secp" | tr 'A-Z' 'a-z' | tr -d ' ')," in
+    *,naive,*)
+      echo "错误：agsbx rep 不允许新增或重建 Naive 二级链路；请先执行 agsbx del。"
+      return 1 ;;
+  esac
+  if secondary_saved_protocol_is_selected naive; then
+    echo "错误：现有部署使用 Naive 二级链路，rep 无法在不改动 Caddyfile 的前提下安全重建其 Sing-box sidecar。"
+    echo "请先执行 agsbx del，再重新运行脚本。"
+    return 1
+  fi
+
+  rep_preserved_caddy=no
+  rep_preserved_caddy_running=no
+  if [ -s "$HOME/agsbx/Caddyfile" ] || agsbx_component_running caddy; then
+    rep_preserved_naive_domain=$(cat "$HOME/agsbx/naive_domain" 2>/dev/null)
+    if ! valid_domain "$rep_preserved_naive_domain"; then
+      echo "错误：检测到需要保留的 Caddy，但 naive_domain 缺失或无效；为避免误改，请先执行 agsbx del。"
+      return 1
+    fi
+    rep_preserved_caddy=yes
+    naive="$rep_preserved_naive_domain"
+    agsbx_component_running caddy && rep_preserved_caddy_running=yes
+  fi
+  rep_validate_preserved_certificate || return 1
+}
+
+rep_service_is_enabled(){
+  local service="$1" systemd_name openrc_name
+  case "$service" in
+    xray) systemd_name=xr; openrc_name=xray ;;
+    sing-box) systemd_name=sb; openrc_name=sing-box ;;
+    argo) systemd_name=argo; openrc_name=argo ;;
+    mita) systemd_name=mita; openrc_name=mita ;;
+    *) return 1 ;;
+  esac
+  if pidof systemd >/dev/null 2>&1; then
+    systemctl is-enabled --quiet "$systemd_name"
+  elif command -v rc-update >/dev/null 2>&1; then
+    rc-update show default 2>/dev/null | awk -v name="$openrc_name" '$1 == name {found=1} END {exit !found}'
+  else
+    return 1
+  fi
+}
+
+rep_snapshot_mutable_entries(){
+  local destination="$1" path name
+  mkdir -p "$destination" || return 1
+  for path in "$HOME/agsbx"/* "$HOME/agsbx"/.[!.]* "$HOME/agsbx"/..?*; do
+    [ -e "$path" ] || [ -L "$path" ] || continue
+    name=${path##*/}
+    rep_entry_is_preserved "$name" && continue
+    cp -a -- "$path" "$destination/" || return 1
+  done
+}
+
+rep_remove_mutable_entries(){
+  local agsbx_dir="$HOME/agsbx" path name
+  [ -n "$HOME" ] && [ "$HOME" != / ] && [ "$agsbx_dir" = "$HOME/agsbx" ] || {
+    echo "错误：rep 回滚目录边界检查失败。"
+    return 1
+  }
+  [ -d "$agsbx_dir" ] || return 0
+  for path in "$agsbx_dir"/* "$agsbx_dir"/.[!.]* "$agsbx_dir"/..?*; do
+    [ -e "$path" ] || [ -L "$path" ] || continue
+    name=${path##*/}
+    rep_entry_is_preserved "$name" && continue
+    rm -rf -- "$path" || return 1
+  done
+}
+
+rep_begin_transaction(){
+  local unit path
+  rep_backup_dir=$(mktemp -d "$HOME/.agsbx-rep-rollback.XXXXXX") || {
+    echo "错误：无法创建 rep 回滚快照目录。"
+    return 1
+  }
+  chmod 700 "$rep_backup_dir" || { rep_remove_backup >/dev/null 2>&1 || true; return 1; }
+  mkdir -p "$rep_backup_dir/agsbx" "$rep_backup_dir/systemd" "$rep_backup_dir/openrc" \
+    "$rep_backup_dir/local.d" "$rep_backup_dir/mita" "$rep_backup_dir/shortcuts" \
+    || { rep_remove_backup >/dev/null 2>&1 || true; return 1; }
+  rep_snapshot_mutable_entries "$rep_backup_dir/agsbx" \
+    || { rep_remove_backup >/dev/null 2>&1 || true; return 1; }
+
+  if [ -e "$HOME/websbx" ] && ! cp -a -- "$HOME/websbx" "$rep_backup_dir/websbx"; then
+    rep_remove_backup >/dev/null 2>&1 || true; return 1
+  fi
+  for unit in xr.service sb.service argo.service; do
+    path="/etc/systemd/system/$unit"
+    if [ -e "$path" ] && ! cp -a -- "$path" "$rep_backup_dir/systemd/"; then
+      rep_remove_backup >/dev/null 2>&1 || true; return 1
+    fi
+  done
+  for unit in xray sing-box argo; do
+    path="/etc/init.d/$unit"
+    if [ -e "$path" ] && ! cp -a -- "$path" "$rep_backup_dir/openrc/"; then
+      rep_remove_backup >/dev/null 2>&1 || true; return 1
+    fi
+  done
+  if [ -e /etc/local.d/alpinesubsbx.start ] && ! cp -a -- /etc/local.d/alpinesubsbx.start "$rep_backup_dir/local.d/"; then
+    rep_remove_backup >/dev/null 2>&1 || true; return 1
+  fi
+  if [ -e /etc/mita/server.conf.pb ] && ! cp -a -- /etc/mita/server.conf.pb "$rep_backup_dir/mita/"; then
+    rep_remove_backup >/dev/null 2>&1 || true; return 1
+  fi
+  if [ -e "$HOME/bin/agsbx" ] && ! cp -a -- "$HOME/bin/agsbx" "$rep_backup_dir/shortcuts/home-bin-agsbx"; then
+    rep_remove_backup >/dev/null 2>&1 || true; return 1
+  fi
+  if [ -e /usr/local/bin/agsbx ] && ! cp -a -- /usr/local/bin/agsbx "$rep_backup_dir/shortcuts/usr-local-bin-agsbx"; then
+    rep_remove_backup >/dev/null 2>&1 || true; return 1
+  fi
+  if [ -e /usr/bin/agsbx ] && ! cp -a -- /usr/bin/agsbx "$rep_backup_dir/shortcuts/usr-bin-agsbx"; then
+    rep_remove_backup >/dev/null 2>&1 || true; return 1
+  fi
+  if crontab -l > "$rep_backup_dir/crontab" 2>/dev/null; then
+    : > "$rep_backup_dir/had_crontab"
+  else
+    : > "$rep_backup_dir/crontab"
+  fi
+  [ -f "$rep_backup_dir/crontab" ] || { rep_remove_backup >/dev/null 2>&1 || true; return 1; }
+  chmod -R go-rwx "$rep_backup_dir" 2>/dev/null \
+    || { rep_remove_backup >/dev/null 2>&1 || true; return 1; }
+
+  rep_old_xray_running=no; agsbx_component_running xray && rep_old_xray_running=yes
+  rep_old_singbox_running=no; agsbx_component_running sing-box && rep_old_singbox_running=yes
+  rep_old_argo_running=no; agsbx_component_running cloudflared && rep_old_argo_running=yes
+  rep_old_mita_running=no
+  command -v mita >/dev/null 2>&1 && mita status 2>/dev/null | grep -q RUNNING && rep_old_mita_running=yes
+  rep_old_mita_managed=no; [ -f "$HOME/agsbx/mita_managed" ] && rep_old_mita_managed=yes
+  rep_old_subscription_running=no; subscription_http_is_running && rep_old_subscription_running=yes
+  rep_old_xray_enabled=no; rep_service_is_enabled xray && rep_old_xray_enabled=yes
+  rep_old_singbox_enabled=no; rep_service_is_enabled sing-box && rep_old_singbox_enabled=yes
+  rep_old_argo_enabled=no; rep_service_is_enabled argo && rep_old_argo_enabled=yes
+  rep_old_mita_enabled=no; rep_service_is_enabled mita && rep_old_mita_enabled=yes
+
+  rep_transaction_active=yes
+  trap 'rep_transaction_exit_handler $?' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+}
+
+rep_restore_snapshot_files(){
+  local unit
+  rep_remove_mutable_entries || return 1
+  mkdir -p "$HOME/agsbx" || return 1
+  cp -a -- "$rep_backup_dir/agsbx/." "$HOME/agsbx/" || return 1
+
+  rm -rf "$HOME/websbx" || return 1
+  if [ -e "$rep_backup_dir/websbx" ]; then
+    cp -a -- "$rep_backup_dir/websbx" "$HOME/websbx" || return 1
+  fi
+
+  for unit in xr.service sb.service argo.service; do
+    rm -f "/etc/systemd/system/$unit" || return 1
+    if [ -e "$rep_backup_dir/systemd/$unit" ]; then
+      cp -a -- "$rep_backup_dir/systemd/$unit" "/etc/systemd/system/$unit" || return 1
+    fi
+  done
+  for unit in xray sing-box argo; do
+    rm -f "/etc/init.d/$unit" || return 1
+    if [ -e "$rep_backup_dir/openrc/$unit" ]; then
+      cp -a -- "$rep_backup_dir/openrc/$unit" "/etc/init.d/$unit" || return 1
+    fi
+  done
+  rm -f /etc/local.d/alpinesubsbx.start || return 1
+  if [ -e "$rep_backup_dir/local.d/alpinesubsbx.start" ]; then
+    cp -a -- "$rep_backup_dir/local.d/alpinesubsbx.start" /etc/local.d/alpinesubsbx.start || return 1
+  fi
+  rm -f /etc/mita/server.conf.pb || return 1
+  if [ -e "$rep_backup_dir/mita/server.conf.pb" ]; then
+    mkdir -p /etc/mita || return 1
+    cp -a -- "$rep_backup_dir/mita/server.conf.pb" /etc/mita/server.conf.pb || return 1
+  fi
+
+  rm -f "$HOME/bin/agsbx" /usr/local/bin/agsbx /usr/bin/agsbx || return 1
+  if [ -e "$rep_backup_dir/shortcuts/home-bin-agsbx" ]; then
+    mkdir -p "$HOME/bin" && cp -a -- "$rep_backup_dir/shortcuts/home-bin-agsbx" "$HOME/bin/agsbx" || return 1
+  fi
+  if [ -e "$rep_backup_dir/shortcuts/usr-local-bin-agsbx" ]; then
+    mkdir -p /usr/local/bin && cp -a -- "$rep_backup_dir/shortcuts/usr-local-bin-agsbx" /usr/local/bin/agsbx || return 1
+  fi
+  if [ -e "$rep_backup_dir/shortcuts/usr-bin-agsbx" ]; then
+    cp -a -- "$rep_backup_dir/shortcuts/usr-bin-agsbx" /usr/bin/agsbx || return 1
+  fi
+
+  if [ -e "$rep_backup_dir/had_crontab" ]; then
+    crontab "$rep_backup_dir/crontab" >/dev/null 2>&1 || return 1
+  else
+    crontab -r >/dev/null 2>&1 || true
+  fi
+}
+
+rep_restore_argo_runtime(){
+  local restored_argo_port restored_vlvm restored_scheme=http restored_tls=""
+  if pidof systemd >/dev/null 2>&1; then
+    systemctl start argo >/dev/null 2>&1 || return 1
+  elif command -v rc-service >/dev/null 2>&1; then
+    rc-service argo start >/dev/null 2>&1 || return 1
+  elif [ -s "$HOME/agsbx/sbargotoken.log" ]; then
+    nohup "$HOME/agsbx/cloudflared" tunnel --no-autoupdate --edge-ip-version auto --protocol http2 run \
+      --token "$(cat "$HOME/agsbx/sbargotoken.log")" > "$HOME/agsbx/argo.log" 2>&1 &
+  else
+    restored_argo_port=$(cat "$HOME/agsbx/argoport.log" 2>/dev/null)
+    restored_vlvm=$(cat "$HOME/agsbx/vlvm" 2>/dev/null)
+    [ "$restored_vlvm" = "Vlessenc-xhttp-tls-vision-fm" ] && { restored_scheme=https; restored_tls="--no-tls-verify"; }
+    nohup "$HOME/agsbx/cloudflared" tunnel --url "${restored_scheme}://localhost:${restored_argo_port}" \
+      $restored_tls --edge-ip-version auto --no-autoupdate --protocol http2 > "$HOME/agsbx/argo.log" 2>&1 &
+  fi
+  wait_agsbx_component cloudflared
+}
+
+rep_restore_runtime(){
+  local failed=no restored_hops restored_port
+  if pidof systemd >/dev/null 2>&1; then systemctl daemon-reload >/dev/null 2>&1 || failed=yes; fi
+
+  if [ "$rep_old_xray_enabled" = yes ]; then
+    if pidof systemd >/dev/null 2>&1; then systemctl enable xr >/dev/null 2>&1 || failed=yes
+    elif command -v rc-update >/dev/null 2>&1; then rc-update add xray default >/dev/null 2>&1 || failed=yes; fi
+  fi
+  if [ "$rep_old_singbox_enabled" = yes ]; then
+    if pidof systemd >/dev/null 2>&1; then systemctl enable sb >/dev/null 2>&1 || failed=yes
+    elif command -v rc-update >/dev/null 2>&1; then rc-update add sing-box default >/dev/null 2>&1 || failed=yes; fi
+  fi
+  if [ "$rep_old_argo_enabled" = yes ]; then
+    if pidof systemd >/dev/null 2>&1; then systemctl enable argo >/dev/null 2>&1 || failed=yes
+    elif command -v rc-update >/dev/null 2>&1; then rc-update add argo default >/dev/null 2>&1 || failed=yes; fi
+  fi
+  if [ "$rep_old_mita_enabled" = yes ] && pidof systemd >/dev/null 2>&1; then
+    systemctl enable mita >/dev/null 2>&1 || failed=yes
+  fi
+
+  if [ "$rep_old_xray_running" = yes ]; then
+    validate_generated_core_config xray && kctl start xray || failed=yes
+  fi
+  if [ "$rep_old_singbox_running" = yes ]; then
+    validate_generated_core_config sing-box && kctl start sb || failed=yes
+  fi
+  if [ "$rep_old_argo_running" = yes ]; then
+    rep_restore_argo_runtime || failed=yes
+  fi
+  if [ "$rep_old_mita_running" = yes ]; then
+    systemctl start mita >/dev/null 2>&1 && wait_mita_daemon || failed=yes
+    if ! mita status 2>/dev/null | grep -q RUNNING; then mita start >/dev/null 2>&1 && wait_mita_running || failed=yes; fi
+  fi
+  if [ -s "$HOME/agsbx/mieru_ufw_rule" ]; then
+    port_mieru=$(cat "$HOME/agsbx/port_mieru" 2>/dev/null)
+    mieru_protocol=$(cat "$HOME/agsbx/mieru_protocol" 2>/dev/null)
+    ensure_mieru_ufw || failed=yes
+  fi
+
+  cleanup_port_hopping
+  unset HOPPING_INITED
+  restored_hops=$(cat "$HOME/agsbx/shyjpt" 2>/dev/null); restored_port=$(cat "$HOME/agsbx/port_hy2" 2>/dev/null)
+  [ -n "$restored_hops" ] && [ -n "$restored_port" ] && setup_port_hopping "$restored_hops" "$restored_port"
+  restored_hops=$(cat "$HOME/agsbx/xhyjpt" 2>/dev/null); restored_port=$(cat "$HOME/agsbx/port_xhy2" 2>/dev/null)
+  [ -n "$restored_hops" ] && [ -n "$restored_port" ] && setup_port_hopping "$restored_hops" "$restored_port"
+  if [ -e "$HOME/agsbx/xicmp_enabled" ]; then
+    command -v setcap >/dev/null 2>&1 && setcap cap_net_raw+ep "$HOME/agsbx/xray" 2>/dev/null
+    sysctl -w net.ipv4.icmp_echo_ignore_all=1 >/dev/null 2>&1 || failed=yes
+  fi
+
+  if [ "$rep_old_subscription_running" = yes ]; then
+    restored_port=$(cat "$HOME/agsbx/subport_real.log" 2>/dev/null)
+    if command -v apk >/dev/null 2>&1; then
+      busybox-extras httpd -f -p "$restored_port" -h "$HOME/websbx" >/dev/null 2>&1 &
+    else
+      busybox httpd -f -p "$restored_port" -h "$HOME/websbx" >/dev/null 2>&1 &
+    fi
+    sleep 1
+    subscription_http_is_running && subscription_http_is_listening "$restored_port" || failed=yes
+  fi
+  [ "$failed" = no ]
+}
+
+rep_remove_backup(){
+  case "$rep_backup_dir" in
+    "$HOME"/.agsbx-rep-rollback.*)
+      [ ! -e "$rep_backup_dir" ] || rm -rf -- "$rep_backup_dir"
+      ;;
+    *) echo "警告：rep 快照路径边界异常，未自动删除：$rep_backup_dir"; return 1 ;;
+  esac
+}
+
+rep_rollback_transaction(){
+  local external_restore_failed=no
+  rep_transaction_active=restoring
+  echo "rep 新部署失败，正在恢复旧部署……"
+  if [ "$rep_old_mita_managed" = no ] && [ -f "$HOME/agsbx/mita_managed" ]; then
+    uninstall_mita_managed >/dev/null 2>&1 || external_restore_failed=yes
+  fi
+  cleanup_mieru_ufw >/dev/null 2>&1 || true
+  cleandel rep >/dev/null 2>&1 || true
+  if rep_restore_snapshot_files && rep_restore_runtime && [ "$external_restore_failed" = no ]; then
+    echo "旧部署已恢复。"
+    rep_remove_backup || true
+    return 0
+  fi
+  echo "错误：旧部署自动恢复不完整。回滚快照保留在：$rep_backup_dir"
+  return 1
+}
+
+rep_transaction_exit_handler(){
+  if [ "$rep_transaction_active" = yes ]; then
+    rep_rollback_transaction || true
+  fi
+}
+
+rep_commit_transaction(){
+  [ "$rep_transaction_active" = yes ] || return 0
+  rep_transaction_active=no
+  trap - EXIT INT TERM
+  rep_remove_backup || echo "警告：rep 已成功，但旧快照未能自动删除，请按上方路径人工检查。"
+  echo "rep 新部署已通过完整检查，事务提交完成。"
+  return 0
+}
+
 cleandel(){
+local cleanup_mode="${1:-del}" proc_pattern
+case "$cleanup_mode" in del|rep) ;; *) echo "错误：未知清理模式 $cleanup_mode。"; return 1 ;; esac
 restore_xicmp_state
 cleanup_port_hopping
-for P in /proc/[0-9]*; do if [ -L "$P/exe" ]; then TARGET=$(readlink -f "$P/exe" 2>/dev/null); if echo "$TARGET" | grep -qE '/agsbx/cloudflared|/agsbx/sing-box|/agsbx/xray|/agsbx/caddy'; then PID=$(basename "$P"); kill "$PID" 2>/dev/null; fi; fi; done
-kill -15 $(pgrep -f 'agsbx/sing-box' 2>/dev/null) $(pgrep -f 'agsbx/cloudflared' 2>/dev/null) $(pgrep -f 'agsbx/xray' 2>/dev/null) $(pgrep -f 'agsbx/caddy' 2>/dev/null) $(pgrep -f 'websbx' 2>/dev/null) >/dev/null 2>&1
+proc_pattern='/agsbx/cloudflared|/agsbx/sing-box|/agsbx/xray'
+[ "$cleanup_mode" = del ] && proc_pattern="$proc_pattern|/agsbx/caddy"
+for P in /proc/[0-9]*; do if [ -L "$P/exe" ]; then TARGET=$(readlink -f "$P/exe" 2>/dev/null); if echo "$TARGET" | grep -qE "$proc_pattern"; then PID=$(basename "$P"); kill "$PID" 2>/dev/null; fi; fi; done
+kill -15 $(pgrep -f 'agsbx/sing-box' 2>/dev/null) $(pgrep -f 'agsbx/cloudflared' 2>/dev/null) $(pgrep -f 'agsbx/xray' 2>/dev/null) $(pgrep -f 'websbx' 2>/dev/null) >/dev/null 2>&1
+[ "$cleanup_mode" = del ] && kill -15 $(pgrep -f 'agsbx/caddy' 2>/dev/null) >/dev/null 2>&1
 if [ -f "$HOME/agsbx/mita_managed" ]; then
   command -v mita >/dev/null 2>&1 && mita stop >/dev/null 2>&1 || true
   systemctl stop mita >/dev/null 2>&1 || true
   systemctl disable mita >/dev/null 2>&1 || true
 fi
-if [ -f ~/.bashrc ]; then
+if [ "$cleanup_mode" = del ] && [ -f ~/.bashrc ]; then
 sed -i '/agsbx/d' ~/.bashrc
 sed -i '/export PATH="\$HOME\/bin:\$PATH"/d' ~/.bashrc
 sed -i '/export PATH="\$PATH:\$HOME\/bin"/d' ~/.bashrc
@@ -6624,24 +7239,28 @@ crontab -l > "$cron_tmp" 2>/dev/null
 sed -i '/agsbx\/sing-box/d' "$cron_tmp"
 sed -i '/agsbx\/xray/d' "$cron_tmp"
 sed -i '/agsbx\/cloudflared/d' "$cron_tmp"
-sed -i '/agsbx\/caddy/d' "$cron_tmp"
+[ "$cleanup_mode" = del ] && sed -i '/agsbx\/caddy/d' "$cron_tmp"
 sed -i '/websbx/d' "$cron_tmp"
 crontab "$cron_tmp" >/dev/null 2>&1
 rm -f "$cron_tmp"
-rm -rf "$HOME/bin/agsbx" /usr/local/bin/agsbx /usr/bin/agsbx "$HOME/websbx"
+if [ "$cleanup_mode" = del ]; then
+  rm -rf "$HOME/bin/agsbx" /usr/local/bin/agsbx /usr/bin/agsbx "$HOME/websbx"
+else
+  rm -rf "$HOME/websbx"
+fi
 if pidof systemd >/dev/null 2>&1; then
 for svc in xr sb argo; do
 systemctl stop "$svc" >/dev/null 2>&1
 systemctl disable "$svc" >/dev/null 2>&1
 done
 rm -rf /etc/systemd/system/{xr.service,sb.service,argo.service}
-# Caddy 只清理能由 ExecStart 证明属于 Airgosbx 的 Unit；同名的系统包或人工服务一律不碰。
-if [ -f /etc/systemd/system/agsbx-caddy.service ] && grep -Fq "ExecStart=$HOME/agsbx/caddy run" /etc/systemd/system/agsbx-caddy.service; then
+# Caddy 只在 del 时清理；rep 完全不停止、不禁用、不删除其服务。
+if [ "$cleanup_mode" = del ] && [ -f /etc/systemd/system/agsbx-caddy.service ] && grep -Fq "ExecStart=$HOME/agsbx/caddy run" /etc/systemd/system/agsbx-caddy.service; then
   systemctl stop agsbx-caddy >/dev/null 2>&1 || true
   systemctl disable agsbx-caddy >/dev/null 2>&1 || true
   rm -f /etc/systemd/system/agsbx-caddy.service
 fi
-if [ -f /etc/systemd/system/caddy.service ] && grep -Fq "ExecStart=$HOME/agsbx/caddy run" /etc/systemd/system/caddy.service; then
+if [ "$cleanup_mode" = del ] && [ -f /etc/systemd/system/caddy.service ] && grep -Fq "ExecStart=$HOME/agsbx/caddy run" /etc/systemd/system/caddy.service; then
   systemctl stop caddy >/dev/null 2>&1 || true
   systemctl disable caddy >/dev/null 2>&1 || true
   rm -f /etc/systemd/system/caddy.service
@@ -6653,18 +7272,32 @@ rc-service "$svc" stop >/dev/null 2>&1
 rc-update del "$svc" default >/dev/null 2>&1
 done
 rm -rf /etc/init.d/{sing-box,xray,argo} /etc/local.d/alpinesubsbx.start
-if [ -f /etc/init.d/agsbx-caddy ] && grep -Fq "command=\"$HOME/agsbx/caddy\"" /etc/init.d/agsbx-caddy; then
+if [ "$cleanup_mode" = del ] && [ -f /etc/init.d/agsbx-caddy ] && grep -Fq "command=\"$HOME/agsbx/caddy\"" /etc/init.d/agsbx-caddy; then
   rc-service agsbx-caddy stop >/dev/null 2>&1 || true
   rc-update del agsbx-caddy default >/dev/null 2>&1 || true
   rm -f /etc/init.d/agsbx-caddy
 fi
-if [ -f /etc/init.d/caddy ] && grep -Fq "command=\"$HOME/agsbx/caddy\"" /etc/init.d/caddy; then
+if [ "$cleanup_mode" = del ] && [ -f /etc/init.d/caddy ] && grep -Fq "command=\"$HOME/agsbx/caddy\"" /etc/init.d/caddy; then
   rc-service caddy stop >/dev/null 2>&1 || true
   rc-update del caddy default >/dev/null 2>&1 || true
   rm -f /etc/init.d/caddy
 fi
 fi
-rm -f "$HOME/agsbx/caddy-admin.sock"
+[ "$cleanup_mode" = del ] && rm -f "$HOME/agsbx/caddy-admin.sock"
+if [ "$cleanup_mode" = rep ]; then
+  sleep 1
+  if agsbx_component_running xray || agsbx_component_running sing-box || agsbx_component_running cloudflared \
+    || subscription_http_is_running; then
+    echo "错误：rep 清理后仍有旧的 Xray、Sing-box、Argo 或订阅进程运行。"
+    return 1
+  fi
+  if [ -f "$HOME/agsbx/mita_managed" ] && command -v mita >/dev/null 2>&1 \
+    && mita status 2>/dev/null | grep -q RUNNING; then
+    echo "错误：rep 清理后 Mieru 代理仍在运行。"
+    return 1
+  fi
+fi
+return 0
 }
 xrestart(){
 kill -15 $(pgrep -f 'agsbx/xray' 2>/dev/null) >/dev/null 2>&1
@@ -6928,7 +7561,7 @@ echo
 # - 关联性: 为终端控制台调用或 systemd/OpenRC 守护指令提供物理分发网关。
 #============================================================
 if [ "$1" = "del" ]; then
-cleandel
+cleandel del
 uninstall_mita_managed || exit 1
 # 注：sbx_update 标记文件位于 $HOME/agsbx 内，随该目录一并删除；此前裸写的相对路径 sbx_update
 # 指向当前工作目录，既删不到目标又有误删同名文件的风险，已移除。$HOME/agsb 为旧版本遗留目录，保留以清理历史安装。
@@ -6939,11 +7572,17 @@ echo
 showmode
 exit
 elif [ "$1" = "rep" ]; then
+[ -n "$HOME" ] && [ "$HOME" != / ] && [ -d "$HOME/agsbx" ] \
+  || { echo "错误：rep 目录边界检查失败。"; exit 1; }
+rep_validate_preserved_scope || exit 1
 prepare_secondary_proxy || exit 1
-cleandel
+rep_mode=yes
+rep_begin_transaction || exit 1
+cleandel rep || exit 1
 cleanup_mieru_ufw || exit 1
-reset_mita_config
-rm -rf "$HOME/agsbx"/{sb.json,xr.json,sbargoym.log,sbargotoken.log,argo.log,argoport.log,cdnym,name,Caddyfile,naive_user,naive_pass,naive_domain,caddy.log,caddy_storage,secondary_secp,secondary_meta,mita.json,mieru_user,mieru_pass,port_mieru,mieru_protocol,mieru_traffic_seed,mieru_traffic_pattern,mieru_ufw_rule}
+reset_mita_config || exit 1
+rm -rf "$HOME/agsbx"/{sb.json,xr.json,sbargoym.log,sbargotoken.log,argo.log,argoport.log,cdnym,name,secondary_secp,secondary_meta,mita.json,mieru_user,mieru_pass,port_mieru,mieru_protocol,mieru_traffic_seed,mieru_traffic_pattern,mieru_ufw_rule} \
+  || { echo "错误：rep 无法清理旧的可变协议状态。"; exit 1; }
 echo "Airgosbx重置协议完成，开始更新相关协议变量……" && sleep 2
 echo
 elif [ "$1" = "list" ]; then
@@ -7076,7 +7715,7 @@ fi
 # - 本段为脚本的物理大门。校验系统当前是否已安装 agsbx，如果未安装则校验协议变量合法性后拉起 ins() 安装编排；如果已存在安装，则进入交互式节点状态卡片。
 # - 关联性: 必须置于脚本最尾部，以确保其调用前面所有段落声明的工具函数与安装函数时已由 Shell 完全预加载完毕。
 #============================================================
-if ! agsbx_running; then
+if [ "$rep_mode" = yes ] || ! agsbx_running; then
 prepare_secondary_proxy || exit 1
 for P in /proc/[0-9]*; do if [ -L "$P/exe" ]; then TARGET=$(readlink -f "$P/exe" 2>/dev/null); if echo "$TARGET" | grep -qE '/agsbx/cloudflared|/agsbx/sing-box|/agsbx/xray'; then PID=$(basename "$P"); kill "$PID" 2>/dev/null && echo "Killed $PID ($TARGET)" || echo "Could not kill $PID ($TARGET)"; fi; fi; done
 kill -15 $(pgrep -f 'agsbx/sing-box' 2>/dev/null) $(pgrep -f 'agsbx/cloudflared' 2>/dev/null) $(pgrep -f 'agsbx/xray' 2>/dev/null) >/dev/null 2>&1
@@ -7096,8 +7735,14 @@ xendip="[2606:4700:d0::a29f:c001]"
 fi
 echo "Airgosbx脚本未安装，开始安装…………" && sleep 1
 show_vps_info
-ins
-cip
+ins || { echo "Airgosbx 安装编排失败。"; exit 1; }
+cip || { echo "Airgosbx 节点与订阅生成失败。"; exit 1; }
+if ! verify_install_required_components yes; then
+  echo "Airgosbx 必需组件检查失败，安装未完成。"
+  exit 1
+fi
+rep_commit_transaction || exit 1
+echo "Airgosbx 所有必需组件均已启动，安装完毕" && sleep 2
 echo
 else
 echo "Airgosbx脚本已安装"
