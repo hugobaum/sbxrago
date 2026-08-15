@@ -101,6 +101,10 @@ verify_install_required_components(){
       echo "错误：本轮要求的 Mieru/Mita 未处于 RUNNING 状态或未监听预期端口。"
       failed=yes
     fi
+    if ! mita_policy_listener_is_ready; then
+      echo "错误：Mieru/Mita 未监听 ipv=$effective_ipv_mode 所需的协议族。"
+      failed=yes
+    fi
   fi
   if [ "$install_required_argo" = yes ] && ! wait_agsbx_component cloudflared; then
     echo "错误：本轮要求的 Cloudflared Argo 进程未运行。"
@@ -151,7 +155,8 @@ vrow(){ printf "  ${C_YELLOW}%-11s${C_RESET} %s\n" "$1" "$2"; }
 showvars(){
 printf '%s\n' "${C_CYAN}~~~~~~~~~~~~~~~~~~~~ Airgosbx 变量速查表 ~~~~~~~~~~~~~~~~~~~~${C_RESET}"
 printf '%s\n' "${C_BOLD}用法：在脚本前以「变量=值」空格分隔传入，可任意组合${C_RESET}"
-echo "示例：xhpt=2087 warp=s4x4 sub=y bash <(curl -Ls $agsbxurl)"
+echo "示例：xhpt=2087 ipv=\"4;6\" warp=s4x4 sub=y bash <(curl -Ls $agsbxurl)"
+echo "取消IP策略并恢复VPS原状态：ipv=\"\" agsbx（list/status 等查看命令不改变网络）"
 echo "说明：端口类变量留空(如 vlpt)即自动随机分配；带 pt 后缀的为可指定端口版"
 
 vg "① Xray 内核协议（端口留空＝自动分配）"
@@ -223,6 +228,7 @@ vrow "uuid"     "自定义UUID/密码（留空＝自动生成）"
 vrow "name"     "所有节点名称前缀"
 vrow "reym"     "自定义 Reality 伪装域名（留空＝按地区智能选）"
 vrow "obfs_pass" "Hysteria2 混淆密码（留空＝自动生成）"
+vrow "ipv"      "系统IP栈：4／6／\"4;6\"／\"6;4\"；未设置＝保持，显式空值＝恢复原状态"
 vrow "ippz"     "list时只显示指定栈：4 或 6（双栈VPS用）"
 
 vg "⑪ NaiveProxy（Caddy 内核·独立于 xray/sb，需真实域名）"
@@ -615,6 +621,23 @@ get_reality_domain() {
 #    - 关联逻辑：在 Xray/Sing-box 中增量装配 TLS 卸载 Inbound 反代本地 127.0.0.1 上的 Web 服务
 #============================================================
 export LANG=en_US.UTF-8
+# 系统级 IP 栈策略只接受四个精确值。未设置代表保持现状；显式空值代表取消受管策略并恢复原状态。
+# 语法校验必须早于依赖安装和任何系统写入，避免拼写错误时仍改变 VPS。
+ipv_request_set=no
+ipv_request_mode=''
+case "$1" in
+  ''|rep)
+    [ -z "${ipv+x}" ] || ipv_request_set=yes
+    ipv_request_mode="${ipv-}"
+    case "$ipv_request_mode" in
+      ''|4|6|'4;6'|'6;4') ;;
+      *)
+        echo "错误：ipv 仅支持 4、6、\"4;6\"、\"6;4\"；未设置表示保持，ipv=\"\" 表示恢复原状态。"
+        exit 1
+        ;;
+    esac
+    ;;
+esac
 [ -z "${vlpt+x}" ] || vlp=yes
 [ -z "${vmpt+x}" ] || { vmp=yes; vmag=yes; }
 [ -z "${vwpt+x}" ] || { vwp=yes; vmag=yes; }
@@ -838,8 +861,14 @@ fi
 v4v6_probed=yes
 v4=$( (command -v curl >/dev/null 2>&1 && curl -s4m5 "$v46url" 2>/dev/null) || (command -v wget >/dev/null 2>&1 && timeout 3 wget -4 --tries=2 -qO- "$v46url" 2>/dev/null) )
 v6=$( (command -v curl >/dev/null 2>&1 && curl -s6m5 "$v46url" 2>/dev/null) || (command -v wget >/dev/null 2>&1 && timeout 3 wget -6 --tries=2 -qO- "$v46url" 2>/dev/null) )
+v4=$(printf '%s\n' "$v4" | sed -n '1{s/[[:space:]]//g;p;}')
+v6=$(printf '%s\n' "$v6" | sed -n '1{s/[[:space:]]//g;p;}')
+valid_ipv4 "$v4" || v4=''
+valid_ipv6 "$v6" || v6=''
 v4dq=$( (command -v curl >/dev/null 2>&1 && curl -s4m5 https://ip.fm | sed -n 's/.*Location: //p' 2>/dev/null) || (command -v wget >/dev/null 2>&1 && timeout 3 wget -4 --tries=2 -qO- https://ip.fm | grep '<span class="has-text-grey-light">Location:' | tail -n1 | sed -E 's/.*>Location: <\/span>([^<]+)<.*/\1/' 2>/dev/null) )
 v6dq=$( (command -v curl >/dev/null 2>&1 && curl -s6m5 https://ip.fm | sed -n 's/.*Location: //p' 2>/dev/null) || (command -v wget >/dev/null 2>&1 && timeout 3 wget -6 --tries=2 -qO- https://ip.fm | grep '<span class="has-text-grey-light">Location:' | tail -n1 | sed -E 's/.*>Location: <\/span>([^<]+)<.*/\1/' 2>/dev/null) )
+[ -n "$v4" ] || v4dq=''
+[ -n "$v6" ] || v6dq=''
 }
 show_vps_info(){
 # 依赖安装完成后集中展示部署决策真正需要的 VPS 信息；公网 IP 复用 v4v6() 缓存，后续不重复联网探测。
@@ -1069,6 +1098,12 @@ else
 sbyx='prefer_ipv4'
 xryx='ForceIPv4v6'
 fi
+# 系统 IP 策略负责原生 direct 出站；WARP 中显式的 s4/s6/x4/x6 仍独立决定隧道内协议族。
+[ -z "$ip_policy_xray_strategy" ] || xryx="$ip_policy_xray_strategy"
+case "$warp" in
+  *s4*|*s6*) ;;
+  *) [ -z "$ip_policy_sing_strategy" ] || sbyx="$ip_policy_sing_strategy" ;;
+esac
 }
 #============================================================
 # [第5段] 内核下载函数（含哈希校验）
@@ -1552,6 +1587,657 @@ done
 return 0
 }
 valid_ip(){ valid_ipv4 "$1" || valid_ipv6 "$1"; }
+
+#============================================================
+# Airgosbx 系统 IP 栈策略
+# - 只保存 Airgosbx 将要改动的原值，不执行 source，避免状态文件变成代码入口。
+# - 非空 ipv 负责应用策略；曾应用策略后取消 ipv，或卸载脚本时，恢复 VPS 原状态。
+#============================================================
+ip_policy_dir="$HOME/agsbx/ip_policy"
+ip_policy_marker='AIRGOSBX_IP_POLICY_V1'
+ip_policy_sysctl_file='/etc/sysctl.d/99-agsbx-ip-policy.conf'
+ip_policy_gai_file='/etc/gai.conf'
+ip_policy_gai_begin='# BEGIN AIRGOSBX IP POLICY'
+ip_policy_gai_end='# END AIRGOSBX IP POLICY'
+effective_ipv_mode=''
+public_listen_address='::'
+mita_dns_policy='USE_FIRST_IP'
+
+ip_policy_atomic_write(){
+  local target="$1" mode="$2" parent tmp
+  [ ! -L "$target" ] || { echo "错误：拒绝写入符号链接：$target"; return 1; }
+  parent=$(dirname "$target")
+  [ -d "$parent" ] && [ ! -L "$parent" ] || { echo "错误：策略目录异常：$parent"; return 1; }
+  tmp=$(mktemp "$parent/.agsbx-ip-policy.XXXXXX") || return 1
+  if ! cat > "$tmp" || ! chmod "$mode" "$tmp" || ! mv -f "$tmp" "$target"; then
+    rm -f "$tmp"
+    return 1
+  fi
+}
+
+ip_policy_state_write(){
+  local key="$1" value="$2" target
+  case "$key" in ''|*[!A-Za-z0-9_.-]*) return 1 ;; esac
+  target="$ip_policy_dir/$key"
+  printf '%s\n' "$value" | ip_policy_atomic_write "$target" 600
+}
+
+ip_policy_state_read(){
+  local key="$1" target="$ip_policy_dir/$1"
+  case "$key" in ''|*[!A-Za-z0-9_.-]*) return 1 ;; esac
+  [ -f "$target" ] && [ ! -L "$target" ] || return 1
+  cat "$target"
+}
+
+ip_policy_prepare_state(){
+  if [ -L "$ip_policy_dir" ]; then
+    echo "错误：IP 策略状态目录不能是符号链接：$ip_policy_dir"
+    return 1
+  fi
+  if [ ! -d "$ip_policy_dir" ]; then
+    mkdir -m 700 "$ip_policy_dir" || return 1
+  fi
+  chmod 700 "$ip_policy_dir" || return 1
+  if [ -e "$ip_policy_dir/marker" ]; then
+    [ -f "$ip_policy_dir/marker" ] && [ ! -L "$ip_policy_dir/marker" ] \
+      && [ "$(cat "$ip_policy_dir/marker" 2>/dev/null)" = "$ip_policy_marker" ] \
+      || { echo "错误：IP 策略状态标记损坏。"; return 1; }
+  else
+    if find "$ip_policy_dir" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null | grep -q .; then
+      echo "错误：拒绝接管非 Airgosbx 创建的 IP 策略目录。"
+      return 1
+    fi
+    ip_policy_state_write marker "$ip_policy_marker" || return 1
+  fi
+}
+
+ip_policy_configure_runtime(){
+  effective_ipv_mode="$1"
+  public_listen_address='::'
+  mita_dns_policy='USE_FIRST_IP'
+  ip_policy_xray_strategy=''
+  ip_policy_sing_strategy=''
+  ip_policy_preferred_family=4
+  case "$effective_ipv_mode" in
+    4) public_listen_address='0.0.0.0'; mita_dns_policy='ONLY_IPv4'; ip_policy_xray_strategy='ForceIPv4'; ip_policy_sing_strategy='ipv4_only' ;;
+    6) mita_dns_policy='ONLY_IPv6'; ip_policy_xray_strategy='ForceIPv6'; ip_policy_sing_strategy='ipv6_only'; ip_policy_preferred_family=6 ;;
+    '4;6') mita_dns_policy='PREFER_IPv4'; ip_policy_xray_strategy='ForceIPv4v6'; ip_policy_sing_strategy='prefer_ipv4' ;;
+    '6;4') mita_dns_policy='PREFER_IPv6'; ip_policy_xray_strategy='ForceIPv6v4'; ip_policy_sing_strategy='prefer_ipv6'; ip_policy_preferred_family=6 ;;
+    '') ;;
+    *) echo "错误：磁盘上的 Airgosbx IP 策略值无效。"; return 1 ;;
+  esac
+}
+
+ip_policy_load_runtime(){
+  local saved_mode
+  if [ ! -e "$ip_policy_dir" ]; then
+    ip_policy_configure_runtime ''
+    return
+  fi
+  [ -d "$ip_policy_dir" ] && [ ! -L "$ip_policy_dir" ] \
+    || { echo "错误：IP 策略状态目录类型异常。"; return 1; }
+  [ "$(ip_policy_state_read marker 2>/dev/null)" = "$ip_policy_marker" ] \
+    || { echo "错误：IP 策略状态标记缺失或损坏。"; return 1; }
+  saved_mode=$(ip_policy_state_read mode 2>/dev/null) \
+    || { echo "错误：IP 策略状态不完整，缺少当前模式。"; return 1; }
+  case "$saved_mode" in 4|6|'4;6'|'6;4') ;; *) echo "错误：已保存的 ipv 模式无效。"; return 1 ;; esac
+  ip_policy_configure_runtime "$saved_mode"
+}
+
+ip_policy_remove_state(){
+  [ -d "$ip_policy_dir" ] && [ ! -L "$ip_policy_dir" ] \
+    && [ "$(ip_policy_state_read marker 2>/dev/null)" = "$ip_policy_marker" ] \
+    || { echo "错误：拒绝删除异常的 IP 策略状态目录。"; return 1; }
+  rm -rf -- "$ip_policy_dir"
+}
+
+reset_v4v6_probe(){
+  v4v6_probed=''
+  v4=''; v6=''; v4dq=''; v6dq=''
+}
+
+ip_family_topology(){
+  local family="$1" devices count dev
+  devices=$(ip "-$family" route show default 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev" && (i+1)<=NF) print $(i+1)}' | sort -u)
+  count=$(printf '%s\n' "$devices" | sed '/^$/d' | wc -l | tr -d ' ')
+  case "$count" in
+    0) printf '%s' no; return ;;
+    1) dev=$(printf '%s\n' "$devices" | sed -n '1p') ;;
+    *) printf '%s' unknown; return ;;
+  esac
+  case "$dev" in lo|wg*|warp*|tun*|tap*|tailscale*|docker*|br-*|veth*|virbr*|zt*) printf '%s' unknown; return ;; esac
+  if ip "-$family" -o address show dev "$dev" scope global 2>/dev/null \
+      | grep -Ev ' tentative| dadfailed' | grep -q .; then
+    printf '%s' yes
+  else
+    printf '%s' no
+  fi
+}
+
+probe_ip_capabilities(){
+  local top4 top6
+  reset_v4v6_probe
+  v4v6
+  top4=$(ip_family_topology 4)
+  top6=$(ip_family_topology 6)
+  case "$top4:${v4:+yes}" in yes:yes) ipv4_capability=yes ;; no:) ipv4_capability=no ;; *) ipv4_capability=unknown ;; esac
+  case "$top6:${v6:+yes}" in yes:yes) ipv6_capability=yes ;; no:) ipv6_capability=no ;; *) ipv6_capability=unknown ;; esac
+}
+
+ip_policy_guard_session(){
+  local disabled_family="$1" ssh_server ancestor_pid ancestor_name depth=0
+  if [ -n "${SSH_CONNECTION:-}" ]; then
+    ssh_server=$(printf '%s\n' "$SSH_CONNECTION" | awk '{print $3}')
+    if { [ "$disabled_family" = 4 ] && valid_ipv4 "$ssh_server"; } \
+      || { [ "$disabled_family" = 6 ] && valid_ipv6 "$ssh_server"; }; then
+      echo "错误：当前 SSH 正使用即将关闭的 IPv${disabled_family}，请先用目标协议族重新连接。"
+      return 1
+    fi
+    valid_ip "$ssh_server" || { echo "错误：无法确认当前 SSH 使用的协议族，已停止切换。"; return 1; }
+  else
+    ancestor_pid=$PPID
+    while [ "$ancestor_pid" -gt 1 ] 2>/dev/null && [ "$depth" -lt 12 ]; do
+      ancestor_name=$(cat "/proc/$ancestor_pid/comm" 2>/dev/null)
+      case "$ancestor_name" in sshd*) echo "错误：检测到 SSH 父进程但无法确认会话协议族，请从目标协议族 SSH 或云控制台执行。"; return 1 ;; esac
+      ancestor_pid=$(awk '{print $4}' "/proc/$ancestor_pid/stat" 2>/dev/null)
+      case "$ancestor_pid" in ''|*[!0-9]*) break ;; esac
+      depth=$((depth + 1))
+    done
+    if [ ! -t 0 ] && [ ! -t 1 ] && [ ! -t 2 ]; then
+      echo "错误：没有 SSH 会话信息时，单栈切换只允许从交互式本地或云控制台执行。"
+      return 1
+    fi
+  fi
+}
+
+ip_policy_sysctl_owned(){
+  [ -f "$ip_policy_sysctl_file" ] && [ ! -L "$ip_policy_sysctl_file" ] \
+    && awk '
+      NR == 1 {ok = ($0 == "# Airgosbx managed IP policy")}
+      NR == 2 {ok = ok && ($0 == "net.ipv6.conf.all.disable_ipv6 = 1")}
+      NR == 3 {ok = ok && ($0 == "net.ipv6.conf.default.disable_ipv6 = 1")}
+      NR == 4 {ok = ok && ($0 == "net.ipv6.conf.lo.disable_ipv6 = 1")}
+      NR == 5 {ok = ok && ($0 == "# End Airgosbx managed IP policy")}
+      END {exit !(ok && NR == 5)}
+    ' "$ip_policy_sysctl_file"
+}
+
+ip_policy_save_sysctl(){
+  local key value
+  if [ -e "$ip_policy_dir/sysctl_saved" ]; then
+    [ "$(ip_policy_state_read sysctl_saved 2>/dev/null)" = yes ] || return 1
+    return
+  fi
+  if [ -e "$ip_policy_sysctl_file" ]; then
+    echo "错误：$ip_policy_sysctl_file 已存在，但没有对应的 Airgosbx 原状态记录。"
+    return 1
+  fi
+  for key in all default lo; do
+    value=$(sysctl -n "net.ipv6.conf.$key.disable_ipv6" 2>/dev/null) || return 1
+    case "$value" in 0|1) ;; *) echo "错误：无法读取原始 IPv6 sysctl。"; return 1 ;; esac
+    ip_policy_state_write "sysctl_$key" "$value" || return 1
+  done
+  ip_policy_state_write sysctl_saved yes
+}
+
+ip_policy_apply_ipv4_only_sysctl(){
+  ip_policy_prepare_state || return 1
+  ip_policy_save_sysctl || return 1
+  if [ -e "$ip_policy_sysctl_file" ] && ! ip_policy_sysctl_owned; then
+    echo "错误：拒绝覆盖非 Airgosbx 管理的 sysctl 文件。"
+    return 1
+  fi
+  {
+    echo '# Airgosbx managed IP policy'
+    echo 'net.ipv6.conf.all.disable_ipv6 = 1'
+    echo 'net.ipv6.conf.default.disable_ipv6 = 1'
+    echo 'net.ipv6.conf.lo.disable_ipv6 = 1'
+    echo '# End Airgosbx managed IP policy'
+  } | ip_policy_atomic_write "$ip_policy_sysctl_file" 600 || return 1
+  sysctl -p "$ip_policy_sysctl_file" >/dev/null 2>&1 || return 1
+  [ "$(sysctl -n net.ipv6.conf.all.disable_ipv6 2>/dev/null)" = 1 ] \
+    && [ "$(sysctl -n net.ipv6.conf.default.disable_ipv6 2>/dev/null)" = 1 ] \
+    && [ "$(sysctl -n net.ipv6.conf.lo.disable_ipv6 2>/dev/null)" = 1 ]
+}
+
+ip_policy_restore_sysctl(){
+  local all_value default_value lo_value
+  [ -e "$ip_policy_dir/sysctl_saved" ] || return 0
+  [ "$(ip_policy_state_read sysctl_saved 2>/dev/null)" = yes ] || return 1
+  all_value=$(ip_policy_state_read sysctl_all 2>/dev/null) || return 1
+  default_value=$(ip_policy_state_read sysctl_default 2>/dev/null) || return 1
+  lo_value=$(ip_policy_state_read sysctl_lo 2>/dev/null) || return 1
+  case "$all_value:$default_value:$lo_value" in [01]:[01]:[01]) ;; *) return 1 ;; esac
+  if [ -e "$ip_policy_sysctl_file" ]; then
+    ip_policy_sysctl_owned || { echo "错误：受管 sysctl 文件已被外部修改，拒绝自动覆盖。"; return 1; }
+  fi
+  sysctl -w "net.ipv6.conf.default.disable_ipv6=$default_value" >/dev/null 2>&1 \
+    && sysctl -w "net.ipv6.conf.lo.disable_ipv6=$lo_value" >/dev/null 2>&1 \
+    && sysctl -w "net.ipv6.conf.all.disable_ipv6=$all_value" >/dev/null 2>&1 \
+    || return 1
+  [ -e "$ip_policy_sysctl_file" ] && rm -f -- "$ip_policy_sysctl_file"
+}
+
+ip_policy_gai_markers_valid(){
+  [ ! -L "$ip_policy_gai_file" ] || return 1
+  [ -e "$ip_policy_gai_file" ] || return 0
+  [ -f "$ip_policy_gai_file" ] || return 1
+  awk -v begin="$ip_policy_gai_begin" -v end="$ip_policy_gai_end" '
+    $0 == begin {if (opened || closed) bad=1; opened=1; begins++; next}
+    $0 == end {if (!opened || closed) bad=1; closed=1; ends++; next}
+    END {
+      if (bad) exit 1
+      if (begins == 0 && ends == 0) exit 0
+      exit !(begins == 1 && ends == 1 && opened && closed)
+    }
+  ' "$ip_policy_gai_file"
+}
+
+ip_policy_gai_has_external_precedence(){
+  [ -f "$ip_policy_gai_file" ] || return 1
+  awk -v begin="$ip_policy_gai_begin" -v end="$ip_policy_gai_end" '
+    $0 == begin {managed=1; next}
+    $0 == end {managed=0; next}
+    !managed {
+      line=$0
+      sub(/^[[:space:]]*/, "", line)
+      if (line !~ /^#/ && line ~ /^precedence[[:space:]]+/) found=1
+    }
+    END {exit !found}
+  ' "$ip_policy_gai_file"
+}
+
+ip_policy_strip_gai_block(){
+  awk -v begin="$ip_policy_gai_begin" -v end="$ip_policy_gai_end" '
+    $0 == begin {managed=1; next}
+    $0 == end {managed=0; next}
+    !managed {print}
+  ' "$ip_policy_gai_file"
+}
+
+ip_policy_apply_precedence(){
+  local mode="$1" mapped_precedence created=no managed_begin_count=0
+  getconf GNU_LIBC_VERSION 2>/dev/null | grep -q '^glibc ' \
+    || { echo "错误：双栈优先级只支持 glibc 系统。"; return 1; }
+  ip_policy_gai_markers_valid || { echo "错误：/etc/gai.conf 类型或 Airgosbx 标记异常。"; return 1; }
+  if ip_policy_gai_has_external_precedence; then
+    echo "错误：/etc/gai.conf 已有管理员 precedence 规则，Airgosbx 不会覆盖。"
+    return 1
+  fi
+  if [ -f "$ip_policy_gai_file" ]; then
+    managed_begin_count=$(grep -Fxc "$ip_policy_gai_begin" "$ip_policy_gai_file" 2>/dev/null || true)
+    if [ "$managed_begin_count" != 0 ] && [ ! -e "$ip_policy_dir/gai_touched" ]; then
+      echo "错误：gai.conf 已有同名 Airgosbx 标记，但缺少原状态记录，拒绝接管。"
+      return 1
+    fi
+  fi
+  [ -e "$ip_policy_gai_file" ] || created=yes
+  case "$mode" in '4;6') mapped_precedence=100 ;; '6;4') mapped_precedence=10 ;; *) return 1 ;; esac
+  ip_policy_prepare_state || return 1
+  if [ ! -e "$ip_policy_dir/gai_touched" ]; then
+    ip_policy_state_write gai_created "$created" || return 1
+    ip_policy_state_write gai_touched yes || return 1
+  fi
+  {
+    [ -f "$ip_policy_gai_file" ] && ip_policy_strip_gai_block
+    printf '%s\n' "$ip_policy_gai_begin"
+    printf '%s\n' 'precedence ::1/128 50'
+    printf '%s\n' 'precedence ::/0 40'
+    printf '%s\n' 'precedence 2002::/16 30'
+    printf '%s\n' 'precedence ::/96 20'
+    printf 'precedence ::ffff:0:0/96 %s\n' "$mapped_precedence"
+    printf '%s\n' "$ip_policy_gai_end"
+  } | ip_policy_atomic_write "$ip_policy_gai_file" 644
+}
+
+ip_policy_restore_gai(){
+  local created
+  [ -e "$ip_policy_dir/gai_touched" ] || return 0
+  [ "$(ip_policy_state_read gai_touched 2>/dev/null)" = yes ] || return 1
+  created=$(ip_policy_state_read gai_created 2>/dev/null) || return 1
+  case "$created" in yes|no) ;; *) return 1 ;; esac
+  ip_policy_gai_markers_valid || { echo "错误：受管 gai.conf 标记已损坏，拒绝自动改写。"; return 1; }
+  [ -f "$ip_policy_gai_file" ] || return 0
+  ip_policy_strip_gai_block | ip_policy_atomic_write "$ip_policy_gai_file" 644 || return 1
+  if [ "$created" = yes ] && ! grep -q '[^[:space:]]' "$ip_policy_gai_file" 2>/dev/null; then
+    rm -f -- "$ip_policy_gai_file"
+  fi
+}
+
+ip_policy_state_write_b64(){
+  local key="$1" value="$2" encoded
+  encoded=$(printf '%s' "$value" | safe_base64) || return 1
+  ip_policy_state_write "$key" "$encoded"
+}
+
+ip_policy_state_read_b64(){
+  local key="$1" encoded
+  encoded=$(ip_policy_state_read "$key" 2>/dev/null) || return 1
+  case "$encoded" in *[!A-Za-z0-9+/=]*) return 1 ;; esac
+  printf '%s' "$encoded" | base64 -d 2>/dev/null
+}
+
+ip_policy_find_nm_uplink(){
+  local devices count connection
+  command -v nmcli >/dev/null 2>&1 \
+    || { echo "错误：从双栈切换 IPv6-only 仅支持 NetworkManager。"; return 1; }
+  if [ -d /etc/netplan ] && find /etc/netplan -maxdepth 1 -type f \( -name '*.yaml' -o -name '*.yml' \) -print -quit 2>/dev/null | grep -q .; then
+    echo "错误：检测到 Netplan，Airgosbx 不会自动改写云网络配置。"
+    return 1
+  fi
+  if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet systemd-networkd 2>/dev/null; then
+    echo "错误：检测到活动的 systemd-networkd，IPv6-only 自动切换已停止。"
+    return 1
+  fi
+  if [ -f /etc/network/interfaces ] \
+    && awk '!/^[[:space:]]*(#|$)/ && /iface[[:space:]]+/ && $0 !~ /iface[[:space:]]+lo[[:space:]]/ {found=1} END{exit !found}' /etc/network/interfaces; then
+    echo "错误：检测到 ifupdown 上联配置，IPv6-only 自动切换已停止。"
+    return 1
+  fi
+  devices=$(
+    {
+      ip -4 route show default 2>/dev/null
+      ip -6 route show default 2>/dev/null
+    } | awk '{for(i=1;i<=NF;i++) if($i=="dev" && (i+1)<=NF) print $(i+1)}' | sort -u
+  )
+  count=$(printf '%s\n' "$devices" | sed '/^$/d' | wc -l | tr -d ' ')
+  [ "$count" = 1 ] || { echo "错误：IPv6-only 要求唯一活动默认上联，当前检测到 ${count:-0} 个。"; return 1; }
+  nm_policy_device=$(printf '%s\n' "$devices" | sed -n '1p')
+  case "$nm_policy_device" in ''|*[!A-Za-z0-9_.:@-]*) echo "错误：默认上联设备名异常。"; return 1 ;; esac
+  nm_policy_uuid=$(LC_ALL=C nmcli -e no -g GENERAL.CON-UUID device show "$nm_policy_device" 2>/dev/null | sed -n '1p')
+  if ! printf '%s' "$nm_policy_uuid" | grep -Eq '^[0-9A-Fa-f-]{32,36}$'; then
+    connection=$(LC_ALL=C nmcli -e no -g GENERAL.CONNECTION device show "$nm_policy_device" 2>/dev/null | sed -n '1p')
+    [ -n "$connection" ] && [ "$connection" != '--' ] \
+      || { echo "错误：默认上联不属于活动的 NetworkManager 连接。"; return 1; }
+    nm_policy_uuid=$(LC_ALL=C nmcli -e no -g connection.uuid connection show "$connection" 2>/dev/null | sed -n '1p')
+  fi
+  printf '%s' "$nm_policy_uuid" | grep -Eq '^[0-9A-Fa-f-]{32,36}$' \
+    || { echo "错误：无法确认 NetworkManager 上联 UUID。"; return 1; }
+}
+
+ip_policy_nm_property_value(){
+  local uuid="$1" property="$2" raw separator
+  raw=$(LC_ALL=C nmcli -e no -g "$property" connection show "$uuid" 2>/dev/null) || return 1
+  case "$property" in
+    ipv4.addresses|ipv4.routes) separator=',' ;;
+    ipv4.dns) separator=' ' ;;
+    *) printf '%s\n' "$raw" | sed -n '1p'; return ;;
+  esac
+  printf '%s\n' "$raw" | awk -v separator="$separator" '
+    {if (NR > 1) printf "%s", separator; printf "%s", $0}
+  '
+}
+
+ip_policy_save_nm(){
+  local property key value saved_uuid saved_device
+  local -a properties=(ipv4.method ipv4.addresses ipv4.gateway ipv4.routes ipv4.dns ipv4.link-local ipv4.may-fail)
+  if [ -e "$ip_policy_dir/nm_saved" ]; then
+    [ "$(ip_policy_state_read nm_saved 2>/dev/null)" = yes ] || return 1
+    saved_uuid=$(ip_policy_state_read_b64 nm_uuid 2>/dev/null) || return 1
+    saved_device=$(ip_policy_state_read_b64 nm_device 2>/dev/null) || return 1
+    [ "$saved_uuid" = "$nm_policy_uuid" ] && [ "$saved_device" = "$nm_policy_device" ] \
+      || { echo "错误：默认上联已变化，拒绝套用旧 NetworkManager 状态。"; return 1; }
+    return
+  fi
+  ip_policy_state_write_b64 nm_uuid "$nm_policy_uuid" || return 1
+  ip_policy_state_write_b64 nm_device "$nm_policy_device" || return 1
+  for property in "${properties[@]}"; do
+    value=$(ip_policy_nm_property_value "$nm_policy_uuid" "$property") \
+      || { echo "错误：无法保存 NetworkManager 字段 $property。"; return 1; }
+    key="nm_${property//./_}"
+    ip_policy_state_write_b64 "$key" "$value" || return 1
+  done
+  ip_policy_state_write nm_saved yes
+}
+
+ip_policy_restore_nm(){
+  local uuid device property key value
+  local -a properties=(ipv4.method ipv4.addresses ipv4.gateway ipv4.routes ipv4.dns ipv4.link-local ipv4.may-fail)
+  local -a modify_args
+  [ -e "$ip_policy_dir/nm_saved" ] || return 0
+  [ "$(ip_policy_state_read nm_saved 2>/dev/null)" = yes ] || return 1
+  command -v nmcli >/dev/null 2>&1 || { echo "错误：恢复原 IPv4 上联需要 nmcli。"; return 1; }
+  uuid=$(ip_policy_state_read_b64 nm_uuid 2>/dev/null) || return 1
+  device=$(ip_policy_state_read_b64 nm_device 2>/dev/null) || return 1
+  printf '%s' "$uuid" | grep -Eq '^[0-9A-Fa-f-]{32,36}$' || return 1
+  case "$device" in ''|*[!A-Za-z0-9_.:@-]*) return 1 ;; esac
+  nmcli -g connection.uuid connection show "$uuid" >/dev/null 2>&1 \
+    || { echo "错误：原 NetworkManager 连接已不存在。"; return 1; }
+  modify_args=(nmcli connection modify "$uuid")
+  for property in "${properties[@]}"; do
+    key="nm_${property//./_}"
+    value=$(ip_policy_state_read_b64 "$key" 2>/dev/null) || return 1
+    modify_args+=("$property" "$value")
+  done
+  "${modify_args[@]}" >/dev/null 2>&1 || return 1
+  nmcli connection verify "$uuid" >/dev/null 2>&1 || return 1
+  nmcli device reapply "$device" >/dev/null 2>&1 || return 1
+}
+
+ip_policy_apply_ipv6_only_nm(){
+  local uuid device
+  ip_policy_find_nm_uplink || return 1
+  ip_policy_prepare_state || return 1
+  ip_policy_save_nm || return 1
+  uuid="$nm_policy_uuid"
+  device="$nm_policy_device"
+  if ! nmcli connection modify "$uuid" \
+      ipv4.method disabled ipv4.addresses '' ipv4.gateway '' ipv4.routes '' ipv4.dns '' \
+      ipv4.link-local disabled ipv4.may-fail yes >/dev/null 2>&1 \
+    || ! nmcli connection verify "$uuid" >/dev/null 2>&1 \
+    || ! nmcli device reapply "$device" >/dev/null 2>&1; then
+    echo "错误：NetworkManager 无法安全地即时禁用 IPv4，正在恢复原连接设置。"
+    ip_policy_restore_nm >/dev/null 2>&1 || echo "严重错误：NetworkManager 原设置自动恢复失败，请使用云控制台处理。"
+    return 1
+  fi
+}
+
+ip_policy_restore_base(){
+  ip_policy_restore_nm || { echo "错误：恢复原 NetworkManager 设置失败。"; return 1; }
+  ip_policy_restore_sysctl || { echo "错误：恢复原 IPv6 sysctl 失败。"; return 1; }
+  ip_policy_restore_gai || { echo "错误：恢复原 gai.conf 失败。"; return 1; }
+}
+
+ip_policy_prune_backups_for_mode(){
+  local mode="$1" file
+  case "$mode" in
+    4)
+      for file in nm_saved nm_uuid nm_device nm_ipv4_method nm_ipv4_addresses nm_ipv4_gateway nm_ipv4_routes nm_ipv4_dns nm_ipv4_link-local nm_ipv4_may-fail gai_touched gai_created; do
+        rm -f -- "$ip_policy_dir/$file"
+      done
+      ;;
+    6)
+      for file in sysctl_saved sysctl_all sysctl_default sysctl_lo gai_touched gai_created; do
+        rm -f -- "$ip_policy_dir/$file"
+      done
+      ;;
+    '4;6'|'6;4')
+      for file in sysctl_saved sysctl_all sysctl_default sysctl_lo nm_saved nm_uuid nm_device nm_ipv4_method nm_ipv4_addresses nm_ipv4_gateway nm_ipv4_routes nm_ipv4_dns nm_ipv4_link-local nm_ipv4_may-fail; do
+        rm -f -- "$ip_policy_dir/$file"
+      done
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+ip_policy_reapply_previous_mode(){
+  local mode="$1"
+  case "$mode" in
+    4)
+      [ -e "$ip_policy_dir/sysctl_saved" ] || return 0
+      ip_policy_apply_ipv4_only_sysctl
+      ;;
+    6)
+      [ -e "$ip_policy_dir/nm_saved" ] || return 0
+      ip_policy_apply_ipv6_only_nm
+      ;;
+    '4;6'|'6;4')
+      [ -e "$ip_policy_dir/gai_touched" ] || return 0
+      ip_policy_apply_precedence "$mode"
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+ip_policy_mode_configuration_matches(){
+  local mode="$1" uuid expected_precedence
+  case "$mode" in
+    4)
+      [ -e "$ip_policy_dir/sysctl_saved" ] || return 0
+      ip_policy_sysctl_owned \
+        && [ "$(sysctl -n net.ipv6.conf.all.disable_ipv6 2>/dev/null)" = 1 ] \
+        && [ "$(sysctl -n net.ipv6.conf.default.disable_ipv6 2>/dev/null)" = 1 ] \
+        && [ "$(sysctl -n net.ipv6.conf.lo.disable_ipv6 2>/dev/null)" = 1 ]
+      ;;
+    6)
+      [ -e "$ip_policy_dir/nm_saved" ] || return 0
+      uuid=$(ip_policy_state_read_b64 nm_uuid 2>/dev/null) || return 1
+      command -v nmcli >/dev/null 2>&1 \
+        && [ "$(nmcli -g ipv4.method connection show "$uuid" 2>/dev/null | sed -n '1p')" = disabled ]
+      ;;
+    '4;6'|'6;4')
+      [ -e "$ip_policy_dir/gai_touched" ] || return 0
+      case "$mode" in '4;6') expected_precedence=100 ;; *) expected_precedence=10 ;; esac
+      ip_policy_gai_markers_valid && [ -f "$ip_policy_gai_file" ] \
+        && awk -v begin="$ip_policy_gai_begin" -v end="$ip_policy_gai_end" -v want="$expected_precedence" '
+          $0 == begin {managed=1; next}
+          $0 == end {managed=0}
+          managed && $1 == "precedence" && $2 == "::ffff:0:0/96" && $3 == want {found=1}
+          END {exit !found}
+        ' "$ip_policy_gai_file"
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+ip_policy_verify_mode(){
+  local mode="$1" expected_precedence
+  probe_ip_capabilities
+  case "$mode" in
+    4) [ "$ipv4_capability" = yes ] && [ "$ipv6_capability" = no ] ;;
+    6) [ "$ipv4_capability" = no ] && [ "$ipv6_capability" = yes ] ;;
+    '4;6'|'6;4')
+      { [ "$ipv4_capability" = yes ] && [ "$ipv6_capability" = no ]; } \
+        || { [ "$ipv4_capability" = no ] && [ "$ipv6_capability" = yes ]; } \
+        || {
+          [ "$ipv4_capability" = yes ] && [ "$ipv6_capability" = yes ] || return 1
+          case "$mode" in '4;6') expected_precedence=100 ;; *) expected_precedence=10 ;; esac
+          [ -f "$ip_policy_gai_file" ] \
+            && awk -v begin="$ip_policy_gai_begin" -v end="$ip_policy_gai_end" -v want="$expected_precedence" '
+              $0 == begin {managed=1; next}
+              $0 == end {managed=0}
+              managed && $1 == "precedence" && $2 == "::ffff:0:0/96" && $3 == want {found=1}
+              END {exit !found}
+            ' "$ip_policy_gai_file"
+        }
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+ip_policy_apply_mode_from_base(){
+  local mode="$1"
+  probe_ip_capabilities
+  case "$mode" in
+    4)
+      [ "$ipv4_capability" = yes ] \
+        || { echo "错误：ipv=4 要求已确认可用的 IPv4，上联状态为 $ipv4_capability。"; return 1; }
+      case "$ipv6_capability" in
+        no) return 0 ;;
+        unknown) echo "错误：IPv6 状态无法确认，禁止误判后执行单栈切换。"; return 1 ;;
+        yes) ;;
+      esac
+      ip_policy_guard_session 6 || return 1
+      ip_policy_apply_ipv4_only_sysctl || return 1
+      ip_policy_verify_mode 4 || { echo "错误：IPv4-only 应用后的公网栈验证失败。"; return 1; }
+      ;;
+    6)
+      [ "$ipv6_capability" = yes ] \
+        || { echo "错误：ipv=6 要求已确认可用的 IPv6，上联状态为 $ipv6_capability。"; return 1; }
+      case "$ipv4_capability" in
+        no) return 0 ;;
+        unknown) echo "错误：IPv4 状态无法确认，禁止误判后执行单栈切换。"; return 1 ;;
+        yes) ;;
+      esac
+      ip_policy_guard_session 4 || return 1
+      ip_policy_apply_ipv6_only_nm || return 1
+      ip_policy_verify_mode 6 || { echo "错误：IPv6-only 应用后的公网栈验证失败。"; return 1; }
+      ;;
+    '4;6'|'6;4')
+      if [ "$ipv4_capability" = unknown ] || [ "$ipv6_capability" = unknown ]; then
+        echo "错误：至少一个协议族状态无法确认，未修改双栈优先级。"
+        return 1
+      fi
+      if [ "$ipv4_capability" = no ] && [ "$ipv6_capability" = no ]; then
+        echo "错误：未确认任何可用公网协议族。"
+        return 1
+      fi
+      if [ "$ipv4_capability" = yes ] && [ "$ipv6_capability" = yes ]; then
+        ip_policy_apply_precedence "$mode" || return 1
+      fi
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+ip_policy_cancel_and_restore(){
+  [ -e "$ip_policy_dir" ] || { ip_policy_configure_runtime ''; return 0; }
+  ip_policy_load_runtime || return 1
+  echo "正在恢复 Airgosbx 修改前的 VPS IP 状态……"
+  ip_policy_restore_base || return 1
+  ip_policy_remove_state || return 1
+  ip_policy_configure_runtime ''
+  reset_v4v6_probe
+  echo "VPS IP 原状态已恢复。"
+}
+
+apply_requested_ip_policy(){
+  local old_mode target_mode="$ipv_request_mode"
+  ip_policy_load_runtime || return 1
+  old_mode="$effective_ipv_mode"
+
+  # 完全不传 ipv 只加载当前受管模式；显式 ipv="" 才取消并恢复原状态。
+  [ "$ipv_request_set" = yes ] || return 0
+  [ -n "$target_mode" ] || { ip_policy_cancel_and_restore; return $?; }
+  if [ "$target_mode" = 6 ] && [ "$xicp" = yes ]; then
+    echo "错误：ipv=6 不支持 XICMP；当前 XICMP FinalMask 必须监听 IPv4 地址 0.0.0.0。"
+    return 1
+  fi
+  if [ "$old_mode" = "$target_mode" ] && ip_policy_mode_configuration_matches "$target_mode"; then
+    ip_policy_configure_runtime "$target_mode"
+    echo "ipv=$target_mode 已处于目标状态，无需重复切换。"
+    return 0
+  fi
+
+  ip_policy_prepare_state || return 1
+  if [ -n "$old_mode" ]; then
+    echo "正在恢复基础网络状态，再从 ipv=$old_mode 切换到 ipv=$target_mode ……"
+    ip_policy_restore_base || return 1
+  fi
+  if ip_policy_apply_mode_from_base "$target_mode" \
+    && ip_policy_state_write mode "$target_mode" \
+    && ip_policy_prune_backups_for_mode "$target_mode"; then
+    ip_policy_configure_runtime "$target_mode"
+    echo "VPS IP 策略已应用：ipv=$target_mode"
+    return 0
+  fi
+
+  echo "目标 IP 策略未通过验证，正在恢复切换前状态……"
+  ip_policy_restore_base >/dev/null 2>&1 || true
+  if [ -n "$old_mode" ] && ip_policy_reapply_previous_mode "$old_mode" \
+    && ip_policy_state_write mode "$old_mode" \
+    && ip_policy_prune_backups_for_mode "$old_mode"; then
+    ip_policy_configure_runtime "$old_mode"
+    echo "已恢复切换前状态：ipv=$old_mode"
+  elif [ -z "$old_mode" ]; then
+    ip_policy_remove_state >/dev/null 2>&1 || true
+    ip_policy_configure_runtime ''
+  else
+    echo "严重错误：切换前 IP 状态未能自动恢复，请立即使用云控制台处理。"
+  fi
+  return 1
+}
+
 port_is_listening(){
 local port="$1"
 if command -v ss >/dev/null 2>&1; then
@@ -1787,6 +2473,44 @@ mita_port_is_listening(){
   fi
 }
 
+mita_port_is_listening_family(){
+  local port="$1" protocol="$2" family="$3" port_hex table dual_table
+  case "$port" in ''|*[!0-9]*) return 1 ;; esac
+  case "$family" in 4|6) ;; *) return 1 ;; esac
+  printf -v port_hex '%04X' "$port"
+  if [ "$protocol" = TCP ]; then
+    table="/proc/net/tcp"
+    [ "$family" = 6 ] && table="/proc/net/tcp6"
+    awk -v suffix=":$port_hex" '$2 ~ (suffix "$" ) && $4 == "0A" {found=1} END {exit !found}' "$table" 2>/dev/null && return 0
+  else
+    table="/proc/net/udp"
+    [ "$family" = 6 ] && table="/proc/net/udp6"
+    awk -v suffix=":$port_hex" '$2 ~ (suffix "$" ) {found=1} END {exit !found}' "$table" 2>/dev/null && return 0
+  fi
+  # IPv4 还可能由 bindv6only=0 的 IPv6 通配 socket 接收；只把明确绑定全零地址的双栈 socket 视为有效。
+  [ "$family" = 4 ] && [ "$(cat /proc/sys/net/ipv6/bindv6only 2>/dev/null)" = 0 ] || return 1
+  [ "$protocol" = TCP ] && dual_table=/proc/net/tcp6 || dual_table=/proc/net/udp6
+  awk -v port="$port_hex" -v tcp="$protocol" '
+    $2 == "00000000000000000000000000000000:" port && (tcp != "TCP" || $4 == "0A") {found=1}
+    END {exit !found}
+  ' "$dual_table" 2>/dev/null
+}
+
+mita_policy_listener_is_ready(){
+  case "$effective_ipv_mode" in
+    4|6)
+      mita_port_is_listening_family "$port_mieru" "$mieru_protocol" "$effective_ipv_mode"
+      ;;
+    '4;6'|'6;4')
+      v4v6
+      [ -z "$v4" ] || mita_port_is_listening_family "$port_mieru" "$mieru_protocol" 4 || return 1
+      [ -z "$v6" ] || mita_port_is_listening_family "$port_mieru" "$mieru_protocol" 6 || return 1
+      [ -n "$v4" ] || [ -n "$v6" ]
+      ;;
+    *) return 0 ;;
+  esac
+}
+
 mita_port_reserved_by_agsbx(){
   local candidate="$1" requested port_file
   for requested in "$port_vl_re" "$port_vm_ws" "$port_vw" "$port_hy2" "$port_xhy2" "$port_tu" "$port_xh" "$port_vx" "$port_an" "$port_ar" "$port_ss" "$port_so" "$port_xvcdn" "$port_xvargo" "$subpt"; do
@@ -1970,8 +2694,15 @@ write_mita_config(){
   ],
   "users": [
     {"name": "$user_json", "password": "$pass_json"}
-  ],
-  "loggingLevel": "INFO",
+  ]
+EOF
+  if [ -n "$effective_ipv_mode" ]; then
+    cat >> "$HOME/agsbx/mita.json" <<EOF
+  ,"dns": {"dualStack": "$mita_dns_policy"}
+EOF
+  fi
+  cat >> "$HOME/agsbx/mita.json" <<EOF
+  ,"loggingLevel": "INFO",
   "mtu": 1400,
   "trafficPattern": {
     "seed": $traffic_seed,
@@ -2016,6 +2747,11 @@ installmita(){
   if ! wait_mita_running; then
     status_out=$(mita status 2>&1)
     echo "错误：Mieru 代理未进入 RUNNING 状态：$status_out"; return 1
+  fi
+  if ! mita_policy_listener_is_ready; then
+    echo "错误：Mieru 未监听 ipv=$effective_ipv_mode 所需的协议族。"
+    mita stop >/dev/null 2>&1 || true
+    return 1
   fi
   export_mieru_traffic_pattern || { mita stop >/dev/null 2>&1 || true; return 1; }
   echo "Mieru/Mita 已启动：${mieru_protocol} $port_mieru ✓"
@@ -3028,7 +3764,7 @@ echo "Vlessenc-xhttp-reality-vision-fm端口：$port_xh"
 cat >> "$HOME/agsbx/xr.json" <<EOF
     {
       "tag":"xhttp-reality",
-      "listen": "::",
+      "listen": "${public_listen_address}",
       "port": ${port_xh},
       "protocol": "vless",
       "settings": {
@@ -3135,7 +3871,7 @@ fi
 cat >> "$HOME/agsbx/xr.json" <<EOF
     {
       "tag":"vless-xhttp",
-      "listen": "::",
+      "listen": "${public_listen_address}",
       "port": ${port_vx},
       "protocol": "vless",
       "settings": {
@@ -3206,7 +3942,7 @@ fi
 cat >> "$HOME/agsbx/xr.json" <<EOF
     {
       "tag":"vless-ws",
-      "listen": "::",
+      "listen": "${public_listen_address}",
       "port": ${port_vw},
       "protocol": "vless",
       "settings": {
@@ -3241,7 +3977,7 @@ echo "Vless-tcp-reality-vision-fm端口：$port_vl_re"
 cat >> "$HOME/agsbx/xr.json" <<EOF
         {
             "tag":"reality-vision",
-            "listen": "::",
+            "listen": "${public_listen_address}",
             "port": $port_vl_re,
             "protocol": "vless",
             "settings": {
@@ -3389,7 +4125,7 @@ echo "Vless-kcp-xdns-fm端口：$port_xdns"
 cat >> "$HOME/agsbx/xr.json" <<EOF
     {
       "tag": "vless-kcp-xdns",
-      "listen": "::",
+      "listen": "${public_listen_address}",
       "port": ${port_xdns},
       "protocol": "vless",
       "settings": {
@@ -3439,7 +4175,7 @@ echo "Vless-kcp-xicmp-fm 特种L3协议已激活✓"
 cat >> "$HOME/agsbx/xr.json" <<EOF
     {
       "tag": "vless-kcp-xicmp",
-      "listen": "::",
+      "listen": "${public_listen_address}",
       "protocol": "vless",
       "settings": {
         "clients": [
@@ -3481,7 +4217,7 @@ echo "Vlessenc-xhttp-tls-vision-fm-cdn端口：$port_xvcdn"
 cat >> "$HOME/agsbx/xr.json" <<EOF
     {
       "tag": "vlessenc-xhttp-cdn",
-      "listen": "::",
+      "listen": "${public_listen_address}",
       "port": ${port_xvcdn},
       "protocol": "vless",
       "settings": {
@@ -3683,7 +4419,7 @@ echo "Xray-core TLS 卸载订阅服务端口：$subport (内部回源端口：$s
 cat >> "$HOME/agsbx/xr.json" <<EOF
     {
       "tag": "sub-https-proxy",
-      "listen": "::",
+      "listen": "${public_listen_address}",
       "port": ${subport},
       "protocol": "dokodemo-door",
       "settings": {
@@ -3766,7 +4502,7 @@ cat >> "$HOME/agsbx/sb.json" <<EOF
     {
         "type": "hysteria2",
         "tag": "hy2-sb",
-        "listen": "::",
+        "listen": "${public_listen_address}",
         "listen_port": ${port_hy2},
         "users": [
             {
@@ -3799,7 +4535,7 @@ cat >> "$HOME/agsbx/sb.json" <<EOF
         {
             "type":"tuic",
             "tag": "tuic5-sb",
-            "listen": "::",
+            "listen": "${public_listen_address}",
             "listen_port": ${port_tu},
             "users": [
                 {
@@ -3829,7 +4565,7 @@ cat >> "$HOME/agsbx/sb.json" <<EOF
         {
             "type":"anytls",
             "tag":"anytls-sb",
-            "listen":"::",
+            "listen":"${public_listen_address}",
             "listen_port":${port_an},
             "users":[
                 {
@@ -3873,7 +4609,7 @@ cat >> "$HOME/agsbx/sb.json" <<EOF
         {
             "type":"anytls",
             "tag":"anyreality-sb",
-            "listen":"::",
+            "listen":"${public_listen_address}",
             "listen_port":${port_ar},
             "users":[
                 {
@@ -3912,7 +4648,7 @@ cat >> "$HOME/agsbx/sb.json" <<EOF
         {
             "type": "shadowsocks",
             "tag":"ss-2022",
-            "listen": "::",
+            "listen": "${public_listen_address}",
             "listen_port": $port_ss,
             "method": "2022-blake3-aes-128-gcm",
             "password": "$sskey"
@@ -4312,7 +5048,7 @@ if [ -e "$HOME/agsbx/xr.json" ]; then
 cat >> "$HOME/agsbx/xr.json" <<EOF
         {
             "tag": "vmess-xr",
-            "listen": "::",
+            "listen": "${public_listen_address}",
             "port": ${port_vm_ws},
             "protocol": "vmess",
             "settings": {
@@ -4341,7 +5077,7 @@ cat >> "$HOME/agsbx/sb.json" <<EOF
 {
         "type": "vmess",
         "tag": "vmess-sb",
-        "listen": "::",
+        "listen": "${public_listen_address}",
         "listen_port": ${port_vm_ws},
         "users": [
             {
@@ -4373,7 +5109,7 @@ cat >> "$HOME/agsbx/xr.json" <<EOF
         {
          "tag": "socks5-xr",
          "port": ${port_so},
-         "listen": "::",
+         "listen": "${public_listen_address}",
          "protocol": "socks",
          "settings": {
             "auth": "password",
@@ -4397,7 +5133,7 @@ cat >> "$HOME/agsbx/sb.json" <<EOF
     {
       "tag": "socks5-sb",
       "type": "socks",
-      "listen": "::",
+      "listen": "${public_listen_address}",
       "listen_port": ${port_so},
       "users": [
       {
@@ -5350,7 +6086,7 @@ cat >> "$HOME/agsbx/sb.json" <<EOF
   {
     "type": "direct",
     "tag": "sub-https-proxy",
-    "listen": "::",
+    "listen": "${public_listen_address}",
     "listen_port": ${subport},
     "tcp_fast_open": true,
     "tls": {
@@ -5859,8 +6595,20 @@ fi
 cip(){
 ipbest(){
 # 优先复用 v4v6() 已探测到的地址，两者皆空时才重新发起外网探测
-serip="${v4:-$v6}"
-[ -z "$serip" ] && serip=$( (command -v curl >/dev/null 2>&1 && (curl -s4m5 "$v46url" 2>/dev/null || curl -s6m5 "$v46url" 2>/dev/null) ) || (command -v wget >/dev/null 2>&1 && (timeout 3 wget -4 -qO- --tries=2 "$v46url" 2>/dev/null || timeout 3 wget -6 -qO- --tries=2 "$v46url" 2>/dev/null) ) )
+first_family="$ip_policy_preferred_family"
+if [ "$first_family" = 6 ]; then
+  serip="${v6:-$v4}"
+  second_family=4
+else
+  serip="${v4:-$v6}"
+  second_family=6
+fi
+if [ -z "$serip" ]; then
+  serip=$( (command -v curl >/dev/null 2>&1 && (curl -s"$first_family"m5 "$v46url" 2>/dev/null || curl -s"$second_family"m5 "$v46url" 2>/dev/null) ) \
+    || (command -v wget >/dev/null 2>&1 && (timeout 3 wget -"$first_family" -qO- --tries=2 "$v46url" 2>/dev/null || timeout 3 wget -"$second_family" -qO- --tries=2 "$v46url" 2>/dev/null) ) )
+fi
+serip=$(printf '%s\n' "$serip" | sed -n '1{s/[[:space:]]//g;p;}')
+valid_ip "$serip" || { echo "错误：无法取得有效的 VPS 公网地址。"; return 1; }
 if echo "$serip" | grep -q ':'; then
 server_ip="[$serip]"
 else
@@ -7560,7 +8308,38 @@ echo
 # - 本大段处理传入脚本的 `$1` 参数并路由分发到特定行为: `del`(卸载整个 agsbx 目录)、`rep`(重置配置)、`list`(卡片打印)、`upx/ups`(内核更新) 或 `res`(内核服务快速重启)。
 # - 关联性: 为终端控制台调用或 systemd/OpenRC 守护指令提供物理分发网关。
 #============================================================
+case "$1" in
+  ''|rep|del) ip_policy_load_runtime || exit 1 ;;
+  *) ip_policy_load_runtime >/dev/null 2>&1 || ip_policy_configure_runtime '' ;;
+esac
+case "$1" in
+  rep)
+    apply_requested_ip_policy || exit 1
+    if [ "$effective_ipv_mode" = 6 ] && [ "$xicp" = yes ]; then
+      echo "错误：ipv=6 不支持 XICMP；请删除 xicmp/xicmppt 后再重置配置。"
+      exit 1
+    fi
+    ;;
+  '')
+    if agsbx_installed || agsbx_running; then
+      if [ "$ipv_request_set" = yes ] && [ -z "$ipv_request_mode" ]; then
+        ip_policy_cancel_and_restore || exit 1
+        exit 0
+      elif [ "$ipv_request_set" = yes ] && [ -n "$ipv_request_mode" ]; then
+        echo "错误：已安装状态切换非空 ipv 必须与配置重建同步，请使用协议变量加 agsbx rep。"
+        exit 1
+      fi
+    else
+      apply_requested_ip_policy || exit 1
+    fi
+    ;;
+  *)
+    # list/status/start/stop/update 等命令不应用本次 ipv，只读取已保存模式供展示或地址选择。
+    ;;
+esac
+
 if [ "$1" = "del" ]; then
+ip_policy_cancel_and_restore || exit 1
 cleandel del
 uninstall_mita_managed || exit 1
 # 注：sbx_update 标记文件位于 $HOME/agsbx 内，随该目录一并删除；此前裸写的相对路径 sbx_update
@@ -7721,17 +8500,17 @@ for P in /proc/[0-9]*; do if [ -L "$P/exe" ]; then TARGET=$(readlink -f "$P/exe"
 kill -15 $(pgrep -f 'agsbx/sing-box' 2>/dev/null) $(pgrep -f 'agsbx/cloudflared' 2>/dev/null) $(pgrep -f 'agsbx/xray' 2>/dev/null) >/dev/null 2>&1
 
 # WARP 对端 (engage.cloudflareclient.com) 出口协议栈选择：
-# 双栈 VPS 优先走 IPv4 外层封装（外层包头比 IPv6 少 20 字节、UDP 路径质量普遍更稳），
-# 仅在纯 IPv6 VPS（无 IPv4 出站）时才回退 IPv6 对端。
+# 默认优先 IPv4 外层封装；ipv=6 或 ipv="6;4" 时优先 IPv6，对应栈不可用才回退另一栈。
 # 此前无条件优先 IPv6 对端，叠加未设 MTU，是 warp=s6x6 等内层 IPv6 模式"连接不通畅"的主要诱因。
 # 复用集中 VPS 信息展示所需的双栈探测结果，避免这里单独再请求一次公网 IPv4。
 v4v6
-if [ -n "$v4" ]; then
-sendip="162.159.192.1"
-xendip="162.159.192.1"
+warp_outer_first="$ip_policy_preferred_family"
+if { [ "$warp_outer_first" = 6 ] && [ -n "$v6" ]; } || { [ -z "$v4" ] && [ -n "$v6" ]; }; then
+  sendip="2606:4700:d0::a29f:c001"
+  xendip="[2606:4700:d0::a29f:c001]"
 else
-sendip="2606:4700:d0::a29f:c001"
-xendip="[2606:4700:d0::a29f:c001]"
+  sendip="162.159.192.1"
+  xendip="162.159.192.1"
 fi
 echo "Airgosbx脚本未安装，开始安装…………" && sleep 1
 show_vps_info
