@@ -60,21 +60,237 @@ wait_agsbx_component(){
   return 1
 }
 
+subscription_http_binary(){
+  local candidate path candidates
+  if command -v apk >/dev/null 2>&1; then
+    candidates="busybox-extras busybox"
+  else
+    candidates="busybox busybox-extras"
+  fi
+  for candidate in $candidates; do
+    path=$(command -v "$candidate" 2>/dev/null) || continue
+    "$path" --list 2>/dev/null | grep -qx 'httpd' || continue
+    printf '%s\n' "$path"
+    return 0
+  done
+  return 1
+}
+
+subscription_http_managed_pids(){
+  pgrep -f "(busybox|busybox-extras)[[:space:]]+httpd.*[[:space:]]-h[[:space:]]+$HOME/websbx([[:space:]]|$)"
+}
+
+subscription_http_managed_is_running(){
+  subscription_http_managed_pids >/dev/null 2>&1
+}
+
+read_crontab_or_empty(){
+  local destination="$1" error_file
+  crontab_read_state=error
+  error_file=$(mktemp) || return 1
+  if crontab -l > "$destination" 2> "$error_file"; then
+    crontab_read_state=present
+    rm -f "$error_file"
+    return 0
+  fi
+  if grep -Eqi 'no crontab|no such file or directory' "$error_file"; then
+    : > "$destination"
+    crontab_read_state=absent
+    rm -f "$error_file"
+    return 0
+  fi
+  echo "错误：无法读取现有 crontab，拒绝覆盖。"
+  rm -f "$error_file"
+  return 1
+}
+
+subscription_cron_line_is_managed(){
+  local line="$1" suffix
+  case "$line" in *'# AIRGOSBX_SUBSCRIPTION_HTTP') return 0 ;; esac
+  case "$line" in @reboot*) ;; *) return 1 ;; esac
+  case "$line" in *" httpd "*"-p "*"-h "*) ;; *) return 1 ;; esac
+  case "$line" in
+    *"$HOME/websbx"*) suffix=${line#*"$HOME/websbx"} ;;
+    *) return 1 ;;
+  esac
+  case "$suffix" in ''|' '*|'"'|'" '*) return 0 ;; *) return 1 ;; esac
+}
+
+subscription_cron_has_managed_startup(){
+  local line cron_tmp found=no
+  cron_tmp=$(mktemp) || return 2
+  read_crontab_or_empty "$cron_tmp" || { rm -f "$cron_tmp"; return 2; }
+  while IFS= read -r line || [ -n "$line" ]; do
+    if subscription_cron_line_is_managed "$line"; then found=yes; break; fi
+  done < "$cron_tmp"
+  rm -f "$cron_tmp"
+  [ "$found" = yes ] && return 0
+  return 1
+}
+
+filter_managed_subscription_cron(){
+  local source="$1" destination="$2" line
+  : > "$destination" || return 1
+  while IFS= read -r line || [ -n "$line" ]; do
+    subscription_cron_line_is_managed "$line" && continue
+    printf '%s\n' "$line" >> "$destination" || return 1
+  done < "$source"
+}
+
+neutralize_subscription_persistent_startup(){
+  local cron_tmp filtered_tmp
+  if command -v apk >/dev/null 2>&1; then
+    cat > /etc/local.d/alpinesubsbx.start <<'EOF'
+#!/bin/bash
+# Airgosbx disabled an unsafe legacy subscription startup entry.
+exit 1
+EOF
+    [ $? -eq 0 ] || return 1
+    chmod 700 /etc/local.d/alpinesubsbx.start
+  else
+    cron_tmp=$(mktemp) || return 1
+    filtered_tmp=$(mktemp) || { rm -f "$cron_tmp"; return 1; }
+    if ! read_crontab_or_empty "$cron_tmp" \
+      || ! filter_managed_subscription_cron "$cron_tmp" "$filtered_tmp" \
+      || ! crontab "$filtered_tmp" >/dev/null 2>&1; then
+      rm -f "$cron_tmp" "$filtered_tmp"
+      return 1
+    fi
+    rm -f "$cron_tmp" "$filtered_tmp"
+  fi
+}
+
 subscription_http_is_running(){
-  pgrep -f '(busybox|busybox-extras)[[:space:]]+httpd.*[[:space:]]-h[[:space:]]+[^[:space:]]*/websbx' >/dev/null 2>&1
+  local port="${1:-}"
+  [ -n "$port" ] || port=$(cat "$HOME/agsbx/subport_real.log" 2>/dev/null)
+  case "$port" in ''|*[!0-9]*) return 1 ;; esac
+  pgrep -f "(busybox|busybox-extras)[[:space:]]+httpd.*[[:space:]]-p[[:space:]]+127[.]0[.]0[.]1:${port}([[:space:]]|$)" >/dev/null 2>&1
 }
 
 subscription_http_is_listening(){
   local port="$1" port_hex
   case "$port" in ''|*[!0-9]*) return 1 ;; esac
   if command -v ss >/dev/null 2>&1; then
-    ss -ltn 2>/dev/null | awk -v suffix=":$port" '$4 ~ (suffix "$") {found=1} END {exit !found}'
+    ss -ltn 2>/dev/null | awk -v endpoint="127.0.0.1:$port" '$4 == endpoint {found=1} END {exit !found}'
   elif command -v netstat >/dev/null 2>&1; then
-    netstat -ltn 2>/dev/null | awk -v suffix=":$port" '$4 ~ (suffix "$") {found=1} END {exit !found}'
+    netstat -ltn 2>/dev/null | awk -v endpoint="127.0.0.1:$port" '$4 == endpoint {found=1} END {exit !found}'
   else
     printf -v port_hex '%04X' "$port"
-    awk -v suffix=":$port_hex" '$2 ~ (suffix "$") && $4 == "0A" {found=1} END {exit !found}' /proc/net/tcp /proc/net/tcp6 2>/dev/null
+    awk -v endpoint="0100007F:$port_hex" '$2 == endpoint && $4 == "0A" {found=1} END {exit !found}' /proc/net/tcp 2>/dev/null
   fi
+}
+
+subscription_http_responds(){
+  local port="$1" status
+  exec 9<>"/dev/tcp/127.0.0.1/$port" 2>/dev/null || return 1
+  printf 'GET / HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&9
+  IFS= read -r -t 2 status <&9 || { exec 9>&-; return 1; }
+  exec 9>&-
+  case "$status" in HTTP/*) return 0 ;; *) return 1 ;; esac
+}
+
+start_subscription_http(){
+  local port="$1" binary pid attempt
+  binary=$(subscription_http_binary) || {
+    echo "错误：系统中的 BusyBox 不包含 httpd applet，无法启动订阅服务。"
+    return 1
+  }
+  "$binary" httpd -f -p "127.0.0.1:$port" -h "$HOME/websbx" >/dev/null 2>&1 &
+  pid=$!
+  for attempt in {1..5}; do
+    if kill -0 "$pid" >/dev/null 2>&1 \
+      && subscription_http_is_running "$port" \
+      && subscription_http_is_listening "$port" \
+      && subscription_http_responds "$port"; then
+      return 0
+    fi
+    sleep 1
+  done
+  kill -15 "$pid" >/dev/null 2>&1 || true
+  echo "错误：BusyBox 订阅服务未在回环地址 127.0.0.1:$port 正常响应。"
+  return 1
+}
+
+write_subscription_http_autostart(){
+  local port="$1" enable_local="${2:-yes}" binary cron_tmp filtered_tmp
+  case "$port" in ''|*[!0-9]*) echo "错误：订阅回源端口无效，拒绝写入启动项。"; return 1 ;; esac
+  binary=$(subscription_http_binary) || {
+    echo "错误：订阅后端缺少 BusyBox httpd applet，无法写入启动项。"
+    return 1
+  }
+  if command -v apk >/dev/null 2>&1; then
+    cat > /etc/local.d/alpinesubsbx.start <<EOF
+#!/bin/bash
+sleep 10
+"$binary" httpd -f -p 127.0.0.1:$port -h "$HOME/websbx" > /dev/null 2>&1 &
+EOF
+    [ $? -eq 0 ] || return 1
+    chmod 700 /etc/local.d/alpinesubsbx.start || return 1
+    if [ "$enable_local" = yes ]; then
+      rc-update add local default >/dev/null 2>&1 || return 1
+    fi
+  else
+    cron_tmp=$(mktemp) || return 1
+    filtered_tmp=$(mktemp) || { rm -f "$cron_tmp"; return 1; }
+    if ! read_crontab_or_empty "$cron_tmp" \
+      || ! filter_managed_subscription_cron "$cron_tmp" "$filtered_tmp" \
+      || ! echo "@reboot sleep 10 && /bin/bash -c '\"$binary\" httpd -f -p 127.0.0.1:$port -h \"$HOME/websbx\" > /dev/null 2>&1 &' # AIRGOSBX_SUBSCRIPTION_HTTP" >> "$filtered_tmp" \
+      || ! crontab "$filtered_tmp" >/dev/null 2>&1; then
+      rm -f "$cron_tmp" "$filtered_tmp"
+      return 1
+    fi
+    rm -f "$cron_tmp" "$filtered_tmp"
+  fi
+}
+
+migrate_subscription_persistent_startup(){
+  local port query_status
+  subscription_persistent_present=no
+  if command -v apk >/dev/null 2>&1; then
+    [ -e /etc/local.d/alpinesubsbx.start ] || return 0
+  else
+    command -v crontab >/dev/null 2>&1 || return 0
+    if subscription_cron_has_managed_startup; then
+      :
+    else
+      query_status=$?
+      [ "$query_status" -eq 1 ] && return 0
+      echo "错误：无法确认旧订阅启动项状态，拒绝跳过迁移。"
+      return 1
+    fi
+  fi
+  subscription_persistent_present=yes
+  neutralize_subscription_persistent_startup || {
+    echo "错误：无法禁用旧订阅启动项。"
+    return 1
+  }
+  port=$(cat "$HOME/agsbx/subport_real.log" 2>/dev/null)
+  write_subscription_http_autostart "$port" no || {
+    echo "错误：无法把旧订阅启动项迁移到 IPv4 回环监听。"
+    return 1
+  }
+}
+
+restart_managed_subscription_http(){
+  local port pids pid attempt
+  pids=$(subscription_http_managed_pids 2>/dev/null) || pids=""
+  if [ -n "$pids" ]; then
+    for pid in $pids; do
+      kill -15 "$pid" >/dev/null 2>&1 || return 1
+    done
+    for attempt in {1..5}; do
+      subscription_http_managed_is_running || break
+      sleep 1
+    done
+    subscription_http_managed_is_running && {
+      echo "错误：旧订阅 HTTP 进程未能停止，拒绝启动新的回环实例。"
+      return 1
+    }
+  elif [ "$subscription_persistent_present" != yes ]; then
+    return 0
+  fi
+  port=$(cat "$HOME/agsbx/subport_real.log" 2>/dev/null)
+  start_subscription_http "$port"
 }
 
 verify_install_required_components(){
@@ -111,8 +327,10 @@ verify_install_required_components(){
     failed=yes
   fi
   if [ "$include_subscription" = yes ] && [ "$install_required_subscription" = yes ]; then
-    if ! subscription_http_is_running || ! subscription_http_is_listening "$subport_real"; then
-      echo "错误：本轮要求的订阅 HTTP 服务未运行或未监听预期端口。"
+    if ! subscription_http_is_running "$subport_real" \
+      || ! subscription_http_is_listening "$subport_real" \
+      || ! subscription_http_responds "$subport_real"; then
+      echo "错误：本轮要求的订阅 HTTP 服务未运行、未监听预期回环端口或未正常响应。"
       failed=yes
     fi
   fi
@@ -706,7 +924,9 @@ export ym_vl_re=${reym:-''}
 export cdnym=${cdnym:-''}
 export argo=${argo:-''}
 export ARGO_DOMAIN=${agn:-''}
-export ARGO_AUTH=${agk:-''}
+ARGO_AUTH=${agk:-''}
+export -n ARGO_AUTH 2>/dev/null || true
+unset agk
 export ippz=${ippz:-''}
 export warp=${warp:-''}
 secp=${secp:-''}
@@ -792,6 +1012,7 @@ amd64|x86_64) cpu=amd64;;
 esac
 mkdir -pm 700 "$HOME/agsbx"
 umask 077
+argo_token_file="$HOME/agsbx/sbargotoken.log"
 # 依赖自检与按需补全：每次运行先逐个 command -v 检测脚本真正用到的外部命令，仅对缺失项调用系统包管理器安装；
 # 已具备则零操作、不联网。跨发行版覆盖 apt/dnf/yum/pacman/apk/zypper，包名差异(ss/pgrep/crontab)按系映射。
 # 仅在 Debian 这类精简系统上首次补齐工具，coreutils/util-linux 等基础包默认存在故不重复纳入。
@@ -824,8 +1045,17 @@ ensure_deps(){
   if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
     miss="$miss curl"
   fi
+  # 订阅后端才需要 BusyBox httpd；按发行版补包后仍以实际 applet 能力为准。
+  if [ "$sub" = yes ] && ! subscription_http_binary >/dev/null; then
+    if [ "$pm" = apk ]; then pkg=busybox-extras; else pkg=busybox; fi
+    case " $miss " in *" $pkg "*) ;; *) miss="$miss $pkg" ;; esac
+  fi
   [ -z "$miss" ] && return 0
-  [ -z "$pm" ] && { echo "未识别系统包管理器，请手动安装依赖：$miss"; return 0; }
+  if [ -z "$pm" ]; then
+    echo "未识别系统包管理器，请手动安装依赖：$miss"
+    [ "$sub" = yes ] && ! subscription_http_binary >/dev/null && return 1
+    return 0
+  fi
   echo "检测到缺失依赖：$miss，正在通过 $pm 自动安装……"
   case "$pm" in
     apt)    export DEBIAN_FRONTEND=noninteractive; apt-get update >/dev/null 2>&1; apt-get install -y $miss >/dev/null 2>&1 ;;
@@ -835,17 +1065,22 @@ ensure_deps(){
     apk)    apk add $miss >/dev/null 2>&1 ;;
     zypper) zypper --non-interactive install $miss >/dev/null 2>&1 ;;
   esac
+  if [ "$sub" = yes ] && ! subscription_http_binary >/dev/null; then
+    echo "错误：安装完成后仍未找到包含 httpd applet 的 BusyBox。"
+    return 1
+  fi
+  return 0
 }
 if [ ! -f "$HOME/agsbx/sbx_update" ]; then
 echo "执行脚本中，请稍后"
-# Alpine(musl) 跑官方预编译的 glibc 版 xray/sing-box 需 glibc 兼容层，附带 bash/busybox 扩展，单独保留
+# Alpine(musl) 跑官方预编译的 glibc 版 xray/sing-box 需 glibc 兼容层，并补齐 Bash；订阅所需 busybox-extras 由 ensure_deps 按需安装。
 if command -v apk >/dev/null 2>&1; then
 apk update >/dev/null 2>&1
-apk add gcompat libc6-compat bash busybox-extras >/dev/null 2>&1
+apk add gcompat libc6-compat bash >/dev/null 2>&1
 fi
 touch "$HOME/agsbx/sbx_update"
 fi
-ensure_deps
+ensure_deps || exit 1
 #============================================================
 # [第4段] 网络检测与 WARP 配置函数
 #------------------------------------------------------------
@@ -2861,7 +3096,11 @@ command -v crontab >/dev/null 2>&1 || {
   return 0
 }
 cron_tmp=$(mktemp) || return 0
-crontab -l 2>/dev/null > "$cron_tmp"
+if ! read_crontab_or_empty "$cron_tmp"; then
+  rm -f "$cron_tmp"
+  echo "警告：无法安全读取现有 crontab，未注册 ACME 自动续期任务。"
+  return 0
+fi
 if ! grep -Fq "/bin/bash $acme_script --cron --home $acme_home" "$cron_tmp"; then
   echo "30 2 * * * /bin/bash $acme_script --cron --home $acme_home > /dev/null 2>&1" >> "$cron_tmp"
   crontab "$cron_tmp" >/dev/null 2>&1 || echo "警告：ACME 自动续期任务写入失败，请稍后手动检查 crontab。"
@@ -2907,11 +3146,16 @@ reload_one "$H/sb.json" sb sing-box 'agsbx/sing-box' "$H/sing-box" "$H/sing-box.
 RELOADEOF
   chmod 700 "$HOME/agsbx/caddy_cert_reload.sh"
   local cron_tmp
-  cron_tmp=$(mktemp)
-  crontab -l 2>/dev/null > "$cron_tmp"
+  cron_tmp=$(mktemp) || { echo "错误：无法创建证书重载任务临时文件。"; return 1; }
+  if ! read_crontab_or_empty "$cron_tmp"; then
+    rm -f "$cron_tmp"
+    echo "错误：无法安全读取现有 crontab，未注册证书重载任务。"
+    return 1
+  fi
   if ! grep -q 'caddy_cert_reload.sh' "$cron_tmp"; then
     echo "20 3 * * * /bin/bash $HOME/agsbx/caddy_cert_reload.sh > /dev/null 2>&1" >> "$cron_tmp"
-    crontab "$cron_tmp" >/dev/null 2>&1
+    crontab "$cron_tmp" >/dev/null 2>&1 \
+      || { rm -f "$cron_tmp"; echo "错误：证书重载任务写入失败。"; return 1; }
   fi
   rm -f "$cron_tmp"
   # 立即落一次基线指纹，避免装好当天的首次 cron 误判为「已变化」而重启。
@@ -3470,6 +3714,13 @@ setup_tls_certificate(){
   local reuse_cert reuse_key reuse_identifier wanted wanted_type mode_hint dns_requested=no reuse_allowed=yes acme_requested=no choose_status retry_choice index
   local -a wanted_identifiers
   if [ "$tls_cert_ready" = yes ]; then
+    if [ "${tls_caddy_reuse_notice_shown:-no}" != yes ] \
+      && [ "$(cat "$HOME/agsbx/cert_mode" 2>/dev/null)" = caddy ] \
+      && { [ "$sub" = yes ] || [ "$hyp" = yes ] || [ "$xhyp" = yes ] || [ "$tup" = yes ] \
+        || [ "$anp" = yes ] || [ "$xvcdn" = yes ] || [ "$xvargo" = yes ]; }; then
+      echo "TLS证书模式：复用 Caddy(naive) 已签发的真实证书"
+      tls_caddy_reuse_notice_shown=yes
+    fi
     return 0
   fi
   # Caddy 内置 ACME 仍保持最高优先级；新进程复用磁盘上的既有证书时重新校验一次，
@@ -3484,6 +3735,7 @@ setup_tls_certificate(){
       tls_key_file="$reuse_key"
       write_cert_fingerprint
       echo "TLS证书模式：复用 Caddy(naive) 已签发的真实证书"
+      tls_caddy_reuse_notice_shown=yes
       show_tls_cert_summary "复用 Caddy(naive) 已签发证书" "$(cat "$HOME/agsbx/naive_domain" 2>/dev/null)"
       tls_cert_ready=yes
       return 0
@@ -4034,9 +4286,9 @@ vlp=vlptargo
 fi
 if [ -n "$xhyp" ]; then
 xhyp=xhypt
-setup_tls_certificate
 port_xhy2=$(init_port "$port_xhy2" port_xhy2)
 echo "Xray-Hysteria2端口：$port_xhy2"
+setup_tls_certificate
 if [ -n "$xhyjpt" ]; then
 cat >> "$HOME/agsbx/xr.json" <<EOF
     {
@@ -4211,9 +4463,9 @@ cat >> "$HOME/agsbx/xr.json" <<EOF
 EOF
 fi
 if [ "$xvcdn" = yes ]; then
-setup_tls_certificate
 port_xvcdn=$(init_port "$port_xvcdn" port_xvcdn)
 echo "Vlessenc-xhttp-tls-vision-fm-cdn端口：$port_xvcdn"
+setup_tls_certificate
 cat >> "$HOME/agsbx/xr.json" <<EOF
     {
       "tag": "vlessenc-xhttp-cdn",
@@ -4307,9 +4559,9 @@ cat >> "$HOME/agsbx/xr.json" <<EOF
 EOF
 fi
 if [ "$xvargo" = yes ]; then
-setup_tls_certificate
 port_xvargo=$(init_port "$port_xvargo" port_xvargo)
 echo "Vlessenc-xhttp-tls-vision-fm-argo端口：$port_xvargo"
+setup_tls_certificate
 cat >> "$HOME/agsbx/xr.json" <<EOF
     {
       "tag": "vlessenc-xhttp-argo",
@@ -4410,12 +4662,12 @@ fi
 #   - subport_real (本地回源端口，持久化于 subport_real.log)：只监听在 127.0.0.1，防外网直连。
 # - 关联映射：此处 dokodemo-door 反代的目标端口与最尾部 (L3120之后) 启动 busybox httpd 监听的真实端口强关联一致。
 # ------------------------------------------------------------
-if [ "$sub" = yes ]; then
-setup_tls_certificate
-if [ -f "$tls_cert_file" ] && [ -f "$tls_key_file" ]; then
+if [ "$sub" = yes ] && [ "$subscription_core" = xray ]; then
 subport=$(init_port "$subpt" subport.log)
 subport_real=$(init_subport_real "$subport")
 echo "Xray-core TLS 卸载订阅服务端口：$subport (内部回源端口：$subport_real)"
+setup_tls_certificate
+if [ -f "$tls_cert_file" ] && [ -f "$tls_key_file" ]; then
 cat >> "$HOME/agsbx/xr.json" <<EOF
     {
       "tag": "sub-https-proxy",
@@ -4452,7 +4704,7 @@ fi
 installsb(){
 echo
 printf '%s\n' "${C_CYAN}=========启用sing-box内核=========${C_RESET}"
-local min_sb_ver="1.12.0" local_sb_ver sb_version_state
+local min_sb_ver="1.12.0" local_sb_ver sb_version_state sub_tls_guard
 if [ ! -e "$HOME/agsbx/sing-box" ]; then
 upsingbox || return 1
 else
@@ -4492,12 +4744,51 @@ cat > "$HOME/agsbx/sb.json" <<EOF
   "inbounds": [
 EOF
 insuuid
-setup_tls_certificate
+if [ "$sub" = yes ] && [ "$subscription_core" = singbox ]; then
+subport=$(init_port "$subpt" subport.log)
+subport_real=$(init_subport_real "$subport")
+echo "Sing-box TLS fallback 订阅服务端口：$subport (内部回源端口：$subport_real)"
+setup_tls_certificate || return 1
+if [ ! -s "$tls_cert_file" ] || [ ! -s "$tls_key_file" ]; then
+  echo "错误：Sing-box 订阅入站所需的 TLS 证书或私钥不可用。"
+  return 1
+fi
+sub_tls_guard=$("$HOME/agsbx/sing-box" generate rand --hex 32 2>/dev/null)
+if [ "${#sub_tls_guard}" -ne 64 ] || ! printf '%s' "$sub_tls_guard" | grep -Eq '^[0-9a-fA-F]+$'; then
+  echo "错误：无法生成 Sing-box 订阅 fallback 防护凭据。"
+  return 1
+fi
+cat >> "$HOME/agsbx/sb.json" <<EOF
+    {
+      "type": "trojan",
+      "tag": "sub-https-proxy",
+      "listen": "${public_listen_address}",
+      "listen_port": ${subport},
+      "users": [
+        {
+          "name": "subscription-fallback-guard",
+          "password": "${sub_tls_guard}"
+        }
+      ],
+      "tls": {
+        "enabled": true,
+        "alpn": ["http/1.1"],
+        "certificate_path": "$tls_cert_file",
+        "key_path": "$tls_key_file"
+      },
+      "fallback": {
+        "server": "127.0.0.1",
+        "server_port": ${subport_real}
+      }
+    },
+EOF
+fi
 if [ -n "$hyp" ]; then
 hyp=hypt
 insobfspass
 port_hy2=$(init_port "$port_hy2" port_hy2)
 echo "Hysteria2端口：$port_hy2"
+setup_tls_certificate
 cat >> "$HOME/agsbx/sb.json" <<EOF
     {
         "type": "hysteria2",
@@ -4531,6 +4822,7 @@ if [ -n "$tup" ]; then
 tup=tupt
 port_tu=$(init_port "$port_tu" port_tu)
 echo "Tuic端口：$port_tu"
+setup_tls_certificate
 cat >> "$HOME/agsbx/sb.json" <<EOF
         {
             "type":"tuic",
@@ -4561,6 +4853,7 @@ if [ -n "$anp" ]; then
 anp=anpt
 port_an=$(init_port "$port_an" port_an)
 echo "Anytls端口：$port_an"
+setup_tls_certificate
 cat >> "$HOME/agsbx/sb.json" <<EOF
         {
             "type":"anytls",
@@ -6069,36 +6362,6 @@ EOF
 start_agsbx_core xray || return 1
 fi
 if [ -e "$HOME/agsbx/sb.json" ]; then
-# ------------------------------------------------------------
-# 🎯 任务 H 模块 C：Sing-box 独占式 TLS 卸载 direct Inbound 注入段
-# - 功能描述：当 xray 不在线、只激活 sing-box 时，自适应地在 sb.json 尾部注入 direct 反代。
-# - 运作逻辑：实现单 sing-box 核环境下的 HTTPS 订阅卸载，同样将公网 subport 解密并路由给本地 subport_real。
-# - 关联映射：与最尾部拉起的 busybox httpd 监听端口强关联一致。
-# ------------------------------------------------------------
-if [ "$sub" = yes ] && [ ! -f "$HOME/agsbx/xray" ]; then
-setup_tls_certificate
-if [ -f "$tls_cert_file" ] && [ -f "$tls_key_file" ]; then
-subport=$(init_port "$subpt" subport.log)
-subport_real=$(init_subport_real "$subport")
-echo "Sing-box TLS 卸载订阅服务端口：$subport (内部回源端口：$subport_real)"
-cat >> "$HOME/agsbx/sb.json" <<EOF
-  ,
-  {
-    "type": "direct",
-    "tag": "sub-https-proxy",
-    "listen": "${public_listen_address}",
-    "listen_port": ${subport},
-    "tcp_fast_open": true,
-    "tls": {
-      "enabled": true,
-      "certificate_path": "$tls_cert_file",
-      "key_path": "$tls_key_file"
-    },
-    "destination": "127.0.0.1:${subport_real}"
-  }
-EOF
-fi
-fi
 sed -i '$ s/,[[:space:]]*$//' "$HOME/agsbx/sb.json" 2>/dev/null || sed -i '$s/,$//' "$HOME/agsbx/sb.json"
 cat >> "$HOME/agsbx/sb.json" <<EOF
   ],
@@ -6166,6 +6429,17 @@ fi
 cat >> "$HOME/agsbx/sb.json" <<EOF
   ,"route": {
     "rules": [
+EOF
+if [ "$subscription_core" = singbox ]; then
+cat >> "$HOME/agsbx/sb.json" <<EOF
+      {
+        "inbound": ["sub-https-proxy"],
+        "action": "route",
+        "outbound": "direct"
+      },
+EOF
+fi
+cat >> "$HOME/agsbx/sb.json" <<EOF
       {
         "action": "sniff"
       },
@@ -6242,6 +6516,214 @@ fi
 # - 本大段定义了安装编排的总发动机函数 ins()。负责协调内核下载、UUID分配、防火墙端口跳跃控制、Xray/Sing-box Inbound装配、配置文件最终闭合、Argo 隧道守护以及系统快捷键注入。
 # - 关联性: 由第 12 段 (主入口流程决策) 在判定为新安装或重置时调用，是串联整个 3300 行脚本全流程安装逻辑的核心中枢。
 #============================================================
+cloudflared_supports_token_file(){
+  [ -x "$HOME/agsbx/cloudflared" ] \
+    && "$HOME/agsbx/cloudflared" tunnel run --help 2>&1 | grep -Fq -- '--token-file'
+}
+
+write_argo_systemd_service(){
+cat > /etc/systemd/system/argo.service <<EOF
+[Unit]
+Description=argo service
+After=network.target
+[Service]
+Type=simple
+NoNewPrivileges=yes
+TimeoutStartSec=0
+ExecStart=$HOME/agsbx/cloudflared tunnel --no-autoupdate --edge-ip-version auto --protocol http2 run --token-file "$argo_token_file"
+Restart=on-failure
+RestartSec=5s
+[Install]
+WantedBy=multi-user.target
+EOF
+}
+
+write_argo_openrc_service(){
+cat > /etc/init.d/argo <<EOF
+#!/sbin/openrc-run
+description="argo service"
+command="$HOME/agsbx/cloudflared tunnel"
+command_args="--no-autoupdate --edge-ip-version auto --protocol http2 run --token-file $argo_token_file"
+pidfile="/run/argo.pid"
+command_background="yes"
+depend() {
+need net
+}
+EOF
+[ $? -eq 0 ] || return 1
+chmod 700 /etc/init.d/argo
+}
+
+argo_cron_line_is_managed(){
+  local line="$1"
+  case "$line" in *'# AIRGOSBX_ARGO') return 0 ;; esac
+  case "$line" in @reboot*agsbx/cloudflared*) return 0 ;; *) return 1 ;; esac
+}
+
+inspect_argo_noinit_cron(){
+  local cron_tmp line found_fixed=no found_temporary=no
+  argo_cron_mode=none
+  argo_cron_legacy=no
+  cron_tmp=$(mktemp) || return 1
+  read_crontab_or_empty "$cron_tmp" || { rm -f "$cron_tmp"; return 1; }
+  while IFS= read -r line || [ -n "$line" ]; do
+    argo_cron_line_is_managed "$line" || continue
+    case "$line" in
+      *" --token "*) found_fixed=yes; argo_cron_legacy=yes ;;
+      *" --token-file "*) found_fixed=yes ;;
+      *" --url "*) found_temporary=yes ;;
+      *) rm -f "$cron_tmp"; echo "错误：发现无法识别的 Airgosbx Argo cron 启动项。"; return 1 ;;
+    esac
+  done < "$cron_tmp"
+  rm -f "$cron_tmp"
+  if [ "$found_fixed" = yes ] && [ "$found_temporary" = yes ]; then
+    echo "错误：同时发现固定和临时 Argo cron 启动项，拒绝猜测当前模式。"
+    return 1
+  elif [ "$found_fixed" = yes ]; then
+    argo_cron_mode=fixed
+  elif [ "$found_temporary" = yes ]; then
+    argo_cron_mode=temporary
+  fi
+}
+
+secure_existing_argo_token_file(){
+  local owner
+  [ -d "$HOME/agsbx" ] && [ ! -L "$HOME/agsbx" ] \
+    || { echo "错误：Argo token 目录不安全。"; return 1; }
+  [ -s "$argo_token_file" ] && [ -f "$argo_token_file" ] && [ ! -L "$argo_token_file" ] \
+    || { echo "错误：Argo token 文件缺失或不是安全的普通文件。"; return 1; }
+  owner=$(stat -c '%u' "$argo_token_file" 2>/dev/null) || return 1
+  [ "$owner" = "$(id -u)" ] \
+    || { echo "错误：Argo token 文件属主不正确。"; return 1; }
+  chmod 600 "$argo_token_file"
+}
+
+filter_managed_argo_cron(){
+  local source="$1" destination="$2" line
+  : > "$destination" || return 1
+  while IFS= read -r line || [ -n "$line" ]; do
+    argo_cron_line_is_managed "$line" && continue
+    printf '%s\n' "$line" >> "$destination" || return 1
+  done < "$source"
+}
+
+write_argo_noinit_cron(){
+  local cron_tmp filtered_tmp
+  cron_tmp=$(mktemp) || return 1
+  filtered_tmp=$(mktemp) || { rm -f "$cron_tmp"; return 1; }
+  if ! read_crontab_or_empty "$cron_tmp" \
+    || ! filter_managed_argo_cron "$cron_tmp" "$filtered_tmp" \
+    || ! echo '@reboot sleep 10 && /bin/sh -c "nohup $HOME/agsbx/cloudflared tunnel --no-autoupdate --edge-ip-version auto --protocol http2 run --token-file $HOME/agsbx/sbargotoken.log > $HOME/agsbx/argo.log 2>&1 &" # AIRGOSBX_ARGO' >> "$filtered_tmp" \
+    || ! crontab "$filtered_tmp" >/dev/null 2>&1; then
+    rm -f "$cron_tmp" "$filtered_tmp"
+    return 1
+  fi
+  rm -f "$cron_tmp" "$filtered_tmp"
+}
+
+migrate_argo_persistent_startup(){
+  local legacy_inline=no init_backend=none init_mode=none
+  argo_persistent_mode=none
+  argo_persistent_backend=none
+  argo_cron_mode=none
+  argo_cron_legacy=no
+
+  if command -v crontab >/dev/null 2>&1; then
+    inspect_argo_noinit_cron || return 1
+  fi
+
+  if pidof systemd >/dev/null 2>&1; then
+    if [ -e /etc/systemd/system/argo.service ] \
+      && grep -Fq "ExecStart=$HOME/agsbx/cloudflared tunnel" /etc/systemd/system/argo.service 2>/dev/null; then
+      init_backend=systemd
+      if grep -Fq -- ' --token ' /etc/systemd/system/argo.service 2>/dev/null; then
+        init_mode=fixed
+        legacy_inline=yes
+      elif grep -Fq -- ' --token-file ' /etc/systemd/system/argo.service 2>/dev/null; then
+        init_mode=fixed
+      elif grep -Fq -- ' --url ' /etc/systemd/system/argo.service 2>/dev/null; then
+        init_mode=temporary
+      else
+        echo "错误：发现无法识别的 Airgosbx Argo systemd 启动项。"
+        return 1
+      fi
+    fi
+  elif command -v rc-service >/dev/null 2>&1; then
+    if [ -e /etc/init.d/argo ] \
+      && grep -Fq "command=\"$HOME/agsbx/cloudflared tunnel\"" /etc/init.d/argo 2>/dev/null; then
+      init_backend=openrc
+      if grep -Fq -- ' --token ' /etc/init.d/argo 2>/dev/null; then
+        init_mode=fixed
+        legacy_inline=yes
+      elif grep -Fq -- ' --token-file ' /etc/init.d/argo 2>/dev/null; then
+        init_mode=fixed
+      elif grep -Fq -- ' --url ' /etc/init.d/argo 2>/dev/null; then
+        init_mode=temporary
+      else
+        echo "错误：发现无法识别的 Airgosbx Argo OpenRC 启动项。"
+        return 1
+      fi
+    fi
+  fi
+
+  if [ "$init_mode" != none ] && [ "$argo_cron_mode" != none ]; then
+    echo "错误：同时发现 Airgosbx Argo init 服务与 cron 启动项，拒绝猜测当前模式。"
+    return 1
+  elif [ "$init_mode" != none ]; then
+    argo_persistent_mode="$init_mode"
+    argo_persistent_backend="$init_backend"
+  elif [ "$argo_cron_mode" != none ]; then
+    argo_persistent_mode="$argo_cron_mode"
+    argo_persistent_backend=cron
+    legacy_inline="$argo_cron_legacy"
+  else
+    return 0
+  fi
+
+  [ "$argo_persistent_mode" != temporary ] || return 0
+
+  case "$argo_persistent_backend" in
+  systemd)
+    if [ "$legacy_inline" = yes ]; then
+      write_argo_systemd_service && systemctl daemon-reload >/dev/null 2>&1 \
+        || { echo "错误：无法清除旧 Argo systemd 服务中的内联 token。"; return 1; }
+    fi
+    secure_existing_argo_token_file \
+      || { echo "错误：固定 Argo systemd 服务缺少安全 token 文件。"; return 1; }
+    cloudflared_supports_token_file \
+      || { echo "错误：旧 Cloudflared 不支持安全迁移固定隧道 systemd 服务。"; return 1; }
+    write_argo_systemd_service || return 1
+    systemctl daemon-reload >/dev/null 2>&1 || return 1
+    ;;
+  openrc)
+    if [ "$legacy_inline" = yes ]; then
+      write_argo_openrc_service \
+        || { echo "错误：无法清除旧 Argo OpenRC 服务中的内联 token。"; return 1; }
+    fi
+    secure_existing_argo_token_file \
+      || { echo "错误：固定 Argo OpenRC 服务缺少安全 token 文件。"; return 1; }
+    cloudflared_supports_token_file \
+      || { echo "错误：旧 Cloudflared 不支持安全迁移固定隧道 OpenRC 服务。"; return 1; }
+    write_argo_openrc_service || return 1
+    ;;
+  cron)
+    if [ "$legacy_inline" = yes ]; then
+      write_argo_noinit_cron \
+        || { echo "错误：无法清除旧 Argo crontab 中的内联 token。"; return 1; }
+    fi
+    secure_existing_argo_token_file \
+      || { echo "错误：固定 Argo crontab 缺少安全 token 文件。"; return 1; }
+    cloudflared_supports_token_file \
+      || { echo "错误：旧 Cloudflared 不支持安全迁移固定隧道 crontab。"; return 1; }
+    write_argo_noinit_cron || return 1
+    ;;
+  *)
+    echo "错误：固定 Argo 持久化载体无法识别。"
+    return 1
+    ;;
+  esac
+}
+
 ins(){
 local argo_pid
 install_required_xray=no
@@ -6297,6 +6779,15 @@ if [ "$vmp" = yes ] || [ "$sop" = yes ]; then
   if [ "$secondary_common_core" = sb ]; then need_singbox=yes; else need_xray=yes; fi
 fi
 secondary_protocol_is_selected naive && need_singbox=yes
+subscription_core=''
+if [ "$sub" = yes ]; then
+  if [ "$need_xray" = yes ]; then
+    subscription_core=xray
+  else
+    subscription_core=singbox
+    need_singbox=yes
+  fi
+fi
 install_required_xray="$need_xray"
 install_required_singbox="$need_singbox"
 
@@ -6347,6 +6838,18 @@ if [ -n "$xhyjpt" ]; then
 fi
 
 if [ -n "$argo" ] && [ -n "$vmag" ]; then
+local argo_fixed=no argo_token_tmp
+if { [ -n "${ARGO_DOMAIN}" ] && [ -z "${ARGO_AUTH}" ]; } \
+  || { [ -z "${ARGO_DOMAIN}" ] && [ -n "${ARGO_AUTH}" ]; }; then
+  echo "错误：固定 Argo 隧道必须同时提供 agn 域名和 agk token。"
+  return 1
+fi
+if [ -n "${ARGO_DOMAIN}" ] && [ -n "${ARGO_AUTH}" ]; then
+  argo_fixed=yes
+  case "$ARGO_AUTH" in
+  *$'\n'*|*$'\r'*) echo "错误：Argo token 不得包含换行符。"; return 1 ;;
+  esac
+fi
 echo
 printf '%s\n' "${C_CYAN}=========启用Cloudflared-argo内核=========${C_RESET}"
 if [ ! -e "$HOME/agsbx/cloudflared" ]; then
@@ -6366,52 +6869,42 @@ if [ "$argo" = "vmpt" ]; then argoport=$(cat "$HOME/agsbx/port_vm_ws" 2>/dev/nul
 # xvargo (Vlessenc-xhttp-tls) 入站自带 TLS 层，cloudflared 必须以 https 回源并跳过本地证书校验，
 # 否则明文 HTTP 打到 TLS 监听端口，握手直接失败（Argo 为纯出站隧道，与防火墙端口无关）。
 if [ "$argo" = "xvargopt" ]; then argoscheme="https"; argoxtls="--no-tls-verify "; else argoscheme="http"; argoxtls=""; fi
-if [ -n "${ARGO_DOMAIN}" ] && [ -n "${ARGO_AUTH}" ]; then
+if [ "$argo_fixed" = yes ]; then
+if ! cloudflared_supports_token_file; then
+  echo "错误：当前 Cloudflared 不支持 --token-file（需 2025.4.0 或更高版本）。"
+  echo "为避免 token 暴露在进程参数中，脚本不会回退到 --token。"
+  return 1
+fi
+[ -d "$HOME/agsbx" ] && [ ! -L "$HOME/agsbx" ] \
+  || { echo "错误：Argo token 目录不安全。"; return 1; }
+[ ! -L "$argo_token_file" ] || { echo "错误：拒绝将 Argo token 写入符号链接。"; return 1; }
+argo_token_tmp=$(mktemp "$HOME/agsbx/.sbargotoken.XXXXXX") || { echo "错误：无法创建 Argo token 临时文件。"; return 1; }
+if ! printf '%s' "$ARGO_AUTH" > "$argo_token_tmp" \
+  || ! chmod 600 "$argo_token_tmp" \
+  || ! mv -f -- "$argo_token_tmp" "$argo_token_file"; then
+  rm -f -- "$argo_token_tmp"
+  echo "错误：无法安全保存 Argo token。"
+  return 1
+fi
+unset ARGO_AUTH
 argoname='固定'
 if pidof systemd >/dev/null 2>&1 && is_root; then
-cat > /etc/systemd/system/argo.service <<EOF
-[Unit]
-Description=argo service
-After=network.target
-[Service]
-Type=simple
-NoNewPrivileges=yes
-TimeoutStartSec=0
-ExecStart=$HOME/agsbx/cloudflared tunnel --no-autoupdate --edge-ip-version auto --protocol http2 run --token "${ARGO_AUTH}"
-Restart=on-failure
-RestartSec=5s
-[Install]
-WantedBy=multi-user.target
-EOF
-if [ $? -ne 0 ]; then echo "错误：无法写入 argo.service。"; return 1; fi
+write_argo_systemd_service || { echo "错误：无法写入 argo.service。"; return 1; }
 systemctl daemon-reload >/dev/null 2>&1 || { echo "错误：Argo systemd daemon-reload 失败。"; return 1; }
 systemctl enable argo >/dev/null 2>&1 || { echo "错误：无法启用 argo.service。"; return 1; }
 systemctl start argo >/dev/null 2>&1 || { echo "错误：无法启动 argo.service。"; return 1; }
 systemctl is-active --quiet argo || { echo "错误：argo.service 启动后未保持 active。"; return 1; }
 elif command -v rc-service >/dev/null 2>&1 && is_root; then
-cat > /etc/init.d/argo <<EOF
-#!/sbin/openrc-run
-description="argo service"
-command="$HOME/agsbx/cloudflared tunnel"
-command_args="--no-autoupdate --edge-ip-version auto --protocol http2 run --token ${ARGO_AUTH}"
-pidfile="/run/argo.pid"
-command_background="yes"
-depend() {
-need net
-}
-EOF
-if [ $? -ne 0 ]; then echo "错误：无法写入 OpenRC argo 服务。"; return 1; fi
-chmod 700 /etc/init.d/argo || { echo "错误：无法设置 OpenRC argo 服务权限。"; return 1; }
+write_argo_openrc_service || { echo "错误：无法写入 OpenRC argo 服务。"; return 1; }
 rc-update add argo default >/dev/null 2>&1 || { echo "错误：无法启用 OpenRC argo 服务。"; return 1; }
 rc-service argo start >/dev/null 2>&1 || { echo "错误：无法启动 OpenRC argo 服务。"; return 1; }
 else
-nohup "$HOME/agsbx/cloudflared" tunnel --no-autoupdate --edge-ip-version auto --protocol http2 run --token "${ARGO_AUTH}" > "$HOME/agsbx/argo.log" 2>&1 &
+nohup "$HOME/agsbx/cloudflared" tunnel --no-autoupdate --edge-ip-version auto --protocol http2 run --token-file "$argo_token_file" > "$HOME/agsbx/argo.log" 2>&1 &
 argo_pid=$!
 sleep 1
 kill -0 "$argo_pid" >/dev/null 2>&1 || { echo "错误：Cloudflared Argo 后台进程启动失败。"; return 1; }
 fi
 echo "${ARGO_DOMAIN}" > "$HOME/agsbx/sbargoym.log"
-echo "${ARGO_AUTH}" > "$HOME/agsbx/sbargotoken.log"
 [ "$argo" = "xvargopt" ] && echo "提示：xvargo 为 TLS 入站，固定隧道请在 CF 仪表盘将服务指向 https://localhost:${argoport} 并开启 noTLSVerify。"
 else
 argoname='临时'
@@ -6422,7 +6915,7 @@ kill -0 "$argo_pid" >/dev/null 2>&1 || { echo "错误：临时 Argo 后台进程
 fi
 echo "申请Argo$argoname隧道中……请稍等"
 sleep 2
-if [ -n "${ARGO_DOMAIN}" ] && [ -n "${ARGO_AUTH}" ]; then
+if [ "$argo_fixed" = yes ]; then
   argodomain=$(cat "$HOME/agsbx/sbargoym.log" 2>/dev/null)
 else
   # [弹性轮询解析] 使用最大 15 秒的正则匹配轮询提取已分配的 trycloudflare 域名
@@ -6469,7 +6962,8 @@ fi
 # 700：仅 root 可读/执行，非 root 用户连读取或运行 agsbx 都被拒；root 因 /usr/local/bin 在其 PATH 中仍可立即使用。
 chmod 700 "$SCRIPT_PATH" || { echo "错误：无法设置 agsbx 快捷命令权限。"; return 1; }
 cron_tmp=$(mktemp) || { echo "错误：无法创建 crontab 临时文件。"; return 1; }
-crontab -l > "$cron_tmp" 2>/dev/null
+read_crontab_or_empty "$cron_tmp" \
+  || { rm -f "$cron_tmp"; echo "错误：无法安全读取开机启动任务。"; return 1; }
 if ! pidof systemd >/dev/null 2>&1 && ! command -v rc-service >/dev/null 2>&1; then
 sed -i '/agsbx\/sing-box/d' "$cron_tmp"
 sed -i '/agsbx\/xray/d' "$cron_tmp"
@@ -6493,12 +6987,12 @@ fi
 fi
 sed -i '/agsbx\/cloudflared/d' "$cron_tmp"
 if [ -n "$argo" ] && [ -n "$vmag" ]; then
-if [ -n "${ARGO_DOMAIN}" ] && [ -n "${ARGO_AUTH}" ]; then
+if [ "$argo_fixed" = yes ]; then
 if ! pidof systemd >/dev/null 2>&1 && ! command -v rc-service >/dev/null 2>&1; then
-echo '@reboot sleep 10 && /bin/sh -c "nohup $HOME/agsbx/cloudflared tunnel --no-autoupdate --edge-ip-version auto --protocol http2 run --token $(cat $HOME/agsbx/sbargotoken.log 2>/dev/null) > $HOME/agsbx/argo.log 2>&1 &"' >> "$cron_tmp"
+echo '@reboot sleep 10 && /bin/sh -c "nohup $HOME/agsbx/cloudflared tunnel --no-autoupdate --edge-ip-version auto --protocol http2 run --token-file $HOME/agsbx/sbargotoken.log > $HOME/agsbx/argo.log 2>&1 &" # AIRGOSBX_ARGO' >> "$cron_tmp"
 fi
 else
-echo '@reboot sleep 10 && /bin/sh -c "nohup $HOME/agsbx/cloudflared tunnel --url '"$argoscheme"'://localhost:$(cat $HOME/agsbx/argoport.log) '"$argoxtls"'--edge-ip-version auto --no-autoupdate --protocol http2 > $HOME/agsbx/argo.log 2>&1 &"' >> "$cron_tmp"
+echo '@reboot sleep 10 && /bin/sh -c "nohup $HOME/agsbx/cloudflared tunnel --url '"$argoscheme"'://localhost:$(cat $HOME/agsbx/argoport.log) '"$argoxtls"'--edge-ip-version auto --no-autoupdate --protocol http2 > $HOME/agsbx/argo.log 2>&1 &" # AIRGOSBX_ARGO' >> "$cron_tmp"
 fi
 fi
 crontab "$cron_tmp" >/dev/null 2>&1 || { rm -f "$cron_tmp"; echo "错误：无法写入开机启动任务。"; return 1; }
@@ -7320,9 +7814,10 @@ echo "- ${sxname}vlessenc-xhttp-tls-vision-fm-argo-$hostname"
 }
 fi
 fi
-sbtk=$(cat "$HOME/agsbx/sbargotoken.log" 2>/dev/null)
-if [ -n "$sbtk" ]; then
-nametn="Argo固定隧道token：$sbtk"
+if [ -s "$argo_token_file" ]; then
+nametn="Argo固定隧道token：已安全保存（不显示）"
+else
+nametn=""
 fi
 if [ "$vlvm" = "Vlessenc-xhttp-tls-vision-fm" ]; then
 argoshow=$(
@@ -7461,44 +7956,9 @@ mkdir -p "$HOME/websbx/$subtoken" || { echo "错误：无法创建订阅目录�
 ln -sf "$HOME/agsbx/clmi.yaml" "$HOME/websbx/$subtoken/clmi.yaml" || { echo "错误：无法创建 Clash 订阅链接。"; return 1; }
 ln -sf "$HOME/agsbx/jh.txt" "$HOME/websbx/$subtoken/jhsub.txt" || { echo "错误：无法创建聚合订阅链接。"; return 1; }
 
-local subscription_pid subscription_ready=no subscription_attempt
-
-if command -v apk >/dev/null 2>&1; then
-  command -v busybox-extras >/dev/null 2>&1 || { echo "错误：系统缺少 busybox-extras，无法启动订阅服务。"; return 1; }
-  busybox-extras httpd -f -p $subport_real -h "$HOME/websbx" > /dev/null 2>&1 &
-  subscription_pid=$!
-  sleep 1
-  kill -0 "$subscription_pid" >/dev/null 2>&1 || { echo "错误：BusyBox 订阅服务启动失败。"; return 1; }
-  cat > /etc/local.d/alpinesubsbx.start <<EOF
-#!/bin/bash
-sleep 10
-busybox-extras httpd -f -p $subport_real -h $HOME/websbx > /dev/null 2>&1 &
-EOF
-  if [ $? -ne 0 ]; then echo "错误：无法写入 Alpine 订阅启动脚本。"; return 1; fi
-  chmod 700 /etc/local.d/alpinesubsbx.start || { echo "错误：无法设置 Alpine 订阅启动脚本权限。"; return 1; }
-  rc-update add local default >/dev/null 2>&1 || { echo "错误：无法启用 Alpine local 启动服务。"; return 1; }
-else
-  command -v busybox >/dev/null 2>&1 || { echo "错误：系统缺少 busybox，无法启动订阅服务。"; return 1; }
-  busybox httpd -f -p $subport_real -h "$HOME/websbx" > /dev/null 2>&1 &
-  subscription_pid=$!
-  sleep 1
-  kill -0 "$subscription_pid" >/dev/null 2>&1 || { echo "错误：BusyBox 订阅服务启动失败。"; return 1; }
-  cron_tmp=$(mktemp) || { echo "错误：无法创建订阅 crontab 临时文件。"; return 1; }
-  crontab -l 2>/dev/null > "$cron_tmp"
-  sed -i '/websbx/d' "$cron_tmp"
-  echo "@reboot sleep 10 && /bin/bash -c \"busybox httpd -f -p $subport_real -h $HOME/websbx > /dev/null 2>&1 &\"" >> "$cron_tmp"
-  crontab "$cron_tmp" >/dev/null 2>&1 || { rm -f "$cron_tmp"; echo "错误：无法写入订阅开机启动任务。"; return 1; }
-  rm -f "$cron_tmp"
-fi
-
-for subscription_attempt in {1..5}; do
-  if subscription_http_is_running && subscription_http_is_listening "$subport_real"; then
-    subscription_ready=yes
-    break
-  fi
-  sleep 1
-done
-[ "$subscription_ready" = yes ] || { echo "错误：订阅 HTTP 服务未监听预期端口 $subport_real。"; return 1; }
+start_subscription_http "$subport_real" || return 1
+write_subscription_http_autostart "$subport_real" yes \
+  || { echo "错误：无法写入订阅开机启动任务。"; return 1; }
 
 subdomain=$(cat "$HOME/agsbx/cdnym" 2>/dev/null)
 # 复用 Caddy 真实证书时(cert_mode=caddy)，订阅地址优先用 naive 域名，使客户端 HTTPS 证书校验直接通过、
@@ -7759,10 +8219,12 @@ rep_begin_transaction(){
   if [ -e /usr/bin/agsbx ] && ! cp -a -- /usr/bin/agsbx "$rep_backup_dir/shortcuts/usr-bin-agsbx"; then
     rep_remove_backup >/dev/null 2>&1 || true; return 1
   fi
-  if crontab -l > "$rep_backup_dir/crontab" 2>/dev/null; then
+  if ! read_crontab_or_empty "$rep_backup_dir/crontab"; then
+    rep_remove_backup >/dev/null 2>&1 || true
+    return 1
+  fi
+  if [ "$crontab_read_state" = present ]; then
     : > "$rep_backup_dir/had_crontab"
-  else
-    : > "$rep_backup_dir/crontab"
   fi
   [ -f "$rep_backup_dir/crontab" ] || { rep_remove_backup >/dev/null 2>&1 || true; return 1; }
   chmod -R go-rwx "$rep_backup_dir" 2>/dev/null \
@@ -7774,7 +8236,7 @@ rep_begin_transaction(){
   rep_old_mita_running=no
   command -v mita >/dev/null 2>&1 && mita status 2>/dev/null | grep -q RUNNING && rep_old_mita_running=yes
   rep_old_mita_managed=no; [ -f "$HOME/agsbx/mita_managed" ] && rep_old_mita_managed=yes
-  rep_old_subscription_running=no; subscription_http_is_running && rep_old_subscription_running=yes
+  rep_old_subscription_running=no; subscription_http_managed_is_running && rep_old_subscription_running=yes
   rep_old_xray_enabled=no; rep_service_is_enabled xray && rep_old_xray_enabled=yes
   rep_old_singbox_enabled=no; rep_service_is_enabled sing-box && rep_old_singbox_enabled=yes
   rep_old_argo_enabled=no; rep_service_is_enabled argo && rep_old_argo_enabled=yes
@@ -7835,29 +8297,64 @@ rep_restore_snapshot_files(){
   else
     crontab -r >/dev/null 2>&1 || true
   fi
+  rep_argo_persistence_ready=yes
+  rep_subscription_persistence_ready=yes
+  migrate_argo_persistent_startup || rep_argo_persistence_ready=no
+  migrate_subscription_persistent_startup || rep_subscription_persistence_ready=no
 }
 
 rep_restore_argo_runtime(){
-  local restored_argo_port restored_vlvm restored_scheme=http restored_tls=""
-  if pidof systemd >/dev/null 2>&1; then
-    systemctl start argo >/dev/null 2>&1 || return 1
-  elif command -v rc-service >/dev/null 2>&1; then
-    rc-service argo start >/dev/null 2>&1 || return 1
-  elif [ -s "$HOME/agsbx/sbargotoken.log" ]; then
-    nohup "$HOME/agsbx/cloudflared" tunnel --no-autoupdate --edge-ip-version auto --protocol http2 run \
-      --token "$(cat "$HOME/agsbx/sbargotoken.log")" > "$HOME/agsbx/argo.log" 2>&1 &
-  else
-    restored_argo_port=$(cat "$HOME/agsbx/argoport.log" 2>/dev/null)
-    restored_vlvm=$(cat "$HOME/agsbx/vlvm" 2>/dev/null)
-    [ "$restored_vlvm" = "Vlessenc-xhttp-tls-vision-fm" ] && { restored_scheme=https; restored_tls="--no-tls-verify"; }
-    nohup "$HOME/agsbx/cloudflared" tunnel --url "${restored_scheme}://localhost:${restored_argo_port}" \
-      $restored_tls --edge-ip-version auto --no-autoupdate --protocol http2 > "$HOME/agsbx/argo.log" 2>&1 &
-  fi
+  local action="${1:-start}" restored_argo_port restored_vlvm restored_scheme=http restored_tls=""
+  case "$action" in start|restart) ;; *) return 1 ;; esac
+  case "$argo_persistent_mode" in
+  fixed)
+    secure_existing_argo_token_file \
+      || { echo "错误：无法从安全 token 文件恢复固定隧道。"; return 1; }
+    cloudflared_supports_token_file \
+      || { echo "错误：旧 Cloudflared 不支持从 token 文件安全恢复固定隧道。"; return 1; }
+    case "$argo_persistent_backend" in
+    systemd)
+      write_argo_systemd_service || return 1
+      systemctl daemon-reload >/dev/null 2>&1 || return 1
+      systemctl "$action" argo >/dev/null 2>&1 || return 1
+      ;;
+    openrc)
+      write_argo_openrc_service || return 1
+      rc-service argo "$action" >/dev/null 2>&1 || return 1
+      ;;
+    cron)
+      nohup "$HOME/agsbx/cloudflared" tunnel --no-autoupdate --edge-ip-version auto --protocol http2 run \
+        --token-file "$argo_token_file" > "$HOME/agsbx/argo.log" 2>&1 &
+      ;;
+    *) echo "错误：固定 Argo 持久化载体无法识别。"; return 1 ;;
+    esac
+    ;;
+  temporary)
+    case "$argo_persistent_backend" in
+    systemd) systemctl "$action" argo >/dev/null 2>&1 || return 1 ;;
+    openrc) rc-service argo "$action" >/dev/null 2>&1 || return 1 ;;
+    cron)
+      restored_argo_port=$(cat "$HOME/agsbx/argoport.log" 2>/dev/null)
+      restored_vlvm=$(cat "$HOME/agsbx/vlvm" 2>/dev/null)
+      [ "$restored_vlvm" = "Vlessenc-xhttp-tls-vision-fm" ] && { restored_scheme=https; restored_tls="--no-tls-verify"; }
+      nohup "$HOME/agsbx/cloudflared" tunnel --url "${restored_scheme}://localhost:${restored_argo_port}" \
+        $restored_tls --edge-ip-version auto --no-autoupdate --protocol http2 > "$HOME/agsbx/argo.log" 2>&1 &
+      ;;
+    *) echo "错误：临时 Argo 持久化载体无法识别。"; return 1 ;;
+    esac
+    ;;
+  *)
+    echo "错误：Argo 持久化模式无法识别，拒绝猜测恢复方式。"
+    return 1
+    ;;
+  esac
   wait_agsbx_component cloudflared
 }
 
 rep_restore_runtime(){
   local failed=no restored_hops restored_port
+  [ "$rep_argo_persistence_ready" = yes ] || failed=yes
+  [ "$rep_subscription_persistence_ready" = yes ] || failed=yes
   if pidof systemd >/dev/null 2>&1; then systemctl daemon-reload >/dev/null 2>&1 || failed=yes; fi
 
   if [ "$rep_old_xray_enabled" = yes ]; then
@@ -7883,7 +8380,9 @@ rep_restore_runtime(){
     validate_generated_core_config sing-box && kctl start sb || failed=yes
   fi
   if [ "$rep_old_argo_running" = yes ]; then
-    rep_restore_argo_runtime || failed=yes
+    if [ "$rep_argo_persistence_ready" = yes ]; then rep_restore_argo_runtime || failed=yes
+    else failed=yes
+    fi
   fi
   if [ "$rep_old_mita_running" = yes ]; then
     systemctl start mita >/dev/null 2>&1 && wait_mita_daemon || failed=yes
@@ -7907,14 +8406,12 @@ rep_restore_runtime(){
   fi
 
   if [ "$rep_old_subscription_running" = yes ]; then
-    restored_port=$(cat "$HOME/agsbx/subport_real.log" 2>/dev/null)
-    if command -v apk >/dev/null 2>&1; then
-      busybox-extras httpd -f -p "$restored_port" -h "$HOME/websbx" >/dev/null 2>&1 &
+    if [ "$rep_subscription_persistence_ready" = yes ]; then
+      restored_port=$(cat "$HOME/agsbx/subport_real.log" 2>/dev/null)
+      start_subscription_http "$restored_port" || failed=yes
     else
-      busybox httpd -f -p "$restored_port" -h "$HOME/websbx" >/dev/null 2>&1 &
+      failed=yes
     fi
-    sleep 1
-    subscription_http_is_running && subscription_http_is_listening "$restored_port" || failed=yes
   fi
   [ "$failed" = no ]
 }
@@ -7962,7 +8459,7 @@ rep_commit_transaction(){
 }
 
 cleandel(){
-local cleanup_mode="${1:-del}" proc_pattern
+local cleanup_mode="${1:-del}" proc_pattern cron_tmp
 case "$cleanup_mode" in del|rep) ;; *) echo "错误：未知清理模式 $cleanup_mode。"; return 1 ;; esac
 restore_xicmp_state
 cleanup_port_hopping
@@ -7982,14 +8479,19 @@ sed -i '/export PATH="\$HOME\/bin:\$PATH"/d' ~/.bashrc
 sed -i '/export PATH="\$PATH:\$HOME\/bin"/d' ~/.bashrc
 . ~/.bashrc 2>/dev/null
 fi
-cron_tmp=$(mktemp)
-crontab -l > "$cron_tmp" 2>/dev/null
+cron_tmp=$(mktemp) || { echo "错误：无法创建 crontab 清理临时文件。"; return 1; }
+if ! read_crontab_or_empty "$cron_tmp"; then
+  rm -f "$cron_tmp"
+  echo "错误：无法安全读取现有 crontab，已停止清理以避免覆盖用户任务。"
+  return 1
+fi
 sed -i '/agsbx\/sing-box/d' "$cron_tmp"
 sed -i '/agsbx\/xray/d' "$cron_tmp"
 sed -i '/agsbx\/cloudflared/d' "$cron_tmp"
 [ "$cleanup_mode" = del ] && sed -i '/agsbx\/caddy/d' "$cron_tmp"
 sed -i '/websbx/d' "$cron_tmp"
-crontab "$cron_tmp" >/dev/null 2>&1
+crontab "$cron_tmp" >/dev/null 2>&1 \
+  || { rm -f "$cron_tmp"; echo "错误：无法写回清理后的 crontab。"; return 1; }
 rm -f "$cron_tmp"
 if [ "$cleanup_mode" = del ]; then
   rm -rf "$HOME/bin/agsbx" /usr/local/bin/agsbx /usr/bin/agsbx "$HOME/websbx"
@@ -8409,6 +8911,15 @@ showstats
 exit
 elif [ "$1" = "res" ]; then
 res_failed=0
+argo_was_running=no
+agsbx_component_running cloudflared && argo_was_running=yes
+argo_persistence_ready=yes
+migrate_argo_persistent_startup || { res_failed=1; argo_persistence_ready=no; }
+subscription_persistence_ready=yes
+migrate_subscription_persistent_startup || { res_failed=1; subscription_persistence_ready=no; }
+if [ "$subscription_persistence_ready" = yes ]; then
+  restart_managed_subscription_http || res_failed=1
+fi
 for P in /proc/[0-9]*; do
 [ -L "$P/exe" ] || continue
 TARGET=$(readlink -f "$P/exe" 2>/dev/null) || continue
@@ -8422,16 +8933,46 @@ kill "$(basename "$P")" 2>/dev/null
 xrestart
 ;;
 *"/agsbx/cloudflared"*)
+if [ "$argo_persistence_ready" != yes ] || [ "$argo_persistent_mode" = none ]; then
+echo "错误：Argo 持久化配置未安全分类，保留当前 Cloudflared 进程并拒绝重启。"
+res_failed=1
+continue
+fi
 kill "$(basename "$P")" 2>/dev/null
 kill -15 $(pgrep -f 'agsbx/cloudflared' 2>/dev/null) >/dev/null 2>&1
-if pidof systemd >/dev/null 2>&1; then
-systemctl restart argo >/dev/null 2>&1
-elif command -v rc-service >/dev/null 2>&1; then
-rc-service argo restart >/dev/null 2>&1
+if [ "$argo_persistence_ready" != yes ]; then
+echo "错误：Argo 持久化配置未安全迁移，拒绝重启 Cloudflared。"
+continue
+fi
+if [ "$argo_persistent_backend" = systemd ]; then
+if [ "$argo_persistent_mode" = fixed ]; then
+if cloudflared_supports_token_file && write_argo_systemd_service && systemctl daemon-reload >/dev/null 2>&1; then
+systemctl restart argo >/dev/null 2>&1 || res_failed=1
 else
-if [ -e "$HOME/agsbx/sbargotoken.log" ]; then
-if ! pidof systemd >/dev/null 2>&1 && ! command -v rc-service >/dev/null 2>&1; then
-nohup $HOME/agsbx/cloudflared tunnel --no-autoupdate --edge-ip-version auto --protocol http2 run --token $(cat $HOME/agsbx/sbargotoken.log 2>/dev/null) > "$HOME/agsbx/argo.log" 2>&1 &
+echo "错误：无法以 token 文件安全更新 Argo systemd 服务。"
+res_failed=1
+fi
+else
+systemctl restart argo >/dev/null 2>&1 || res_failed=1
+fi
+elif [ "$argo_persistent_backend" = openrc ]; then
+if [ "$argo_persistent_mode" = fixed ]; then
+if cloudflared_supports_token_file && write_argo_openrc_service; then
+rc-service argo restart >/dev/null 2>&1 || res_failed=1
+else
+echo "错误：无法以 token 文件安全更新 Argo OpenRC 服务。"
+res_failed=1
+fi
+else
+rc-service argo restart >/dev/null 2>&1 || res_failed=1
+fi
+else
+if [ "$argo_persistent_mode" = fixed ]; then
+if cloudflared_supports_token_file; then
+nohup "$HOME/agsbx/cloudflared" tunnel --no-autoupdate --edge-ip-version auto --protocol http2 run --token-file "$argo_token_file" > "$HOME/agsbx/argo.log" 2>&1 &
+else
+echo "错误：当前 Cloudflared 不支持从 token 文件安全重启固定隧道。"
+res_failed=1
 fi
 else
 # res 为全新一次脚本调用，$argo 变量已不在作用域，从持久化的 vlvm 文件还原回源协议
@@ -8443,10 +8984,17 @@ fi
 ;;
 esac
 done
+if [ "$argo_persistence_ready" = yes ] && [ "$argo_persistent_mode" != none ]; then
+  if [ "$argo_was_running" = no ]; then
+    rep_restore_argo_runtime || res_failed=1
+  else
+    wait_agsbx_component cloudflared || res_failed=1
+  fi
+fi
 if [ -s "$HOME/agsbx/caddy" ] && [ -s "$HOME/agsbx/Caddyfile" ]; then
   kctl restart caddy || res_failed=1
 fi
-[ "$res_failed" = 0 ] || { echo "重启未全部完成：Caddy 重启失败。"; exit 1; }
+[ "$res_failed" = 0 ] || { echo "重启未全部完成：一个或多个组件重启失败。"; exit 1; }
 sleep 5 && echo "重启完成" && sleep 3 && cip
 exit
 elif [ "$1" = "update" ]; then
