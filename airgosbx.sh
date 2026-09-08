@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-AIRGOSBX_VERSION='V26.09.08.4'
+AIRGOSBX_VERSION='V26.09.08.5'
 # 仅在内置 XHTTP 默认参数改变时更新此标记，普通脚本版本更新不使旧命令失效。
 XHTTP_DEFAULTS_VERSION='V26.09.08.1'
 agsbxurl="${agsbxurl:-https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/main/airgosbx.sh}"
@@ -8369,8 +8369,8 @@ else
 fi
 render_cert_hash=$(certificate_fingerprint 2>/dev/null)
 local direct_xh_options='' direct_xh_title='' direct_vl_options='' direct_vl_title='' direct_vl_export_yaml=no
-# 同一进程重复展示时，不能复用上次定义的直连订阅函数。
-unset -f clvlpt clvlpt1 clvmpt clvmpt1 clxhypt clxhypt1
+# 同一进程重复展示时，不能复用上次定义的可选协议订阅函数。
+unset -f clvlpt clvlpt1 clvmpt clvmpt1 clxhypt clxhypt1 clmierupt clmierupt1
 ipbest(){
 # 优先复用 v4v6() 已探测到的地址，两者皆空时才重新发起外网探测
 first_family="$ip_policy_preferred_family"
@@ -8902,8 +8902,7 @@ echo "客户端密码：$socks_pass"
 echo "分享链接：$socks_link"
 echo
 fi
-# NaiveProxy(Caddy) 节点卡片：独立内核，配置存在即展示。仅打印到控制台，不并入聚合订阅 jh.txt / Clash
-# （naive 客户端生态与 vless/vmess 等不同，混入聚合订阅会被多数客户端解析失败）。
+# NaiveProxy 同时提供原生与 Shadowrocket URI；Mihomo 没有 Naive 类型，不伪装成普通 HTTP 代理。
 if [ -s "$HOME/agsbx/naive_domain" ]; then
 naivedomain=$(cat "$HOME/agsbx/naive_domain")
 naiveuser=$(cat "$HOME/agsbx/naive_user" 2>/dev/null)
@@ -8912,15 +8911,28 @@ naiveuser_uri=$(uri_percent_encode "$naiveuser")
 naivepass_uri=$(uri_percent_encode "$naivepass")
 naive_h2_title=$(uri_percent_encode "${sxname}naive-h2-$hostname")
 naive_h3_title=$(uri_percent_encode "${sxname}naive-h3-$hostname")
+naive_h2_link="naive+https://${naiveuser_uri}:${naivepass_uri}@$naivedomain:443?security=tls&sni=$naivedomain&insecure=0&allowInsecure=0#${naive_h2_title}"
+naive_h3_link="naive+quic://${naiveuser_uri}:${naivepass_uri}@$naivedomain:443?congestion_control=bbr&security=tls&sni=$naivedomain&insecure=0&allowInsecure=0#${naive_h3_title}"
+# Shadowrocket 使用 http2/http3 scheme 和 padding 参数，格式对照 YG argosbx 的 Naive 分享输出。
+naive_sr_h2_link="http2://${naiveuser_uri}:${naivepass_uri}@$naivedomain:443?security=tls&sni=$naivedomain&insecure=0&allowInsecure=0&padding=1&tfo=1#${naive_h2_title}"
+naive_sr_h3_link="http3://${naiveuser_uri}:${naivepass_uri}@$naivedomain:443?security=tls&sni=$naivedomain&insecure=0&allowInsecure=0&padding=1&tfo=1#${naive_h3_title}"
+append_node_link "$naive_h2_link" || return 1
+append_node_link "$naive_h3_link" || return 1
+append_node_link "$naive_sr_h2_link" || return 1
+append_node_link "$naive_sr_h3_link" || return 1
 node_title "💣【 NaiveProxy 】Caddy 转发代理，节点信息如下："
 echo "账号：$naiveuser"
 echo "密码：$naivepass"
-echo "分享链接(HTTPS·H1/H2，TCP)：naive+https://${naiveuser_uri}:${naivepass_uri}@$naivedomain:443?security=tls&sni=$naivedomain&insecure=0&allowInsecure=0#${naive_h2_title}"
-echo "分享链接(QUIC·H3，UDP)：naive+quic://${naiveuser_uri}:${naivepass_uri}@$naivedomain:443?congestion_control=bbr&security=tls&sni=$naivedomain&insecure=0&allowInsecure=0#${naive_h3_title}"
-echo "（用 NekoBox 等支持 naive 的客户端导入；SNI/端口已含在链接内，naive+quic 需放行 UDP/443；未并入 jh.txt / Clash 聚合订阅）"
+echo "分享链接(HTTPS·H1/H2，TCP)：$naive_h2_link"
+echo "分享链接(QUIC·H3，UDP)：$naive_h3_link"
+echo "Shadowrocket 单节点分享（HTTP2，TCP）："
+echo "$naive_sr_h2_link"
+echo "Shadowrocket 单节点分享（HTTP3，UDP）："
+echo "$naive_sr_h3_link"
+echo "以上四条链接参与 jh.txt / jhsub.txt 聚合订阅，不写入 clmi.yaml；Shadowrocket 使用 http2/http3 格式，H3 需放行 UDP/443。"
 echo
 fi
-# Mieru 与 Naive 一样作为独立客户端生态展示：只在 list 末端打印分享链接，不写入 jh.txt / Clash。
+# Mieru 同时导出原生 URI 与 Mihomo YAML，保留实际传输方式和 Traffic Pattern。
 if [ -s "$HOME/agsbx/mita.json" ] && [ -s "$HOME/agsbx/mieru_user" ] && [ -s "$HOME/agsbx/mieru_pass" ] && [ -s "$HOME/agsbx/port_mieru" ]; then
 mieruuser=$(cat "$HOME/agsbx/mieru_user")
 mierupass=$(cat "$HOME/agsbx/mieru_pass")
@@ -8936,6 +8948,31 @@ if validate_mieru_traffic_pattern "$mieru_traffic_pattern"; then
   mieru_traffic_display="$mieru_traffic_pattern"
 else
   mieru_traffic_display="未配置，请执行 mieru=y agsbx rep"
+fi
+if [ "$cip_mode" = publish ] && ! validate_mieru_traffic_pattern "$mieru_traffic_pattern"; then
+  echo "错误：Mieru Traffic Pattern 缺失或格式异常，拒绝发布缺少该参数的订阅；请执行 mieru=y agsbx rep。"
+  return 1
+fi
+append_node_link "$mieru_link" || return 1
+if [ "$sub" = yes ] && validate_mieru_traffic_pattern "$mieru_traffic_pattern"; then
+  valid_port "$port_mieru" || { echo "错误：Mieru 订阅端口无效。"; return 1; }
+  case "$mieru_protocol" in TCP|UDP) ;; *) echo "错误：Mieru 订阅传输方式必须为 TCP 或 UDP。"; return 1 ;; esac
+clmierupt(){
+cat <<EOF
+- name: "$(json_escape "${sxname}mieru-$hostname")"
+  type: mieru
+  server: "$(json_escape "$mieru_address")"
+  port: $port_mieru
+  transport: $mieru_protocol
+  username: "$(json_escape "$mieruuser")"
+  password: "$(json_escape "$mierupass")"
+  traffic-pattern: "$(json_escape "$mieru_traffic_pattern")"
+  udp: true
+EOF
+}
+clmierupt1(){
+printf -- '- "%s"\n' "$(json_escape "${sxname}mieru-$hostname")"
+}
 fi
 node_title "💣【 Mieru 】节点信息如下："
 echo "类型：Mieru"
@@ -9073,8 +9110,8 @@ get_func() {
 }
 # 当前 Mihomo 已有 ENC/XHTTP 能力，但本脚本尚未建立其完整 extra/FM 版本映射。
 # 这类节点暂只导出完整 URL，不能生成遗漏 ENC 或掩码参数的 YAML。
-clxy="$(get_func clvlpt; get_func clsspt; get_func clvmpt; get_func clvmcdnpt; get_func clhypt; get_func clxhypt; get_func cltupt; get_func clvmargopt)"
-clgz="$({ get_func clvlpt1; get_func clsspt1; get_func clvmpt1; get_func clvmcdnpt1; get_func clhypt1; get_func clxhypt1; get_func cltupt1; get_func clvmargopt1; } | sed '2,$s/^/    /')"
+clxy="$(get_func clvlpt; get_func clsspt; get_func clvmpt; get_func clvmcdnpt; get_func clhypt; get_func clxhypt; get_func cltupt; get_func clvmargopt; get_func clmierupt)"
+clgz="$({ get_func clvlpt1; get_func clsspt1; get_func clvmpt1; get_func clvmcdnpt1; get_func clhypt1; get_func clxhypt1; get_func cltupt1; get_func clvmargopt1; get_func clmierupt1; } | sed '2,$s/^/    /')"
 if [ -n "$clxy" ] && [ -n "$clgz" ]; then
 clash_config=$(cat <<EOF
 port: 7890
@@ -9180,6 +9217,7 @@ if [ "$sub" = yes ]; then
 hr2
 if [ -n "$clash_sub_info" ]; then echo "$clash_sub_info"; else echo "本次没有可完整导出的 Mihomo 节点，请使用聚合协议链接。"; fi
 echo "聚合协议本地订阅地址：${suburl}/jhsub.txt"
+echo "clmi.yaml 仅包含可完整导出的 Mihomo 节点（含 Mieru，不含 Naive）；jhsub.txt 包含 Mieru 与 Naive 链接，Naive 另附 Shadowrocket 的 http2/http3 格式。"
 echo "订阅地址使用共享 CA 证书覆盖的域名或 IP；域名应解析到订阅服务，客户端保持证书验证开启。"
 hr2
 echo
