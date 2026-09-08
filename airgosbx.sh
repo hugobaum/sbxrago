@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-AIRGOSBX_VERSION='V26.09.08.1'
+AIRGOSBX_VERSION='V26.09.08.2'
 # 仅在内置 XHTTP 默认参数改变时更新此标记，普通脚本版本更新不使旧命令失效。
 XHTTP_DEFAULTS_VERSION='V26.09.08.1'
 agsbxurl="${agsbxurl:-https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/main/airgosbx.sh}"
@@ -2054,6 +2054,9 @@ case "$1" in
     esac
     ;;
 esac
+# 每次调用从公开协议参数推导内部标志，不继承父进程中的中间状态或展示名称。
+vlp='' vmp='' vwp='' vmag='' hyp='' xhyp='' tup='' xhp='' vxp='' anp='' ssp='' arp='' sop='' wap='' xicp='' xvcdn='' xvargo='' mierup=''
+tls_cert_ready=no tls_cert_file='' tls_key_file='' tls_caddy_reuse_notice_shown=no
 [ -z "${vlpt+x}" ] || vlp=yes
 [ -z "${vmpt+x}" ] || { vmp=yes; vmag=yes; }
 [ -z "${vwpt+x}" ] || { vwp=yes; vmag=yes; }
@@ -4581,7 +4584,16 @@ setup_selfsigned_certificate(){
     [ -n "$identifier" ] && validate_certificate_bundle "$cert" "$key" selfsigned "$identifier" \
       || { echo "错误：已有自签证书无效，已保留原证书，请明确更换证书后重试。"; return 1; }
   else
-    [ "$rep_mode" != yes ] || { echo "错误：rep 不会创建缺失的证书，请先准备证书。"; return 1; }
+    # 纯 REALITY 或失败安装可能从未创建证书；允许首次创建，但不能掩盖旧证书丢失。
+    if [ "$rep_mode" = yes ]; then
+      local saved_cert_state
+      for saved_cert_state in cert_mode cert_source cert_identifier cert_file_path key_file_path acmecer/cert.pem acmecer/private.key; do
+        if [ -e "$HOME/agsbx/$saved_cert_state" ] || [ -L "$HOME/agsbx/$saved_cert_state" ]; then
+          echo "错误：rep 检测到旧证书记录但证书文件缺失，拒绝用新自签证书替换；请恢复原证书或完整重装。"
+          return 1
+        fi
+      done
+    fi
     mkdir -p "$directory" || return 1
     tmp=$(mktemp -d "$directory/.new.XXXXXX") || return 1
     identifier="$(openssl rand -hex 8).invalid"
@@ -5092,6 +5104,10 @@ setup_tls_certificate(){
   local reuse_cert reuse_key reuse_identifier wanted wanted_type mode_hint dns_requested=no reuse_allowed=yes acme_requested=no choose_status retry_choice index
   local -a wanted_identifiers
   if [ "$tls_cert_ready" = yes ]; then
+    [ -s "$tls_cert_file" ] && [ -s "$tls_key_file" ] || {
+      echo "错误：TLS 就绪标记与证书文件不一致，已停止生成配置。"
+      return 1
+    }
     if [ "${tls_caddy_reuse_notice_shown:-no}" != yes ] \
       && [ "$(cat "$HOME/agsbx/cert_mode" 2>/dev/null)" = caddy ] \
       && { [ "$sub" = yes ] || [ "$hyp" = yes ] || [ "$xhyp" = yes ] || [ "$tup" = yes ] \
@@ -5124,9 +5140,7 @@ setup_tls_certificate(){
       return 1
     fi
   fi
-  if [ "$sub" != "yes" ] && [ "$hyp" != "yes" ] && [ "$xhyp" != "yes" ] && [ "$tup" != "yes" ] && [ "$ssp" != "yes" ] && [ "$anp" != "yes" ] && [ "$xvcdn" != "yes" ] && [ "$xvargo" != "yes" ]; then
-    return 0
-  fi
+  # 调用位置已经确认需要 TLS；协议标志在装配过程中会变成展示名称，不能据此跳过证书。
   if ! command -v openssl >/dev/null 2>&1; then
     echo "错误：系统未安装 openssl，无法准备 TLS 证书。"
     echo "请先安装 openssl 后重试：apt install openssl 或 yum install openssl"
@@ -5588,11 +5602,15 @@ EOF
 else
 vlp=vlptargo
 fi
-if [ -n "$xhyp" ]; then
+if [ "$xhyp" = yes ]; then
 xhyp=xhypt
 port_xhy2=$(init_port "$port_xhy2" port_xhy2)
 setup_tls_certificate || return 1
 prepare_xray_profile hy || return 1
+[ -s "$tls_cert_file" ] && [ -s "$tls_key_file" ] || {
+  echo "错误：Xray-Hysteria2 所需的 TLS 证书或私钥不可用，未写入入站。"
+  return 1
+}
 echo "Xray-Hysteria2 端口：$port_xhy2（UDP FM=$xhyfm）"
 cat >> "$HOME/agsbx/xr.json" <<EOF
     {
@@ -6401,10 +6419,15 @@ local caddy_cert_valid=no
 printf "正在等待 Caddy 自动托管申请证书（最长 60 秒，签发成功将立刻退出）"
 while [ $detect_sec -gt 0 ]; do
   printf "."
-  caddy_cert=$(find "$HOME/agsbx" -type f -iname "$naive.crt" 2>/dev/null | head -1)
-  caddy_key=$(find "$HOME/agsbx" -type f -iname "$naive.key" 2>/dev/null | head -1)
-  if validate_certificate_bundle "$caddy_cert" "$caddy_key" caddy "$naive"; then
-    caddy_cert_valid=yes
+  # 同一签发目录中的证书与私钥必须配对；旧签发者的过期文件不能挡住新证书。
+  while IFS= read -r -d '' caddy_cert; do
+    caddy_key="${caddy_cert%.*}.key"
+    if validate_certificate_bundle "$caddy_cert" "$caddy_key" caddy "$naive"; then
+      caddy_cert_valid=yes
+      break
+    fi
+  done < <(find "$HOME/agsbx/caddy_storage" -type f -iname "$naive.crt" -print0 2>/dev/null)
+  if [ "$caddy_cert_valid" = yes ]; then
     echo " [成功]"
     break
   fi
@@ -6414,16 +6437,16 @@ done
 echo
 
 if [ "$caddy_cert_valid" = yes ]; then
-  echo "caddy" > "$HOME/agsbx/cert_mode"
-  record_cert_source "caddy" "$naive"
-  echo "$caddy_cert" > "$HOME/agsbx/cert_file_path"
-  echo "$caddy_key" > "$HOME/agsbx/key_file_path"
-  echo "$naive" > "$HOME/agsbx/sni.txt"
+  echo "caddy" > "$HOME/agsbx/cert_mode" || return 1
+  record_cert_source "caddy" "$naive" || return 1
+  echo "$caddy_cert" > "$HOME/agsbx/cert_file_path" || return 1
+  echo "$caddy_key" > "$HOME/agsbx/key_file_path" || return 1
+  echo "$naive" > "$HOME/agsbx/sni.txt" || return 1
   # 本次运行已经完成有效期、SAN 和私钥匹配校验；缓存结果，避免后续 TLS 节点重复校验。
   tls_cert_file="$caddy_cert"
   tls_key_file="$caddy_key"
+  write_cert_fingerprint || return 1
   tls_cert_ready=yes
-  write_cert_fingerprint
   # 调用 show_tls_cert_summary 展示详细证书信息并标记来源
   show_tls_cert_summary "Caddy 自动托管申请成功" "$naive"
   # 注册续期联动重载：Caddy 自动续期后，复用该证书的 xray/sing-box 能加载到新证书
@@ -9875,6 +9898,19 @@ echo
 # - 关联性: 为终端控制台调用或 systemd/OpenRC 守护指令提供物理分发网关。
 #============================================================
 prepare_runtime_operation "$1" || exit 1
+# 首次部署或半完成部署必须先有管理入口；失败后仍可执行 del/list。
+# 在 rep 快照之前补齐缺失入口，避免回滚再次把入口恢复为缺失状态。
+case "$1" in
+  ''|rep)
+    # 已安装后的无参数调用持有共享锁，仅展示状态，不在此补写文件。
+    if [ "$1" = rep ] || ! agsbx_installed; then
+      management_entry=$(managed_script_path) || exit 1
+      if [ ! -e "$management_entry" ]; then
+        install_script_shortcut current || { echo "错误：无法准备 agsbx 管理入口，尚未开始部署。"; exit 1; }
+      fi
+    fi
+    ;;
+esac
 case "$1" in
   ''|rep|del) ip_policy_load_runtime || exit 1 ;;
   *) ip_policy_load_runtime >/dev/null 2>&1 || ip_policy_configure_runtime '' ;;
