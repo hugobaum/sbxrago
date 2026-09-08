@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-AIRGOSBX_VERSION='V26.09.08.2'
+AIRGOSBX_VERSION='V26.09.08.3'
 # 仅在内置 XHTTP 默认参数改变时更新此标记，普通脚本版本更新不使旧命令失效。
 XHTTP_DEFAULTS_VERSION='V26.09.08.1'
 agsbxurl="${agsbxurl:-https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/main/airgosbx.sh}"
@@ -161,7 +161,8 @@ stop_managed_service(){
     if pidof systemd >/dev/null 2>&1; then
       systemctl stop "$managed_sd" || return 1
       if [ "$remove" = yes ]; then
-        systemctl disable "$managed_sd" || return 1
+        # 省略 systemd 的链接删除提示，错误输出与返回值仍保留。
+        systemctl --quiet disable "$managed_sd" || return 1
         rm -f -- "/etc/systemd/system/$managed_sd.service" || return 1
       fi
     else
@@ -834,7 +835,7 @@ showvars(){
 printf '%s\n' "${C_CYAN}~~~~~~~~~~~~~~~~~~~~ Airgosbx 变量速查表 ~~~~~~~~~~~~~~~~~~~~${C_RESET}"
 printf '%s\n' "${C_BOLD}用法：在脚本前以「变量=值」空格分隔传入，可任意组合${C_RESET}"
 echo "示例：xhpt=2087 ipv=\"4;6\" warp=s4x4 sub=y bash <(curl -Ls $agsbxurl)"
-echo "取消IP策略并恢复VPS原状态：ipv=\"\" agsbx（list/status 等查看命令不改变网络）"
+echo "取消IP策略并恢复VPS原状态：ipv= agsbx（list/status 等查看命令不改变网络）"
 echo "说明：端口类变量留空(如 vlpt)即自动随机分配；带 pt 后缀的为可指定端口版"
 
 vg "① Xray 内核协议（端口留空＝自动分配）"
@@ -893,7 +894,7 @@ vrow "xvcdnmode" "CDN 模式：packet-up（默认）或 stream-up（需 CDN 支�
 vrow "xvcdnfm"  "CDN 客户端 FM：none/fragment；禁止私有包头、sudoku"
 vrow "cdnym"    "CDN host域名/优选IP域名（须已解析到CF）"
 
-vg "⑦ TLS 证书（alns=y 启用 acme.sh；未请求 ACME 时自动自签）"
+vg "⑦ TLS 证书（无订阅时可自动自签；开启订阅必须使用公信 CA）"
 vrow "alns"     "acme.sh 证书开关：y＝需要证书时交互选择申请方式"
 vrow "acmemode" "预设方式：ip / http / alpn / dns（留空则交互选择）"
 vrow "certip"   "IP 短期证书的一个或两个公网 IP（空格分隔）"
@@ -911,7 +912,7 @@ vrow "CF_Account_ID" "Cloudflare 账户 ID（可选，用于缩小 Zone 查询�
 vrow "CF_Zone_ID" "Cloudflare Zone ID（可选，已知时可直接指定）"
 
 vg "⑧ Web 订阅分发（Clash/聚合，强制TLS加密）"
-vrow "sub"      "订阅分发开关（sub=y 启用；亦可只设 subpt/subid）"
+vrow "sub"      "订阅分发开关（sub=y 启用；亦可只设 subpt/subid）；必须复用公信 CA 或通过 ACME 申请"
 vrow "subpt"    "订阅服务对外端口（留空自动分配）"
 vrow "subid"    "独立订阅 token（16-128 位安全字符；留空自动生成并保存）"
 
@@ -1039,7 +1040,7 @@ printf '%s\n' "${C_BOLD}用法：agsbx <命令> [参数]　（已安装后任意
 
 vg "① 脚本管理"
 vrow "update"   "更新脚本自身到最新版（不动配置与内核）"
-vrow "rep"      "事务重置非Caddy协议；保留Naive/Caddy与证书（变更它们须先del）"
+vrow "rep"      "事务重置非Caddy协议；保留Naive/Caddy，开启订阅时可复用或申请CA证书"
 vrow "del"      "卸载 agsbx（清进程/服务/定时任务/文件）"
 
 vg "② 查看 / 信息"
@@ -1690,6 +1691,8 @@ validate_deployment_inputs(){
 
 preflight_service_slots(){
   local flag xr=no sb=no
+  [ "$sub" != yes ] || command -v timeout >/dev/null 2>&1 \
+    || { echo "错误：订阅需要 timeout 以限制 ACME 和 TLS 校验时间；未开始部署。"; return 1; }
   for flag in xhp vlp vxp vwp xhyp xdns xicp xvcdn xvargo; do [ "${!flag}" != yes ] || xr=yes; done
   for flag in hyp tup anp arp ssp; do [ "${!flag}" != yes ] || sb=yes; done
   if [ "$vmp" = yes ] || [ "$sop" = yes ]; then
@@ -2048,7 +2051,7 @@ case "$1" in
     case "$ipv_request_mode" in
       ''|4|6|'4;6'|'6;4') ;;
       *)
-        echo "错误：ipv 仅支持 4、6、\"4;6\"、\"6;4\"；未设置表示保持，ipv=\"\" 表示恢复原状态。"
+        echo "错误：ipv 仅支持 4、6、\"4;6\"、\"6;4\"；未设置表示保持，ipv= 表示恢复原状态。"
         exit 1
         ;;
     esac
@@ -2057,6 +2060,7 @@ esac
 # 每次调用从公开协议参数推导内部标志，不继承父进程中的中间状态或展示名称。
 vlp='' vmp='' vwp='' vmag='' hyp='' xhyp='' tup='' xhp='' vxp='' anp='' ssp='' arp='' sop='' wap='' xicp='' xvcdn='' xvargo='' mierup=''
 tls_cert_ready=no tls_cert_file='' tls_key_file='' tls_caddy_reuse_notice_shown=no
+rep_manage_certificate=no
 [ -z "${vlpt+x}" ] || vlp=yes
 [ -z "${vmpt+x}" ] || { vmp=yes; vmag=yes; }
 [ -z "${vwpt+x}" ] || { vwp=yes; vmag=yes; }
@@ -3002,6 +3006,7 @@ append_node_link(){
 publish_node_outputs(){
   local stage token="$subtoken"
   if [ "$sub" = yes ]; then
+    subscription_certificate_host >/dev/null || return 1
     [[ "$token" =~ ^[A-Za-z0-9_-]{16,128}$ ]] || return 1
     stage=$(mktemp -d "$HOME/agsbx/.subscription.XXXXXX") || return 1
     mkdir -m 700 "$stage/$token" || { rm -rf -- "$stage"; return 1; }
@@ -3013,6 +3018,7 @@ publish_node_outputs(){
       rm -rf -- "$stage"; return 1
     fi
     start_subscription_http "$subport_real" && write_subscription_http_autostart "$subport_real" yes || return 1
+    verify_subscription_https || return 1
     atomic_text_file "$HOME/agsbx/subtoken.log" "$token" || return 1
   fi
   atomic_text_file "$HOME/agsbx/jh.txt" "$node_links" || return 1
@@ -4490,8 +4496,58 @@ register_acme_cron(){
     "30 2 * * * /bin/bash $script_path __cert_renew > /dev/null 2>&1" \
     "30 2 * * * /bin/bash $HOME/agsbx/acme.sh --cron --home $HOME/agsbx/acme > /dev/null 2>&1"
 }
-# ca 表示已通过本机系统信任库校验；caddy 使用其公开 ACME 签发证书。
+# ca/caddy 是来源标记；订阅仍须实际校验证书链与 SAN，不能仅凭标记认定可信。
 cert_trusted(){ [ "$1" = "ca" ] || [ "$1" = "caddy" ]; }
+
+# 订阅必须同时通过证书身份、私钥配对和系统信任库校验，不能只相信磁盘上的 ca 标记。
+validate_public_certificate(){
+  validate_certificate_bundle "$1" "$2" subscription "$3" || return 1
+  # 订阅客户端按 URL 校验 SAN，不接受只有 CN 的域名匹配。
+  if valid_ip "$3"; then
+    openssl x509 -noout -ext subjectAltName -in "$1" 2>/dev/null | grep -q 'IP Address:' || return 1
+  else
+    openssl x509 -noout -ext subjectAltName -in "$1" 2>/dev/null | grep -q 'DNS:' || return 1
+  fi
+  openssl verify -purpose sslserver -untrusted "$1" "$1" >/dev/null 2>&1
+}
+
+# 纯读取：用于发布前校验与 list 展示，不签发证书、不修改任何状态。
+subscription_certificate_host(){
+  local mode cert key identifier candidate
+  mode=$(cat "$HOME/agsbx/cert_mode" 2>/dev/null)
+  cert_trusted "$mode" || { echo "错误：订阅分享必须使用公信 CA 证书；请启用 sub=y 并通过 ACME 申请 IP 或域名证书。" >&2; return 1; }
+  cert=$(cat "$HOME/agsbx/cert_file_path") && key=$(cat "$HOME/agsbx/key_file_path") \
+    && identifier=$(cat "$HOME/agsbx/cert_identifier") || return 1
+  { valid_ip "$identifier" || valid_domain "$identifier"; } \
+    && validate_public_certificate "$cert" "$key" "$identifier" \
+    || { echo "错误：订阅证书未通过公信证书链、有效期或地址匹配校验，未输出分享链接。" >&2; return 1; }
+  candidate="${1:-$(cat "$HOME/agsbx/cdnym" 2>/dev/null)}"
+  if [ -n "$candidate" ]; then
+    valid_domain "$candidate" || { echo "错误：已保存的 CDN 域名无效，未输出订阅链接。" >&2; return 1; }
+    # CDN 接入域名可能与 Caddy/ACME 证书不同；不匹配时使用证书本身的已验证身份。
+    if validate_certificate_bundle "$cert" "$key" subscription "$candidate"; then identifier="$candidate"; fi
+  fi
+  if valid_ipv6 "$identifier"; then printf '[%s]' "$identifier"; else printf '%s' "$identifier"; fi
+}
+
+# 发布时核对实际 TLS 入口；只连接本机，不发送订阅令牌或节点凭据。
+verify_subscription_https(){
+  local host port endpoint output
+  local -a args
+  command -v timeout >/dev/null 2>&1 || { echo "错误：缺少 timeout，无法执行有时间上限的订阅 TLS 校验。"; return 1; }
+  host=$(subscription_certificate_host) || return 1
+  host=${host#[}; host=${host%]}
+  port=$(cat "$HOME/agsbx/subport.log") && valid_port "$port" || return 1
+  if [ "$public_listen_address" = '::' ]; then endpoint="[::1]:$port"; else endpoint="127.0.0.1:$port"; fi
+  args=(-connect "$endpoint" -alpn http/1.1 -verify_return_error -brief)
+  if valid_ip "$host"; then args+=(-verify_ip "$host")
+  else args+=(-servername "$host" -verify_hostname "$host"); fi
+  if ! output=$(timeout -k 1 8 openssl s_client "${args[@]}" </dev/null 2>&1); then
+    echo "错误：订阅端口未通过 CA 证书链和域名/IP 的实际 TLS 握手校验，未输出分享链接。"
+    printf '%s\n' "$output" | tail -n 6
+    return 1
+  fi
+}
 # Caddy(naive) 证书续期联动重载：Caddy 自动续期会原地更新证书文件，但 xray/sing-box 仅在启动时读取证书、
 # 不会热感知续期。此处生成助手脚本并注册每日 cron——每天比对证书指纹，仅当证书真正变化(续期)时，
 # 才重启「配置里确实引用了该 Caddy 证书路径」的内核，平时零打断；首次运行只记录基线指纹。
@@ -4514,6 +4570,7 @@ reload_shared_certificate(){
   cf=$(cat "$HOME/agsbx/cert_file_path") && kf=$(cat "$HOME/agsbx/key_file_path") \
     && identifier=$(cat "$HOME/agsbx/cert_identifier") || return 1
   validate_certificate_bundle "$cf" "$kf" reload "$identifier" || return 1
+  if [ -s "$HOME/agsbx/subtoken.log" ] && [ -d "$HOME/websbx" ]; then subscription_certificate_host >/dev/null || return 1; fi
   fp=$(certificate_fingerprint "$cf") || return 1
   previous=$(cat "$HOME/agsbx/.caddy_cert_fp" 2>/dev/null)
   previous=${previous#*=}; previous=${previous//:/}; previous=$(printf '%s' "$previous" | tr A-F a-f)
@@ -4578,6 +4635,7 @@ case "$cert_source_now" in acme-*) echo "ACME工作目录：$HOME/agsbx/acme" ;;
 printf '%s\n' "${C_CYAN}==================================${C_RESET}"
 }
 setup_selfsigned_certificate(){
+  [ "$sub" != yes ] || { echo "错误：订阅分享不能使用自签证书，必须复用或申请公信 CA 证书。"; return 1; }
   local directory="$HOME/agsbx/openssl" cert="$HOME/agsbx/openssl/cert.pem" key="$HOME/agsbx/openssl/private.key" identifier tmp
   identifier=$(cat "$HOME/agsbx/sni.txt" 2>/dev/null)
   if [ -e "$cert" ] || [ -e "$key" ]; then
@@ -4717,7 +4775,7 @@ local wanted_type="$1"
 shift
 local acme_cert_file="$HOME/agsbx/acmecer/cert.pem"
 local acme_key_file="$HOME/agsbx/acmecer/private.key"
-local source identifier
+local source identifier validation_source
 [ "$(cat "$HOME/agsbx/cert_mode" 2>/dev/null)" = ca ] || return 1
 [ -s "$acme_cert_file" ] && [ -s "$acme_key_file" ] || return 1
 source=$(cat "$HOME/agsbx/cert_source" 2>/dev/null)
@@ -4729,20 +4787,24 @@ case "$source" in
 esac
 identifier=$(cat "$HOME/agsbx/cert_identifier" 2>/dev/null)
 [ -n "$identifier" ] || identifier=$(cat "$HOME/agsbx/sni.txt" 2>/dev/null)
+[ "$sub" != yes ] || validate_public_certificate "$acme_cert_file" "$acme_key_file" "$identifier" || return 1
+validation_source="$source"
+[ "$sub" != yes ] || validation_source=subscription
 if [ "$#" -eq 0 ]; then
   case "$wanted_type" in
     ip) valid_ip "$identifier" || return 1 ;;
     domain) valid_domain "$identifier" || return 1 ;;
   esac
-  validate_certificate_bundle "$acme_cert_file" "$acme_key_file" "$source" || return 1
+  validate_certificate_bundle "$acme_cert_file" "$acme_key_file" "$validation_source" || return 1
 else
-  validate_certificate_bundle "$acme_cert_file" "$acme_key_file" "$source" "$@" || return 1
+  validate_certificate_bundle "$acme_cert_file" "$acme_key_file" "$validation_source" "$@" || return 1
 fi
 tls_cert_file="$acme_cert_file"
 tls_key_file="$acme_key_file"
 echo "ca" > "$HOME/agsbx/cert_mode"
 record_cert_source "$source" "$identifier"
 record_tls_cert_paths "$acme_cert_file" "$acme_key_file"
+atomic_text_file "$HOME/agsbx/sni.txt" "$identifier" || return 1
 case "$source" in acme-*) register_acme_cron ;; esac
 tls_cert_source="本地已有且有效的受信任证书"
 echo "检测到本地已有有效证书，直接复用，避免重复申请触发 CA 限制。"
@@ -5091,6 +5153,10 @@ if ! validate_certificate_bundle "$acme_cert_file" "$acme_key_file" "$source" "$
   echo "错误：ACME 已签发，但运行目录中的证书未通过有效期、SAN 或私钥匹配校验，详情见 $acme_log"
   return 1
 fi
+[ "$sub" != yes ] || validate_public_certificate "$acme_cert_file" "$acme_key_file" "$identifier" || {
+  echo "错误：新证书未通过系统信任库校验，不能用于订阅分享。"
+  return 1
+}
 chmod 600 "$acme_key_file" 2>/dev/null
 register_acme_cron || return 1
 unset CF_Token CF_Key CF_Email CF_Account_ID CF_Zone_ID
@@ -5108,37 +5174,49 @@ setup_tls_certificate(){
       echo "错误：TLS 就绪标记与证书文件不一致，已停止生成配置。"
       return 1
     }
-    if [ "${tls_caddy_reuse_notice_shown:-no}" != yes ] \
-      && [ "$(cat "$HOME/agsbx/cert_mode" 2>/dev/null)" = caddy ] \
-      && { [ "$sub" = yes ] || [ "$hyp" = yes ] || [ "$xhyp" = yes ] || [ "$tup" = yes ] \
-        || [ "$anp" = yes ] || [ "$xvcdn" = yes ] || [ "$xvargo" = yes ]; }; then
-      echo "TLS证书模式：复用 Caddy(naive) 已签发的真实证书"
-      tls_caddy_reuse_notice_shown=yes
+    if [ "$sub" = yes ] && ! { cert_trusted "$(cat "$HOME/agsbx/cert_mode" 2>/dev/null)" \
+      && validate_public_certificate "$tls_cert_file" "$tls_key_file" "$(cat "$HOME/agsbx/cert_identifier" 2>/dev/null)"; }; then
+      tls_cert_ready=no
+    else
+      if [ "${tls_caddy_reuse_notice_shown:-no}" != yes ] \
+        && [ "$(cat "$HOME/agsbx/cert_mode" 2>/dev/null)" = caddy ]; then
+        echo "TLS证书模式：复用 Caddy(naive) 已签发的真实证书"
+        tls_caddy_reuse_notice_shown=yes
+      fi
+      return 0
     fi
-    return 0
   fi
   # Caddy 内置 ACME 仍保持最高优先级；新进程复用磁盘上的既有证书时重新校验一次，
   # 同一进程内刚由 installcaddy 校验通过的证书则由 tls_cert_ready 直接复用。
-  if [ -n "$naive" ] && [ "$(cat "$HOME/agsbx/cert_mode" 2>/dev/null)" = "caddy" ]; then
+  if [ "$(cat "$HOME/agsbx/cert_mode" 2>/dev/null)" = caddy ]; then
     reuse_cert=$(cat "$HOME/agsbx/cert_file_path" 2>/dev/null)
     reuse_key=$(cat "$HOME/agsbx/key_file_path" 2>/dev/null)
     reuse_identifier=$(cat "$HOME/agsbx/cert_identifier" 2>/dev/null)
     [ -n "$reuse_identifier" ] || reuse_identifier=$(cat "$HOME/agsbx/naive_domain" 2>/dev/null)
-    if [ -n "$reuse_identifier" ] && validate_certificate_bundle "$reuse_cert" "$reuse_key" caddy "$reuse_identifier"; then
+    if [ -n "$reuse_identifier" ] && validate_certificate_bundle "$reuse_cert" "$reuse_key" caddy "$reuse_identifier" \
+      && { [ "$sub" != yes ] || validate_public_certificate "$reuse_cert" "$reuse_key" "$reuse_identifier"; }; then
       tls_cert_file="$reuse_cert"
       tls_key_file="$reuse_key"
-      write_cert_fingerprint
+      record_cert_source caddy "$reuse_identifier" && record_tls_cert_paths "$reuse_cert" "$reuse_key" \
+        && atomic_text_file "$HOME/agsbx/sni.txt" "$reuse_identifier" && write_cert_fingerprint || return 1
       echo "TLS证书模式：复用 Caddy(naive) 已签发的真实证书"
       tls_caddy_reuse_notice_shown=yes
       show_tls_cert_summary "复用 Caddy(naive) 已签发证书" "$(cat "$HOME/agsbx/naive_domain" 2>/dev/null)"
       tls_cert_ready=yes
       return 0
     fi
-    if [ "$rep_mode" = yes ]; then
+    if [ "$rep_mode" = yes ] && [ "$sub" != yes ]; then
       echo "错误：rep 保留的 Caddy 证书未通过有效期、SAN 或私钥匹配校验。"
       echo "如需更换或重新申请 Caddy 证书，请先执行 agsbx del，再重新运行脚本。"
       return 1
     fi
+  fi
+  # 订阅优先复用已有 CA；GUI 中的申请/导入方案仅在没有可复用 CA 时生效。
+  if [ "$sub" = yes ] && reuse_existing_trusted_certificate '' && write_cert_fingerprint; then
+    echo "TLS证书模式：订阅与节点复用已有公信 CA 证书"
+    show_tls_cert_summary "$tls_cert_source" "$(cat "$HOME/agsbx/sni.txt" 2>/dev/null)"
+    tls_cert_ready=yes
+    return 0
   fi
   # 调用位置已经确认需要 TLS；协议标志在装配过程中会变成展示名称，不能据此跳过证书。
   if ! command -v openssl >/dev/null 2>&1; then
@@ -5199,13 +5277,13 @@ setup_tls_certificate(){
   elif [ "$dns_requested" = yes ] && is_yes "$certwild"; then
     reuse_allowed=no
   fi
-  if [ "$reuse_allowed" = yes ] && reuse_existing_trusted_certificate "$wanted_type" "${wanted_identifiers[@]}" && write_cert_fingerprint; then
+  if [ "$sub" != yes ] && [ "$reuse_allowed" = yes ] && reuse_existing_trusted_certificate "$wanted_type" "${wanted_identifiers[@]}" && write_cert_fingerprint; then
     echo "TLS证书模式：复用本地受信任证书"
     show_tls_cert_summary "$tls_cert_source" "$(cat "$HOME/agsbx/sni.txt" 2>/dev/null)"
     tls_cert_ready=yes
     return 0
   fi
-  if [ "$rep_mode" = yes ] && [ "$(cat "$HOME/agsbx/cert_mode" 2>/dev/null)" = ca ]; then
+  if [ "$rep_mode" = yes ] && [ "$sub" != yes ] && [ "$(cat "$HOME/agsbx/cert_mode" 2>/dev/null)" = ca ]; then
     echo "错误：rep 保留的 ACME/外部受信任证书未通过复用验证。"
     echo "如需更换或重新申请证书，请先执行 agsbx del，再重新运行脚本。"
     return 1
@@ -5215,6 +5293,12 @@ setup_tls_certificate(){
   [ -n "$certip" ] && acme_requested=yes
   [ -n "$certym" ] && acme_requested=yes
   [ -n "$certdns" ] && acme_requested=yes
+  if [ "$sub" = yes ]; then
+    acme_requested=yes
+    echo "订阅分享需要公信 CA 证书，未找到可复用证书，将申请 IP 或域名证书。"
+    # CDN 回源已经给出了明确域名；无显式方案时默认申请此域名的 HTTP-01 证书。
+    if [ -n "$cdnym" ] && [ -z "$certym" ] && [ -z "$certip" ] && [ -z "$acmemode" ]; then certym="$cdnym"; fi
+  fi
   if [ "$acme_requested" = yes ]; then
     acme_force_menu=no
     while :; do
@@ -7945,6 +8029,11 @@ elif [ -n "$naive" ]; then
     installcaddy || { echo "NaiveProxy(Caddy) 配置或证书校验失败，已停止安装。"; exit 1; }
   fi
 fi
+# 先满足订阅的公信 CA 要求，再生成任意核心配置，所有 TLS 入口复用同一份最终证书。
+if [ "$sub" = yes ]; then
+  setup_tls_certificate || return 1
+  subscription_certificate_host "$cdnym" >/dev/null || return 1
+fi
 local need_xray=no need_singbox=no
 # 先按阶段一既有规则决定原生协议归属，再额外加入 Naive sidecar 的 Sing-box 需求；
 # 这样仅启用 vmpt/sopt 时仍默认落在 Xray，不会因 sidecar 被悄悄迁移到 Sing-box。
@@ -9015,21 +9104,16 @@ if [ "$sub" = yes ]; then
   [[ "$subtoken" =~ ^[A-Za-z0-9_-]{16,128}$ ]] || { echo "错误：旧订阅令牌过短或含路径字符，请用 sub=y agsbx rep 迁移。"; return 1; }
   subport_show=$(cat "$HOME/agsbx/subport.log") && subport_real=$(cat "$HOME/agsbx/subport_real.log") || return 1
   valid_port "$subport_show" && valid_port "$subport_real" || return 1
-  subdomain=$(cat "$HOME/agsbx/cdnym" 2>/dev/null)
-  cert_mode=$(cat "$HOME/agsbx/cert_mode" 2>/dev/null)
-  if cert_trusted "$cert_mode"; then
-    [ -n "$subdomain" ] || subdomain=$(cat "$HOME/agsbx/cert_identifier" 2>/dev/null)
-    tls_cert_file=$(cat "$HOME/agsbx/cert_file_path") && tls_key_file=$(cat "$HOME/agsbx/key_file_path") || return 1
-    validate_certificate_bundle "$tls_cert_file" "$tls_key_file" render "$subdomain" \
-      || { echo "错误：订阅地址与证书身份不匹配。"; return 1; }
-    valid_ipv6 "$subdomain" && subdomain="[$subdomain]"
-  else
-    subdomain="$server_ip"
-  fi
-  suburl="https://${subdomain}:${subport_show}/${subtoken}"
   clash_sub_info=''
-  if { [ "$cip_mode" = publish ] && [ -n "$clash_config" ]; } || { [ "$cip_mode" != publish ] && [ -f "$HOME/websbx/$subtoken/clmi.yaml" ]; }; then
-    clash_sub_info="Clash/Mihomo 本地订阅链接：${suburl}/clmi.yaml"
+  if subdomain=$(subscription_certificate_host); then
+    suburl="https://${subdomain}:${subport_show}/${subtoken}"
+    if { [ "$cip_mode" = publish ] && [ -n "$clash_config" ]; } || { [ "$cip_mode" != publish ] && [ -f "$HOME/websbx/$subtoken/clmi.yaml" ]; }; then
+      clash_sub_info="Clash/Mihomo 本地订阅链接：${suburl}/clmi.yaml"
+    fi
+  else
+    [ "$cip_mode" != publish ] || return 1
+    echo "现有订阅未满足公信 CA 要求，已隐藏分享链接；请用 sub=y 并指定 ACME 方式执行 agsbx rep 迁移。"
+    sub=''
   fi
 fi
 if [ "$cip_mode" = publish ]; then publish_node_outputs || return 1; fi
@@ -9040,15 +9124,7 @@ if [ "$sub" = yes ]; then
 hr2
 if [ -n "$clash_sub_info" ]; then echo "$clash_sub_info"; else echo "本次没有可完整导出的 Mihomo 节点，请使用聚合协议链接。"; fi
 echo "聚合协议本地订阅地址：${suburl}/jhsub.txt"
-if [ "$(cat "$HOME/agsbx/cert_mode" 2>/dev/null)" = "selfsigned" ]; then
-hr
-printf '%s\n' "${C_YELLOW}⚠️  安全加密提示 (自签证书模式)：${C_RESET}"
-echo "   由于您当前未使用域名或 ACME 证书，系统已自动启用本地自签 TLS 强加密。"
-echo "   拉取订阅前，须通过 SSH 等可信渠道核对证书指纹或安装信任。"
-echo "   不支持证书固定的客户端请使用 CA 证书，或通过 SSH 获取订阅文件。"
-echo "   仅跳过证书验证不能防御主动中间人攻击。"
-echo "   当前证书 SHA256：$render_cert_hash"
-fi
+echo "订阅地址使用共享 CA 证书覆盖的域名或 IP；域名应解析到订阅服务，客户端保持证书验证开启。"
 hr2
 echo
 fi
@@ -9073,6 +9149,7 @@ else
   find "$HOME/agsbx" -type f -exec chmod 600 {} + 2>/dev/null
   chmod 700 "$HOME/agsbx/xray" "$HOME/agsbx/sing-box" "$HOME/agsbx/cloudflared" "$HOME/agsbx/caddy" 2>/dev/null
 fi
+[ ! -f "$HOME/agsbx/acme.sh" ] || chmod 700 "$HOME/agsbx/acme.sh" || return 1
 fi
 echo "相关快捷方式如下（无需重连 SSH）："
 showmode
@@ -9086,6 +9163,9 @@ return 0
 # - 关联性: 为后续第 11 段 (命令路由) 处理 del(卸载)、rep(重置协议) 或 res(重启) 提供底层物理清理与状态复原支撑。
 #============================================================
 rep_entry_is_preserved(){
+  if [ "$rep_manage_certificate" = yes ]; then
+    case "$1" in acme*|dnsapi|ca.conf) return 1 ;; esac
+  fi
   case "$1" in
     caddy|caddy*|.caddy*|Caddyfile|naive_*|acme*|acmecer|dnsapi|ca.conf|sbx_update)
       return 0 ;;
@@ -9095,6 +9175,8 @@ rep_entry_is_preserved(){
 
 rep_validate_preserved_certificate(){
   local mode source cert_file key_file identifier
+  # 订阅允许升级为 CA；签发/复用在快照完成且进入安装编排后执行。
+  [ "$sub" != yes ] || return 0
   if [ "$sub" != yes ] && [ "$hyp" != yes ] && [ "$xhyp" != yes ] \
     && [ "$tup" != yes ] && [ "$ssp" != yes ] && [ "$anp" != yes ] \
     && [ "$xvcdn" != yes ]; then
@@ -9168,10 +9250,15 @@ rep_validate_preserved_certificate(){
 
 rep_validate_preserved_scope(){
   local option value
-  for option in naive naiveuser naivepass naivebuild naivesite alns acmemode certip certym certwild certcrt certkey acmem acmetimeout certdns CF_Token CF_Account_ID CF_Zone_ID sslcom_eab_kid sslcom_eab_hmac; do
+  rep_manage_certificate=no
+  [ "$sub" != yes ] || rep_manage_certificate=yes
+  for option in naive naiveuser naivepass naivebuild naivesite alns acmemode certip certym certwild certcrt certkey acmem acmetimeout certdns CF_Token CF_Key CF_Email CF_Account_ID CF_Zone_ID sslcom_eab_kid sslcom_eab_hmac; do
+    if [ "$rep_manage_certificate" = yes ]; then
+      case "$option" in naive|naiveuser|naivepass|naivebuild|naivesite) ;; *) continue ;; esac
+    fi
     value=${!option-}
     if [ -n "$value" ]; then
-      echo "错误：agsbx rep 不允许设置 $option；rep 不修改 Naive/Caddy 或任何证书。"
+      echo "错误：agsbx rep 不允许设置 $option；Naive/Caddy 保留不变，证书参数仅在启用订阅时接受。"
       echo "如需变更这些内容，请先执行 agsbx del，再重新运行脚本。"
       return 1
     fi
@@ -9587,7 +9674,7 @@ if [ "$cleanup_mode" = del ]; then
   stop_managed_service caddy yes || return 1
   for path in /etc/systemd/system/caddy.service /etc/init.d/caddy; do
     if service_file_owned "$path" caddy systemd; then
-      systemctl stop caddy && systemctl disable caddy && rm -f -- "$path" || return 1
+      systemctl stop caddy && systemctl --quiet disable caddy && rm -f -- "$path" || return 1
     elif service_file_owned "$path" caddy openrc; then
       rc-service caddy stop && rc-update del caddy default && rm -f -- "$path" || return 1
     fi
