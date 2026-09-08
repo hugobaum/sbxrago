@@ -10,7 +10,7 @@
     与 airgosbx.sh 配套维护、同版本提交和发布。无外部资源、请求、遥测或自动持久化。
     与 airgosbx.sh 配套维护：修改 showvars、协议归属、secp、warp、rep 或 URL 生成规则时，
     同时核对 PROTOCOLS、XRAY_PROFILES、FIELDS、collect、savedCommandPlan 和 validate。
-    配套版本：V26.09.08。XHTTP_DEFAULTS_VERSION 与 BUILD.presetVersion 仅在默认参数变化时更新。
+    配套版本：V26.09.08.1。XHTTP_DEFAULTS_VERSION 与 BUILD.presetVersion 仅在默认参数变化时更新。
     配套脚本已发布到 GitHub main；后续存在未发布的接口变更时，应将 remoteAligned 设为 false。
     页面只生成文本，不执行命令。选择“对照脚本”时只读取用户明确选择的文件。
   -->
@@ -268,7 +268,7 @@
       <section class="panel" id="certificates"><div class="panel-heading"><div><span class="step">03 / CERTIFICATES & SYSTEM</span><h2>证书、地址与订阅</h2><p class="intro">REALITY 不要求自有域名证书。Naive 由 Caddy 管理证书，其他 TLS 协议可复用或申请证书。</p></div></div><div id="common-fields" class="form-grid"></div><div id="certificate-fields" class="form-grid" style="margin-top:16px"></div><div id="certificate-specific" class="form-grid" style="margin-top:16px"></div><p class="note">自签证书需要客户端按节点输出导入信任或固定指纹；不能仅凭分享链接就认为所有客户端均可验证。VLESS Encryption 节点请使用完整 URL 或聚合订阅，脚本不会生成缺失加密参数的 Clash 节点。</p><div id="subscription-fields" class="form-grid" style="margin-top:16px"></div><div id="subscription-specific" class="form-grid" style="margin-top:16px" hidden></div><details><summary>更多变量：证书账户、跳跃端口与源地址</summary><div id="advanced-fields" class="form-grid"></div></details></section>
       </div>
 
-      <section class="panel" id="reference"><div class="panel-heading"><div><span class="step">REFERENCE</span><h2>脚本与 GUI 的维护对照</h2><p class="intro">页面以当前工作区脚本为依据；HTML 不会自动读取磁盘或远端代码。</p></div></div><div class="table-wrap"><table class="help-table"><thead><tr><th>功能位置</th><th>脚本入口</th><th>GUI 同步点</th></tr></thead><tbody><tr><td>协议及所属核心</td><td><code>showvars / ins</code></td><td>协议清单、能力标记、核心推导</td></tr><tr><td>Xray 扩展</td><td><code>各入口的 extra / mode / fm 变量</code></td><td>按协议默认方案、FM 组合与独立调参</td></tr><tr><td>CDN / Argo</td><td><code>cdnym / argo / agn / agk</code></td><td>接入条件、端口、隧道绑定</td></tr><tr><td>出站</td><td><code>warp / secp / securl</code></td><td>WARP 规则、二级代理目标及范围</td></tr><tr><td>命令生成与还原</td><td><code>环境变量与管理命令</code></td><td>字段映射、引用转义、旧版通用参数继承</td></tr><tr><td>生命周期</td><td><code>rep / del / upx / ups …</code></td><td>操作清单、参数过滤、影响说明</td></tr></tbody></table></div><p class="note">覆盖范围：常用部署、证书、订阅、出站和管理入口。XDNS / XICMP 仍未开放；目录中标为不可配置的核心字段未接入脚本，内部证书续期和跳跃规则恢复命令由脚本管理。端口占用、服务归属、证书和真实连通性须在 VPS 检查。</p><p class="note">对照功能只提取你选择的脚本中的变量声明与帮助条目，不执行、不上传。它能提示变量清单差异，不能代替调用逻辑审查。</p><div class="tools" style="margin-top:14px"><label class="file-label">选择 airgosbx.sh 对照<input id="source-file" class="visually-hidden" type="file" accept=".sh,text/plain"></label><button id="clear-compare" type="button" class="text-button">清除对照</button></div><p id="sync-result" class="sync-result" role="status">配套版本：V26.09.08；XHTTP 默认参数版本：V26.09.07。尚未读取其他文件。</p></section>
+      <section class="panel" id="reference"><div class="panel-heading"><div><span class="step">REFERENCE</span><h2>脚本与 GUI 的维护对照</h2><p class="intro">页面以当前工作区脚本为依据；HTML 不会自动读取磁盘或远端代码。</p></div></div><div class="table-wrap"><table class="help-table"><thead><tr><th>功能位置</th><th>脚本入口</th><th>GUI 同步点</th></tr></thead><tbody><tr><td>协议及所属核心</td><td><code>showvars / ins</code></td><td>协议清单、能力标记、核心推导</td></tr><tr><td>Xray 扩展</td><td><code>各入口的 extra / mode / fm 变量</code></td><td>按协议默认方案、FM 组合与独立调参</td></tr><tr><td>CDN / Argo</td><td><code>cdnym / argo / agn / agk</code></td><td>接入条件、端口、隧道绑定</td></tr><tr><td>出站</td><td><code>warp / secp / securl</code></td><td>WARP 规则、二级代理目标及范围</td></tr><tr><td>命令生成与还原</td><td><code>环境变量与管理命令</code></td><td>字段映射、引用转义、旧版通用参数继承</td></tr><tr><td>生命周期</td><td><code>rep / del / upx / ups …</code></td><td>操作清单、参数过滤、影响说明</td></tr></tbody></table></div><p class="note">覆盖范围：常用部署、证书、订阅、出站和管理入口。XDNS / XICMP 仍未开放；目录中标为不可配置的核心字段未接入脚本，内部证书续期和跳跃规则恢复命令由脚本管理。端口占用、服务归属、证书和真实连通性须在 VPS 检查。</p><p class="note">对照功能只提取你选择的脚本中的变量声明与帮助条目，不执行、不上传。它能提示变量清单差异，不能代替调用逻辑审查。</p><div class="tools" style="margin-top:14px"><label class="file-label">选择 airgosbx.sh 对照<input id="source-file" class="visually-hidden" type="file" accept=".sh,text/plain"></label><button id="clear-compare" type="button" class="text-button">清除对照</button></div><p id="sync-result" class="sync-result" role="status">配套版本：V26.09.08.1；XHTTP 默认参数版本：V26.09.08.1。尚未读取其他文件。</p></section>
     </main>
 
     <aside class="output" id="command" aria-labelledby="command-title">
@@ -304,7 +304,7 @@
 <script>
 /* 配置清单集中在这里，避免表单、架构图与命令生成各自维护一套名称。 */
 'use strict';
-const BUILD = {version:'V26.09.08',presetVersion:'V26.09.07',remoteAligned:true, source:'https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/main/airgosbx.sh', schema:'字段基线：Xray v26.3.27；主分支新增字段另列为暂不可用'};
+const BUILD = {version:'V26.09.08.1',presetVersion:'V26.09.08.1',remoteAligned:true, source:'https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/main/airgosbx.sh', schema:'字段基线：Xray v26.3.27；主分支新增字段另列为暂不可用'};
 const OPERATIONS = [
   ['install','安装 / 创建节点'],['rep','重建协议配置（rep）'],['restore-ip','恢复原 IP 策略'],['list','显示节点（list）'],['status','资源与流量（status）'],['update','更新脚本（update）'],['res','重启代理与隧道（res）'],['start','启动核心（start）'],['stop','停止核心（stop）'],['restart','重启核心（restart）'],['reload','重载配置（reload）'],['upx','升级 Xray（upx）'],['ups','升级 Sing-box（ups）'],['downx','降级 Xray（downx）'],['downs','降级 Sing-box（downs）'],['del','卸载（del）'],['vars','查看变量（vars）'],['cmds','查看命令（cmds）'],['help','完整帮助（help）']
 ];
@@ -511,7 +511,7 @@ const FIELDS = {
   vxextra:{label:'XHTTP Extra',type:'extra',value:'n'},
   xvcdnextra:{label:'XHTTP Extra',type:'extra',value:'n'},
   xvargoextra:{label:'XHTTP Extra',type:'extra',value:'n'},
-  xhmode:{label:'XHTTP 模式',options:[['auto','自动'],['stream-one','stream-one'],['stream-up','stream-up'],['packet-up','packet-up']],value:'auto'},
+  xhmode:{label:'XHTTP 模式',help:'默认 auto；此选择用于客户端，服务端保持 auto 接受多种模式。',options:[['auto','自动'],['stream-one','stream-one'],['stream-up','stream-up'],['packet-up','packet-up']],value:'auto'},
   vxmode:{label:'XHTTP 模式',options:[['auto','自动（CDN 时为 packet-up）'],['packet-up','packet-up'],['stream-up','stream-up'],['stream-one','stream-one（仅直接接入）']],value:'auto'},
   xvcdnmode:{label:'CDN XHTTP 模式',options:[['packet-up','packet-up'],['stream-up','stream-up（需支持流式上传）']],value:'packet-up'},
   xhycc:{label:'QUIC 拥塞控制',options:[['auto','核心默认'],['bbr','BBR'],['reno','Reno'],['brutal','Brutal（协商）'],['force-brutal','Force Brutal（明确带宽）']],value:'auto'},
@@ -691,7 +691,7 @@ function extensionTuning(key,activeOnly=true){
 function extensionPreset(key){
   const {profile,fm}=extensionInfo(key);
   if(!fm){
-    if(profile.kind==='reality')return {title:'REALITY 直连',mode:'stream-one',description:'单条 HTTP/2 流承载上下行；使用请求填充与 3 条底层连接。'};
+    if(profile.kind==='reality')return {title:'REALITY 直连',mode:'auto',description:'默认由客户端选择 XHTTP 模式；服务端接受多种模式。Extra 不再强制 stream-one。'};
     if(profile.kind==='tunnel')return {title:'Tunnel 回环回源',mode:'packet-up',description:'分包上传，服务端固定关闭 SSE 响应头；保留 HTTP 回环回源。'};
     if(profile.kind==='cdn'||profile.kind==='plain'&&value('cdnEnabled'))return {title:'CDN 回源',mode:'packet-up',description:'使用分包上传；会话、序号和上传数据位置沿用核心默认，避免增加回源要求。'};
     return {title:'XHTTP 直接接入',mode:'packet-up',description:'此入口没有外层 TLS，使用分包上传；请求填充和连接复用独立配置。'};
@@ -1397,7 +1397,7 @@ function savedCommandPlan(parsed){
   const {pairs}=parsed,fields=Object.fromEntries(Object.entries(FIELDS).map(([key,spec])=>[key,spec.type==='checkbox'?Boolean(spec.value):(spec.value??'')]));
   const selected=new Set(),ports=new Map(),masks=new Map(),notes=[];
   const allowed=new Set([...Object.keys(FIELDS).filter(key=>!UI_ONLY.has(key)),...PROTOCOLS.flatMap(p=>[p.id,p.portKey].filter(Boolean)),'secp','alns','acmemode','cfgver']);
-  if(pairs.has('cfgver')&&pairs.get('cfgver')!==BUILD.presetVersion)throw new Error('这条命令使用其他版本的默认参数，请用配套 GUI 还原，避免猜测省略的值。');
+  if(pairs.has('cfgver')&&![BUILD.presetVersion,'V26.09.07'].includes(pairs.get('cfgver')))throw new Error('这条命令使用其他版本的默认参数，请用配套 GUI 还原，避免猜测省略的值。');
   for(const key of pairs.keys())if(!allowed.has(key))throw new Error('当前 GUI 无法还原变量 '+key+'；未改动表单。');
   const bool=(raw,key)=>{
     if(['y','yes','1'].includes(raw))return true;
@@ -1451,9 +1451,10 @@ function savedCommandPlan(parsed){
   if(pairs.get('certym')&&fields.certMode==='auto')throw new Error('命令提供了 certym，但未说明 ACME 模式；请补充 acmemode 后再还原。');
   if(fields.certMode==='external'&&(pairs.get('acmemode')||pairs.get('certdns')))throw new Error('命令同时指定了导入证书与 ACME 方式，当前表单无法完整表示。');
   if(fields.certMode==='interactive'&&pairs.get('certym'))throw new Error('交互式证书命令同时指定了域名，请补充明确的 acmemode 以保留全部信息。');
+  if(pairs.get('cfgver')==='V26.09.07')notes.push('已按旧版本保留模式选择；如需采用新的直连默认，请将 XHTTP 模式改为 auto。重新生成时使用新版本标记。');
   let legacy=false;
   for(const [id,profile] of Object.entries(XRAY_PROFILES)){
-    if(profile.mode&&!pairs.has(profile.mode)&&fields[profile.extra]==='y')fields[profile.mode]=profile.kind==='reality'?'stream-one':'packet-up';
+    if(profile.mode&&!pairs.has(profile.mode)&&fields[profile.extra]==='y')fields[profile.mode]=profile.kind==='reality'?(pairs.get('cfgver')==='V26.09.07'?'stream-one':'auto'):'packet-up';
     for(const base of profile.keys){
       const scoped=profile.prefix+'_'+base;
       const raw=pairs.get(scoped)||pairs.get(base);

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-AIRGOSBX_VERSION='V26.09.08'
+AIRGOSBX_VERSION='V26.09.08.1'
 # 仅在内置 XHTTP 默认参数改变时更新此标记，普通脚本版本更新不使旧命令失效。
-XHTTP_DEFAULTS_VERSION='V26.09.07'
+XHTTP_DEFAULTS_VERSION='V26.09.08.1'
 agsbxurl="${agsbxurl:-https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/main/airgosbx.sh}"
 # SSL.com EAB 仅在 ACME 注册步骤按需读取，禁止无关子进程继承敏感凭据。
 export -n sslcom_eab_kid sslcom_eab_hmac fmpass fmheader \
@@ -38,6 +38,21 @@ agsbx_running(){
     || { [ -f "$HOME/agsbx/mita_managed" ] && command -v mita >/dev/null 2>&1 && mita status 2>/dev/null | grep -q 'RUNNING'; }
 }
 
+# 一次批量读取 /proc 可执行文件链接；NUL 分隔避免特殊文件名混淆记录。
+# GNU find 在单进程内读取链接；其他平台保留逐项 readlink，不降低匹配范围。
+agsbx_process_exe_links(){
+  local proc_exe resolved
+  if [ "$agsbx_find_printf" = yes ]; then
+    find /proc -mindepth 2 -maxdepth 2 -name exe -type l -printf '%p\0%l\0' 2>/dev/null
+  else
+    for proc_exe in /proc/[0-9]*/exe; do
+      [ -L "$proc_exe" ] || continue
+      resolved=$(readlink -f "$proc_exe" 2>/dev/null) || continue
+      printf '%s\0%s\0' "$proc_exe" "$resolved"
+    done
+  fi
+}
+
 # 安装完成判定必须按本轮必需组件逐项检查，不能由另一个仍存活的内核掩盖失败。
 agsbx_component_pids(){
   local component="$1" expected_exe proc_exe resolved pid
@@ -48,14 +63,13 @@ agsbx_component_pids(){
     cloudflared) expected_exe="$HOME/agsbx/cloudflared" ;;
     *) return 1 ;;
   esac
-  for proc_exe in /proc/[0-9]*/exe; do
-    [ -L "$proc_exe" ] || continue
-    resolved=$(readlink -f "$proc_exe" 2>/dev/null) || continue
+  while IFS= read -r -d '' proc_exe && IFS= read -r -d '' resolved; do
+    [[ "$proc_exe" =~ ^/proc/[0-9]+/exe$ ]] || continue
     resolved=${resolved% (deleted)}
     if [ "$resolved" = "$expected_exe" ]; then
       pid=${proc_exe#/proc/}; printf '%s\n' "${pid%/exe}"
     fi
-  done
+  done < <(agsbx_process_exe_links)
 }
 
 agsbx_component_running(){
@@ -182,32 +196,45 @@ component_listener_specs(){
 }
 
 component_owns_listener(){
-  local core="$1" port="$2" network="$3" output pid
+  local core="$1" port="$2" network="$3" output pids
   valid_port "$port" || return 1
-  if [ "$network" = udp ]; then output=$(ss -lunp 2>/dev/null)
-  else output=$(ss -ltnp 2>/dev/null); fi
-  [ $? -eq 0 ] || return 1
-  for pid in $(agsbx_component_pids "$core"); do
-    printf '%s\n' "$output" | awk -v port="$port" -v pid="$pid" \
-      '$4 ~ (":" port "$") && index($0, "pid=" pid ",") {found=1} END {exit !found}' && return 0
-  done
-  return 1
+  if [ "$#" = 5 ]; then pids="$4"; output="$5"
+  else
+    pids=$(agsbx_component_pids "$core")
+    output=$(ss -H -lntup 2>/dev/null) || return 1
+  fi
+  [ -n "$pids" ] || return 1
+  printf '%s\n' "$output" | awk -v port="$port" -v net="$network" -v pids="$pids" '
+    BEGIN {count=split(pids, ids, /[[:space:]]+/)}
+    $1 == net && $5 ~ (":" port "$") {
+      for (i=1; i<=count; i++) if (ids[i] != "" && index($0, "pid=" ids[i] ",")) found=1
+    }
+    END {exit !found}'
 }
 
 wait_component_listeners(){
-  local core="$1" config tag file network port ready attempt
+  local core="$1" config tag file network port ready attempt pids listeners entry
+  local -a planned_ports=()
   if [ "$core" = caddy ]; then
     for attempt in {1..5}; do component_owns_listener caddy 443 tcp && return 0; sleep 1; done
     return 1
   fi
   [ "$core" = xray ] && config=xr.json || config=sb.json
+  # 同一次等待只读取一次配置与端口计划；每轮重新采集运行状态，避免跨操作缓存 PID。
+  while IFS=: read -r tag file network; do
+    grep -Fq "\"$tag\"" "$HOME/agsbx/$config" 2>/dev/null || continue
+    IFS= read -r port < "$HOME/agsbx/$file" || return 1
+    valid_port "$port" || return 1
+    planned_ports+=("$port:$network")
+  done < <(component_listener_specs "$core")
   for attempt in {1..5}; do
     ready=yes
-    while IFS=: read -r tag file network; do
-      grep -Fq "\"$tag\"" "$HOME/agsbx/$config" 2>/dev/null || continue
-      port=$(cat "$HOME/agsbx/$file" 2>/dev/null)
-      component_owns_listener "$core" "$port" "$network" || ready=no
-    done < <(component_listener_specs "$core")
+    pids=$(agsbx_component_pids "$core")
+    listeners=$(ss -H -lntup 2>/dev/null) || return 1
+    [ -n "$pids" ] || ready=no
+    for entry in "${planned_ports[@]}"; do
+      component_owns_listener "$core" "${entry%:*}" "${entry#*:}" "$pids" "$listeners" || ready=no
+    done
     [ "$ready" != yes ] || return 0
     sleep 1
   done
@@ -241,11 +268,12 @@ subscription_http_binary(){
 }
 
 subscription_http_managed_pids(){
-  local proc resolved arg index pid
+  local proc proc_exe resolved arg index pid
   local -a args
-  for proc in /proc/[0-9]*/cmdline; do
+  while IFS= read -r -d '' proc_exe && IFS= read -r -d '' resolved; do
+    [[ "$proc_exe" =~ ^/proc/[0-9]+/exe$ ]] || continue
+    proc="${proc_exe%/exe}/cmdline"
     [ -r "$proc" ] || continue
-    resolved=$(readlink -f "${proc%/cmdline}/exe" 2>/dev/null) || continue
     case "${resolved##*/}" in busybox|busybox-extras) ;; *) continue ;; esac
     args=()
     while IFS= read -r -d '' arg; do args+=("$arg"); done < "$proc"
@@ -256,7 +284,7 @@ subscription_http_managed_pids(){
         break
       fi
     done
-  done
+  done < <(agsbx_process_exe_links)
 }
 
 subscription_http_managed_is_running(){
@@ -819,7 +847,7 @@ vrow "vxextra"  "vxpt 的 XHTTP extra：y/n（默认 n）"
 vrow "vxfm"     "vxpt 的 FM：header-custom、sudoku；套 CDN 时关闭"
 vrow "vwfm"     "vwpt 的 FM：header-custom、sudoku；CDN/Argo 时关闭"
 vrow "vmfm"     "Xray VMess 的 FM：header-custom、sudoku；Sing-box/CDN/Argo 时关闭"
-vrow "xhmode"   "xhpt 模式：auto/packet-up/stream-up/stream-one；基础默认 auto，开启 extra 默认 stream-one"
+vrow "xhmode"   "xhpt 客户端模式：auto/packet-up/stream-up/stream-one；含 extra 默认 auto，服务端接受多种模式"
 vrow "vxmode"   "vxpt 模式；CDN 默认 packet-up，不开放 stream-one"
 echo "             fragment 只进入 TLS/REALITY 客户端，不写入服务端。"
 echo "             示例：xhpt=2087 xhextra=y xhfm=sudoku（完整参数随 VLESS URL 导出）"
@@ -1055,6 +1083,10 @@ safe_base64() {
   tr -d '\r\n' | base64 | tr -d '\r\n'
 }
 
+# 仅检测已有工具能力，不安装依赖；能力结果可缓存，进程状态不缓存。
+agsbx_find_printf=no
+find --version >/dev/null 2>&1 && agsbx_find_printf=yes
+
 # URI 组件编码：只保留 RFC 3986 unreserved 字符，其余按 UTF-8 字节转为大写 %HH。
 uri_percent_encode() {
   local input="$1" output="" char hex i
@@ -1164,11 +1196,14 @@ xray_normalize_masks() {
 
 # 覆盖顺序：协议专用值、通用值、脚本默认。变量名仅来自固定 schema。
 xhttp_extra_value() {
-  local profile="$1" key="$2" fallback="$3" scoped="${1}_${2}"
+  local profile="$1" key="$2" fallback="$3" scoped="${1}_${2}" resolved_extra_value
   [ "$profile:$key" != xva:xnosse ] || fallback=true
-  if [ -n "${!scoped}" ]; then printf '%s' "${!scoped}"
-  elif [ -n "${!key}" ]; then printf '%s' "${!key}"
-  else printf '%s' "$fallback"; fi
+  if [ -n "${!scoped}" ]; then resolved_extra_value=${!scoped}
+  elif [ -n "${!key}" ]; then resolved_extra_value=${!key}
+  else resolved_extra_value=$fallback; fi
+  # 热循环直接赋给调用者的局部变量，避免为每个字段创建命令替换子进程。
+  if [ "$#" = 4 ]; then printf -v "$4" '%s' "$resolved_extra_value"
+  else printf '%s' "$resolved_extra_value"; fi
 }
 
 # 请求头以 Base64 传入，逐行验证后转义为 JSON，不接收原始 JSON。
@@ -1196,11 +1231,12 @@ xhttp_headers_json() {
 
 xhttp_validate_extra() {
   local profile="$1" mode="$2" key field kind fallback side value minimum maximum choice
+  local LC_ALL=C
   local download method placement security mask_key masks
   download=$(xhttp_extra_value "$profile" xdownload false)
   while IFS='|' read -r key field kind fallback side; do
-    value=$(xhttp_extra_value "$profile" "$key" "$fallback")
-    [ "${#value}" -le 8192 ] && ! printf '%s' "$value" | LC_ALL=C grep -q '[[:cntrl:]]' \
+    xhttp_extra_value "$profile" "$key" "$fallback" value
+    [ "${#value}" -le 8192 ] && [[ ! "$value" =~ [[:cntrl:]] ]] \
       || { echo "错误：${profile}_${key} 太长或含有控制字符。"; return 1; }
     case "$kind" in
       range:*|int:*)
@@ -1306,7 +1342,7 @@ xray_validate_profile_tuning() {
 
 validate_xray_options() {
   local option flag transport normalized spec mode allowed has_xray=no has_singbox=no
-  if [ -n "$cfgver" ] && [ "$cfgver" != "$XHTTP_DEFAULTS_VERSION" ]; then
+  if [ -n "$cfgver" ] && [ "$cfgver" != "$XHTTP_DEFAULTS_VERSION" ] && [ "$cfgver" != V26.09.07 ]; then
     echo "错误：命令的默认配置版本为 $cfgver，当前预设为 $XHTTP_DEFAULTS_VERSION；请使用配套版本。"; return 1
   fi
   for spec in xhextra:xhp vxextra:vxp xvcdnextra:xvcdn xvargoextra:xvargo; do
@@ -1369,7 +1405,8 @@ validate_xray_options() {
   fi
   for spec in xhmode:xhp vxmode:vxp xvcdnmode:xvcdn; do
     option=${spec%:*}; flag=${spec#*:}; mode=auto
-    if [ "$flag" = xhp ] && [ "$xhextra" = yes ]; then mode=stream-one; fi
+    # 已标记的旧命令保留原默认；新 GUI/命令使用 auto，显式模式始终优先。
+    if [ "$flag" = xhp ] && [ "$xhextra" = yes ] && [ "$cfgver" = V26.09.07 ]; then mode=stream-one; fi
     if [ "$flag" = vxp ] && [ "$vxextra" = yes ]; then mode=packet-up; fi
     mode=${!option:-$mode}
     case "$mode" in auto|packet-up|stream-up|stream-one) ;; *) echo "错误：$option 模式无效。"; return 1 ;; esac
@@ -1412,7 +1449,7 @@ render_xhttp_extra() {
   while IFS='|' read -r key field kind fallback target; do
     case "$target" in control|download) continue ;; esac
     [ "$target" = both ] || [ "$target" = "$side" ] || continue
-    value=$(xhttp_extra_value "$profile" "$key" "$fallback")
+    xhttp_extra_value "$profile" "$key" "$fallback" value
     case "$kind" in
       headers) rendered=$(xhttp_headers_json "$value") || return 1 ;;
       enum:true,false) rendered="$value" ;;
@@ -1479,7 +1516,7 @@ prepare_xray_profile() {
     *) return 1 ;;
   esac
   if [ "$extra" = yes ]; then
-    direct_server_mode=$direct_client_mode
+    # 客户端选择不应限制服务端接受能力；服务端保持 auto。
     direct_server_extra=$(render_xhttp_extra server "$protocol" '') || return 1
     direct_server_extra=", \"extra\": $direct_server_extra"
   elif [ "$direct_no_sse" = true ]; then
@@ -1586,7 +1623,7 @@ load_xray_profile() {
   fi
   if [ -n "$direct_extra_encoded" ]; then
     direct_url_options="&extra=$direct_extra_encoded"
-    direct_extra_label='-extra'
+    direct_extra_label='(extra)'
   fi
   if [ -n "$direct_fm_encoded" ]; then
     direct_url_options="$direct_url_options&fm=$direct_fm_encoded"
@@ -1609,8 +1646,9 @@ valid_port(){
 valid_plain_text(){
   local value="$1" maximum="${2:-1024}"
   [ "${#value}" -le "$maximum" ] || return 1
+  local LC_ALL=C
   case "$value" in *$'\n'*|*$'\r'*) return 1 ;; esac
-  ! printf '%s' "$value" | LC_ALL=C grep -q '[[:cntrl:]]'
+  [[ ! "$value" =~ [[:cntrl:]] ]]
 }
 
 deployment_port_specs(){
@@ -2056,7 +2094,7 @@ esac
 case "${sub:-}" in y|yes|1) sub=yes ;; *) sub='' ;; esac
 [ -z "${subpt+x}" ] || sub=yes
 [ -z "${subid+x}" ] || sub=yes
-if agsbx_running || agsbx_installed; then
+if agsbx_installed || agsbx_running; then
 if [ "$1" = "rep" ]; then
 [ -n "$naive" ] || [ "$mierup" = yes ] || [ "$vwp" = yes ] || [ "$sop" = yes ] || [ "$vxp" = yes ] || [ "$ssp" = yes ] || [ "$vlp" = yes ] || [ "$vmp" = yes ] || [ "$hyp" = yes ] || [ "$tup" = yes ] || [ "$xhp" = yes ] || [ "$anp" = yes ] || [ "$arp" = yes ] || [ "$xhyp" = yes ] || [ "$xdns" = yes ] || [ "$xicp" = yes ] || [ "$xvcdn" = yes ] || [ "$xvargo" = yes ] || { echo "提示：rep重置协议时，请在脚本前至少设置一个协议变量哦! 💣"; exit; }
 fi
@@ -2268,8 +2306,13 @@ v4=$(printf '%s\n' "$v4" | sed -n '1{s/[[:space:]]//g;p;}')
 v6=$(printf '%s\n' "$v6" | sed -n '1{s/[[:space:]]//g;p;}')
 valid_ipv4 "$v4" || v4=''
 valid_ipv6 "$v6" || v6=''
+v4dq=''; v6dq=''
+if [ -n "$v4" ]; then
 v4dq=$( (command -v curl >/dev/null 2>&1 && curl -s4m5 https://ip.fm | sed -n 's/.*Location: //p' 2>/dev/null) || (command -v wget >/dev/null 2>&1 && timeout 3 wget -4 --tries=2 -qO- https://ip.fm | grep '<span class="has-text-grey-light">Location:' | tail -n1 | sed -E 's/.*>Location: <\/span>([^<]+)<.*/\1/' 2>/dev/null) )
+fi
+if [ -n "$v6" ]; then
 v6dq=$( (command -v curl >/dev/null 2>&1 && curl -s6m5 https://ip.fm | sed -n 's/.*Location: //p' 2>/dev/null) || (command -v wget >/dev/null 2>&1 && timeout 3 wget -6 --tries=2 -qO- https://ip.fm | grep '<span class="has-text-grey-light">Location:' | tail -n1 | sed -E 's/.*>Location: <\/span>([^<]+)<.*/\1/' 2>/dev/null) )
+fi
 [ -n "$v4" ] || v4dq=''
 [ -n "$v6" ] || v6dq=''
 }
@@ -7836,7 +7879,7 @@ migrate_argo_persistent_startup(){
 }
 
 ins(){
-local argo_pid
+local argo_pid ins_started_at=$SECONDS phase_started_at=$SECONDS
 install_required_xray=no
 install_required_singbox=no
 install_required_caddy=no
@@ -7857,6 +7900,7 @@ fi
 secondary_init_naive_sidecar || return 1
 plan_deployment_ports || return 1
 prepare_transport_paths || return 1
+printf '端口与路径准备完成（耗时 %s 秒）。\n' "$((SECONDS - phase_started_at))"
 [ "$rep_mode" = yes ] || enable_system_bbr
 # Mieru/Mita 是独立系统服务，不参与 Xray/Sing-box 内核归属判断；设置 mieru=y（或预设 mierupt）时单独安装。
 if [ "$mierup" = yes ]; then
@@ -8047,7 +8091,7 @@ return 1
 fi
 fi
 # NaiveProxy（Caddy）已在本函数开头优先装配并签发证书（供 TLS 节点复用），此处不再重复。
-sleep 5
+# 下方按组件重试就绪检查，无需所有安装都固定等待 5 秒。
 echo
 verify_install_required_components no || return 1
 # 把 agsbx 装进 /usr/local/bin（root 默认 PATH 内）：安装完当前 SSH 会话即可直接用 agsbx，
@@ -8057,6 +8101,7 @@ install_script_shortcut current || return 1
 refresh_runtime_cron || return 1
 migrate_certificate_jobs || return 1
 [ -z "$port_plan_file" ] || rm -f -- "$port_plan_file"
+printf '安装编排完成（耗时 %s 秒；不含前置检查和订阅输出）。\n' "$((SECONDS - ins_started_at))"
 }
 #============================================================
 # [第9段] 状态查询与节点大卡片渲染函数
@@ -8275,7 +8320,7 @@ fm_xh_config="{\"tcp\":[{\"type\":\"sudoku\",\"settings\":{\"password\":\"$uuid\
 local profile_key profile_tag legacy_extra legacy_fm profile_spec
 for profile_spec in xh:xhttp-reality vl:reality-vision vx:vless-xhttp vw:vless-ws vm:vmess-xr hy:hy2-xr xvd:vlessenc-xhttp-cdn xva:vlessenc-xhttp-argo; do
   profile_key=${profile_spec%%:*}; profile_tag=${profile_spec#*:}
-  local "profile_${profile_key}_options=" "profile_${profile_key}_mode=auto" "profile_${profile_key}_suffix=" "profile_${profile_key}_fm="
+  local "profile_${profile_key}_options=" "profile_${profile_key}_mode=auto" "profile_${profile_key}_suffix=" "profile_${profile_key}_fm=" "profile_${profile_key}_transport=xhttp"
   grep -Fq "\"$profile_tag\"" "$HOME/agsbx/xr.json" 2>/dev/null || continue
   legacy_extra=''; legacy_fm=''
   case "$profile_key" in
@@ -8286,11 +8331,12 @@ for profile_spec in xh:xhttp-reality vl:reality-vision vx:vless-xhttp vw:vless-w
   load_xray_profile "$profile_key" "$legacy_extra" "$legacy_fm" || return 1
   printf -v "profile_${profile_key}_options" '%s' "$direct_url_options"
   printf -v "profile_${profile_key}_mode" '%s' "$direct_client_mode"
-  printf -v "profile_${profile_key}_suffix" '%s' "$direct_extra_label$direct_fm_label"
+  printf -v "profile_${profile_key}_suffix" '%s' "$direct_fm_label"
+  printf -v "profile_${profile_key}_transport" '%s' "xhttp$direct_extra_label"
   printf -v "profile_${profile_key}_fm" '%s' "$direct_fm_encoded"
 done
 direct_xh_options="$profile_xh_options"
-direct_xh_title="${sxname}vlessenc-xhttp-reality-vision${profile_xh_suffix}-$hostname"
+direct_xh_title="${sxname}vlessenc-${profile_xh_transport}-reality-vision${profile_xh_suffix}-$hostname"
 direct_vl_options="$profile_vl_options"
 direct_vl_title="${sxname}vless-tcp-reality-vision${profile_vl_suffix}-$hostname"
 [ -n "$profile_vl_fm" ] || direct_vl_export_yaml=yes
@@ -8308,27 +8354,27 @@ echo "提示：xhpt 的完整 ENC/extra/FM 参数包含在上方 VLESS URL 和�
 fi
 fi
 if grep -q vlessenc-xhttp-cdn "$HOME/agsbx/xr.json" 2>/dev/null; then
-node_title "💣【 VLESS Encryption＋XHTTP＋TLS＋Vision CDN$profile_xvd_suffix 】"
+node_title "💣【 VLESS Encryption＋${profile_xvd_transport}＋TLS＋Vision CDN$profile_xvd_suffix 】"
 port_xvcdn=$(cat "$HOME/agsbx/port_xvcdn")
 xvvmcdnym=$(cat "$HOME/agsbx/cdnym" 2>/dev/null)
 valid_domain "$xvvmcdnym" || { echo "错误：CDN 域名状态缺失，无法生成正确的 Host/SNI。"; return 1; }
-vl_xvcdn_link="vless://$(uri_percent_encode "$uuid")@$xvvmcdnym:$port_xvcdn?encryption=$(uri_percent_encode "$enkey")&flow=xtls-rprx-vision&security=tls&alpn=h2&sni=$(uri_percent_encode "$xvvmcdnym")&host=$(uri_percent_encode "$xvvmcdnym")&type=xhttp&path=$(uri_percent_encode "$(transport_path xvd)")&mode=$profile_xvd_mode${profile_xvd_options}#$(uri_percent_encode "${sxname}vlessenc-xhttp-tls-vision-cdn${profile_xvd_suffix}-$hostname")"
+vl_xvcdn_link="vless://$(uri_percent_encode "$uuid")@$xvvmcdnym:$port_xvcdn?encryption=$(uri_percent_encode "$enkey")&flow=xtls-rprx-vision&security=tls&alpn=h2&sni=$(uri_percent_encode "$xvvmcdnym")&host=$(uri_percent_encode "$xvvmcdnym")&type=xhttp&path=$(uri_percent_encode "$(transport_path xvd)")&mode=$profile_xvd_mode${profile_xvd_options}#$(uri_percent_encode "${sxname}vlessenc-${profile_xvd_transport}-tls-vision-cdn${profile_xvd_suffix}-$hostname")"
 append_node_link "$vl_xvcdn_link" || return 1
 echo "$vl_xvcdn_link"
 echo
 [ "$sub" != yes ] || echo "CDN ENC 节点使用完整 VLESS URL/聚合订阅；不输出缺少 ENC/extra/FM 的 Clash 节点。"
 fi
 if grep -q vless-xhttp "$HOME/agsbx/xr.json" 2>/dev/null; then
-node_title "💣【 VLESS Encryption＋XHTTP＋Vision$profile_vx_suffix 】"
+node_title "💣【 VLESS Encryption＋${profile_vx_transport}＋Vision$profile_vx_suffix 】"
 port_vx=$(cat "$HOME/agsbx/port_vx")
-vl_vx_link="vless://$(uri_percent_encode "$uuid")@$server_ip:$port_vx?encryption=$(uri_percent_encode "$enkey")&flow=xtls-rprx-vision&security=none&type=xhttp&path=$(uri_percent_encode "$(transport_path vx)")&mode=$profile_vx_mode${profile_vx_options}#$(uri_percent_encode "${sxname}vlessenc-xhttp-vision${profile_vx_suffix}-$hostname")"
+vl_vx_link="vless://$(uri_percent_encode "$uuid")@$server_ip:$port_vx?encryption=$(uri_percent_encode "$enkey")&flow=xtls-rprx-vision&security=none&type=xhttp&path=$(uri_percent_encode "$(transport_path vx)")&mode=$profile_vx_mode${profile_vx_options}#$(uri_percent_encode "${sxname}vlessenc-${profile_vx_transport}-vision${profile_vx_suffix}-$hostname")"
 append_node_link "$vl_vx_link" || return 1
 echo "$vl_vx_link"
 echo
 if [ -f "$HOME/agsbx/cdnym" ] && [ -z "$profile_vx_fm" ]; then
 xvvmcdnym=$(cat "$HOME/agsbx/cdnym")
 valid_domain "$xvvmcdnym" || return 1
-vl_vx_cdn_link="vless://$(uri_percent_encode "$uuid")@$xvvmcdnym:$port_vx?encryption=$(uri_percent_encode "$enkey")&flow=xtls-rprx-vision&security=none&type=xhttp&host=$(uri_percent_encode "$xvvmcdnym")&path=$(uri_percent_encode "$(transport_path vx)")&mode=$profile_vx_mode${profile_vx_options}#$(uri_percent_encode "${sxname}vlessenc-xhttp-vision-cdn${profile_vx_suffix}-$hostname")"
+vl_vx_cdn_link="vless://$(uri_percent_encode "$uuid")@$xvvmcdnym:$port_vx?encryption=$(uri_percent_encode "$enkey")&flow=xtls-rprx-vision&security=none&type=xhttp&host=$(uri_percent_encode "$xvvmcdnym")&path=$(uri_percent_encode "$(transport_path vx)")&mode=$profile_vx_mode${profile_vx_options}#$(uri_percent_encode "${sxname}vlessenc-${profile_vx_transport}-vision-cdn${profile_vx_suffix}-$hostname")"
 append_node_link "$vl_vx_cdn_link" || return 1
 echo "$vl_vx_cdn_link"
 echo
@@ -8814,7 +8860,7 @@ append_node_link "$vwatls_link1" || return 1
 vwa_link2="vless://$(uri_percent_encode "$uuid")@icook.hk:80?encryption=$(uri_percent_encode "$enkey")&flow=xtls-rprx-vision&type=ws&host=$argodomain&path=$(uri_percent_encode "$(transport_path vw)")&security=none#$(uri_percent_encode "${sxname}vlessenc-ws-vision-argo-$hostname")"
 append_node_link "$vwa_link2" || return 1
 elif [ "$vlvm" = "Vlessenc-xhttp-tls-vision-fm" ] || [ "$vlvm" = "Vlessenc-xhttp-vision" ]; then
-vwa_xvargo_link="vless://$(uri_percent_encode "$uuid")@$argodomain:443?encryption=$(uri_percent_encode "$enkey")&flow=xtls-rprx-vision&security=tls&alpn=h2&sni=$(uri_percent_encode "$argodomain")&host=$(uri_percent_encode "$argodomain")&type=xhttp&path=$(uri_percent_encode "$(transport_path xva)")&mode=$profile_xva_mode${profile_xva_options}#$(uri_percent_encode "${sxname}vlessenc-xhttp-vision-argo${profile_xva_suffix}-$hostname")"
+vwa_xvargo_link="vless://$(uri_percent_encode "$uuid")@$argodomain:443?encryption=$(uri_percent_encode "$enkey")&flow=xtls-rprx-vision&security=tls&alpn=h2&sni=$(uri_percent_encode "$argodomain")&host=$(uri_percent_encode "$argodomain")&type=xhttp&path=$(uri_percent_encode "$(transport_path xva)")&mode=$profile_xva_mode${profile_xva_options}#$(uri_percent_encode "${sxname}vlessenc-${profile_xva_transport}-vision-argo${profile_xva_suffix}-$hostname")"
 append_node_link "$vwa_xvargo_link" || return 1
 [ "$sub" != yes ] || echo "Argo ENC 节点通过完整 VLESS URL/聚合订阅导入，不生成缺失 ENC 参数的 Clash 节点。"
 fi
@@ -8829,7 +8875,7 @@ echo "Argo隧道端口正在使用$vlvm主协议端口：$(cat $HOME/agsbx/argop
 Argo域名：$argodomain
 $nametn
 
-💣【 VLESS Encryption＋XHTTP＋Vision Argo 节点 】
+💣【 VLESS Encryption＋${profile_xva_transport}＋Vision Argo${profile_xva_suffix} 节点 】
 $vwa_xvargo_link
 "
 )
