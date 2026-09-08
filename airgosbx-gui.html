@@ -11,7 +11,7 @@
     与 airgosbx.sh 配套维护：修改 showvars、协议归属、secp、warp、rep 或 URL 生成规则时，
     同时核对 PROTOCOLS、XRAY_PROFILES、FIELDS、collect、savedCommandPlan 和 validate。
     配套版本：V26.09.07。XHTTP_DEFAULTS_VERSION 与 BUILD.presetVersion 仅在默认参数变化时更新。
-    当前工作区尚未发布，发布后再设置 remoteAligned 并调整默认执行入口。
+    配套脚本已发布到 GitHub main；后续存在未发布的接口变更时，应将 remoteAligned 设为 false。
     页面只生成文本，不执行命令。选择“对照脚本”时只读取用户明确选择的文件。
   -->
   <style>
@@ -281,7 +281,7 @@
 <script>
 /* 配置清单集中在这里，避免表单、架构图与命令生成各自维护一套名称。 */
 'use strict';
-const BUILD = {version:'V26.09.07',presetVersion:'V26.09.07',remoteAligned:false, source:'https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/main/airgosbx.sh', schema:'字段基线：Xray v26.3.27；主分支新增字段另列为暂不可用'};
+const BUILD = {version:'V26.09.07',presetVersion:'V26.09.07',remoteAligned:true, source:'https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/main/airgosbx.sh', schema:'字段基线：Xray v26.3.27；主分支新增字段另列为暂不可用'};
 const OPERATIONS = [
   ['install','安装 / 创建节点'],['rep','重建协议配置（rep）'],['list','显示节点（list）'],['status','资源与流量（status）'],['update','更新脚本（update）'],['res','重启代理与隧道（res）'],['start','启动核心（start）'],['stop','停止核心（stop）'],['restart','重启核心（restart）'],['reload','重载配置（reload）'],['upx','升级 Xray（upx）'],['ups','升级 Sing-box（ups）'],['downx','降级 Xray（downx）'],['downs','降级 Sing-box（downs）'],['del','卸载（del）'],['vars','查看变量（vars）'],['cmds','查看命令（cmds）'],['help','完整帮助（help）']
 ];
@@ -463,7 +463,7 @@ const EXTRA_GROUPS={padding:'填充与外观',request:'HTTP 请求与响应',lay
 const XRAY_RANGES={xpadding:[1,4096],xmuxcon:[0,1024],xmuxmax:[0,128],fmpadding:[0,100],fmnoise:[1,1200],fmreset:[0,3600],fmdelay:[0,1000],fmfraglen:[1,16384],fmfragdelay:[0,1000],fmfragsplit:[1,64]};
 const FIELDS = {
   operation:{label:'操作',options:OPERATIONS,value:'install'},
-  scriptSource:{label:'执行入口',options:[['local','VPS 本地 airgosbx.sh'],['repo','GitHub main 分支'],['custom','指定脚本 URL'],['shortcut','已安装的 agsbx 命令']],value:'local'},
+  scriptSource:{label:'执行入口',options:[['local','VPS 本地 airgosbx.sh'],['repo','GitHub main 分支'],['custom','指定脚本 URL'],['shortcut','已安装的 agsbx 命令']],value:'repo'},
   scriptPath:{label:'VPS 上的脚本路径',value:'./airgosbx.sh',help:'这是 VPS 上的路径，不是 Mac 路径；请先把对应脚本放到 VPS。'},
   scriptURL:{label:'脚本 URL',placeholder:'https://example.com/airgosbx.sh',help:'生成下载并执行的 Bash 命令；页面本身不访问该地址。'},
   target:{label:'目标核心',options:[['all','全部（不含 Mita）'],['xray','Xray'],['sb','Sing-box'],['caddy','Caddy'],['mita','Mita / Mieru']],value:'all'},
@@ -1507,7 +1507,7 @@ function update(){
   }
   if(!issues.length)$('issues').append(node('p','valid-note',idle?'尚未选择协议，可直接开始选择。':'配置项匹配，可以复制命令。'));
   $('parameter-list').replaceChildren();for(const [key,v] of pairs){const row=node('div','parameter-row');row.append(node('code','',key),node('span','',!value('show-secrets')&&PRIVATE_KEYS.has(key)?'已隐藏':v===''?'空值（保留）':v));$('parameter-list').append(row);}if(!pairs.length)$('parameter-list').append(node('p','note','当前没有需要传入的变量。'));
-  const source=value('scriptSource');text('source-hint',source==='local'?'本地入口指 VPS 上的文件。请上传与此 GUI 配套的脚本；安装时 agsbx 快捷命令仍按 agsbxurl 下载，尚未发布时可继续使用本地脚本执行后续命令，或指定同版本更新来源。':source==='repo'?'生成的命令会在 VPS 下载 GitHub main。当前本地 Xray/CDN/Tunnel 修改尚未发布，GUI 会拦截依赖这些修改的选择。':source==='custom'?'此 URL 同时传入 agsbxurl，保持本次执行与后续快捷命令来源一致。页面不访问这个地址。':'执行 VPS 上已有的 agsbx。请确认已安装脚本包含本页所使用的变量。');
+  const source=value('scriptSource');text('source-hint',source==='local'?'使用 VPS 上与此 GUI 配套的脚本文件。安装时 agsbx 快捷命令按 agsbxurl 下载，可指定相同版本的更新来源。':source==='repo'?(BUILD.remoteAligned?'默认使用 GitHub main 的配套脚本。下载和执行发生在 VPS，页面只生成命令文本。':'当前工作区接口尚未发布，请使用配套的 VPS 本地脚本或指定来源。'):source==='custom'?'此 URL 同时传入 agsbxurl，保持本次执行与后续快捷命令来源一致。页面不访问这个地址。':'执行 VPS 上已有的 agsbx。请确认已安装脚本包含本页所使用的变量。');
   text('operation-hint',op==='rep'?'rep 会停止并重建所选非 Caddy 协议，保留已有 Naive/Caddy 和证书；旧协议未选中时可能被移除。':op==='install'?'用于首次安装；已有部署变更协议请选 rep。执行时可能安装依赖、下载核心、修改 VPS 服务与系统网络设置，页面只生成文本。':op==='res'?'res 重启 Xray / Sing-box / Argo，并处理已配置的 Caddy；不包含 Mita。':op==='reload'?'Xray 的 reload 会转为 restart；Mita 需显式选择。':op==='del'?'卸载操作的影响发生在执行命令的 VPS 上。':'管理已有部署；协议表单中的选择不会附加到这条命令。');
   updateArchitecture(deploy,protocols,cores);
 }
