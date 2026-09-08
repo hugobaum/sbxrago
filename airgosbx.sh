@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-AIRGOSBX_VERSION='V26.09.08.3'
+AIRGOSBX_VERSION='V26.09.08.4'
 # 仅在内置 XHTTP 默认参数改变时更新此标记，普通脚本版本更新不使旧命令失效。
 XHTTP_DEFAULTS_VERSION='V26.09.08.1'
 agsbxurl="${agsbxurl:-https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/main/airgosbx.sh}"
@@ -3018,7 +3018,7 @@ publish_node_outputs(){
       rm -rf -- "$stage"; return 1
     fi
     start_subscription_http "$subport_real" && write_subscription_http_autostart "$subport_real" yes || return 1
-    verify_subscription_https || return 1
+    verify_subscription_https "$token" || return 1
     atomic_text_file "$HOME/agsbx/subtoken.log" "$token" || return 1
   fi
   atomic_text_file "$HOME/agsbx/jh.txt" "$node_links" || return 1
@@ -4530,23 +4530,71 @@ subscription_certificate_host(){
   if valid_ipv6 "$identifier"; then printf '[%s]' "$identifier"; else printf '%s' "$identifier"; fi
 }
 
-# 发布时核对实际 TLS 入口；只连接本机，不发送订阅令牌或节点凭据。
+# 校验 HTTP/1.0 的完整响应，正文必须与将要发布的文件逐字节一致。
+subscription_response_matches(){
+  local expected="$1" response="$2" status line lower length='' headers=0 ended=no wanted actual size
+  [ -s "$expected" ] && [ -s "$response" ] || return 1
+  size=$(wc -c < "$expected") || return 1
+  {
+    IFS= read -r status || return 1
+    status=${status%$'\r'}
+    case "$status" in 'HTTP/1.0 200 '*|'HTTP/1.1 200 '*) ;; *) return 1 ;; esac
+    while IFS= read -r line; do
+      line=${line%$'\r'}
+      [ -n "$line" ] || { ended=yes; break; }
+      headers=$((headers + 1))
+      [ "$headers" -le 64 ] && [ "${#line}" -le 8192 ] || return 1
+      lower=$(printf '%s' "$line" | tr A-Z a-z)
+      case "$lower" in
+        content-length:*)
+          [ -z "$length" ] || return 1
+          [[ "$lower" =~ ^content-length:[[:space:]]*([0-9]{1,10})[[:space:]]*$ ]] || return 1
+          length=${BASH_REMATCH[1]}
+          [ "$((10#$length))" -eq "$size" ] || return 1 ;;
+        transfer-encoding:*) return 1 ;;
+      esac
+    done
+    [ "$ended" = yes ] || return 1
+    actual=$(sha256sum) && wanted=$(sha256sum < "$expected") || return 1
+    [ "${actual%% *}" = "${wanted%% *}" ]
+  } < "$response"
+}
+
+# 发布时实际下载订阅：只连接本机，令牌通过请求标准输入传递，不放进进程参数。
 verify_subscription_https(){
-  local host port endpoint output
+  local token="$1" host verify_host port endpoint temporary file expected failed=no
   local -a args
-  command -v timeout >/dev/null 2>&1 || { echo "错误：缺少 timeout，无法执行有时间上限的订阅 TLS 校验。"; return 1; }
+  command -v timeout >/dev/null 2>&1 || { echo "错误：缺少 timeout，无法限制订阅 HTTPS 下载校验时间。"; return 1; }
+  [[ "$token" =~ ^[A-Za-z0-9_-]{16,128}$ ]] || return 1
   host=$(subscription_certificate_host) || return 1
-  host=${host#[}; host=${host%]}
+  verify_host=${host#[}; verify_host=${verify_host%]}
   port=$(cat "$HOME/agsbx/subport.log") && valid_port "$port" || return 1
   if [ "$public_listen_address" = '::' ]; then endpoint="[::1]:$port"; else endpoint="127.0.0.1:$port"; fi
-  args=(-connect "$endpoint" -alpn http/1.1 -verify_return_error -brief)
-  if valid_ip "$host"; then args+=(-verify_ip "$host")
-  else args+=(-servername "$host" -verify_hostname "$host"); fi
-  if ! output=$(timeout -k 1 8 openssl s_client "${args[@]}" </dev/null 2>&1); then
-    echo "错误：订阅端口未通过 CA 证书链和域名/IP 的实际 TLS 握手校验，未输出分享链接。"
-    printf '%s\n' "$output" | tail -n 6
-    return 1
-  fi
+  args=(-connect "$endpoint" -alpn http/1.1 -verify_return_error -quiet -ign_eof)
+  if valid_ip "$verify_host"; then args+=(-verify_ip "$verify_host")
+  else args+=(-servername "$verify_host" -verify_hostname "$verify_host"); fi
+  temporary=$(mktemp -d "$HOME/agsbx/.subscription-check.XXXXXX") || return 1
+  chmod 700 "$temporary" || { rmdir "$temporary"; return 1; }
+  for file in jhsub.txt clmi.yaml; do
+    expected="$HOME/websbx/$token/$file"
+    [ "$file" != clmi.yaml ] || [ -e "$expected" ] || continue
+    if [ ! -s "$expected" ]; then
+      echo "错误：待发布的 $file 缺失或为空。"
+      failed=yes; break
+    fi
+    if ! printf 'GET /%s/%s HTTP/1.0\r\nHost: %s:%s\r\nConnection: close\r\n\r\n' "$token" "$file" "$host" "$port" \
+      | timeout -k 1 10 openssl s_client "${args[@]}" > "$temporary/response" 2> "$temporary/tls-error"; then
+      echo "错误：$file 的本机 HTTPS 下载失败，未输出分享链接。"
+      tail -n 6 "$temporary/tls-error"
+      failed=yes; break
+    fi
+    if ! subscription_response_matches "$expected" "$temporary/response"; then
+      echo "错误：$file 的 HTTPS 响应状态、长度或正文与发布文件不一致，未输出分享链接。"
+      failed=yes; break
+    fi
+  done
+  rm -rf -- "$temporary" || return 1
+  [ "$failed" = no ]
 }
 # Caddy(naive) 证书续期联动重载：Caddy 自动续期会原地更新证书文件，但 xray/sing-box 仅在启动时读取证书、
 # 不会热感知续期。此处生成助手脚本并注册每日 cron——每天比对证书指纹，仅当证书真正变化(续期)时，
@@ -5873,7 +5921,8 @@ EOF
 fi
 # ------------------------------------------------------------
 # 🎯 任务 H 模块 C：Xray-core TLS 卸载 Inbound 注入段
-# - 功能描述：当启用订阅服务 (sub=yes) 时，使用 Xray-core 原生充当高位 HTTPS 反向代理。
+# - 功能描述：订阅使用 Trojan TLS fallback，固定回落到本机 HTTP 服务。
+# - dokodemo-door 的原始连接拷贝路径不适合终止此 TLS，可能绕过响应加密。
 # - 端口机制：
 #   - subport (外部 HTTPS 端口，持久化于 subport.log)：供客户端从公网拉取订阅。
 #   - subport_real (本地回源端口，持久化于 subport_real.log)：只监听在 127.0.0.1，防外网直连。
@@ -5882,20 +5931,21 @@ fi
 if [ "$sub" = yes ] && [ "$subscription_core" = xray ]; then
 subport=$(init_port "$subpt" subport.log)
 subport_real=$(init_subport_real "$subport")
-echo "Xray-core TLS 卸载订阅服务端口：$subport (内部回源端口：$subport_real)"
+echo "Xray-core TLS fallback 订阅服务端口：$subport (内部回源端口：$subport_real)"
 setup_tls_certificate || return 1
-if [ -f "$tls_cert_file" ] && [ -f "$tls_key_file" ]; then
+[ -s "$tls_cert_file" ] && [ -s "$tls_key_file" ] || return 1
+local sub_tls_guard
+sub_tls_guard=$(openssl rand -hex 32) || return 1
+[[ "$sub_tls_guard" =~ ^[0-9a-f]{64}$ ]] || return 1
 cat >> "$HOME/agsbx/xr.json" <<EOF
     {
       "tag": "sub-https-proxy",
       "listen": "${public_listen_address}",
       "port": ${subport},
-      "protocol": "dokodemo-door",
+      "protocol": "trojan",
       "settings": {
-        "network": "tcp",
-        "followRedirect": false,
-        "address": "127.0.0.1",
-        "port": ${subport_real}
+        "clients": [{"password": "${sub_tls_guard}", "email": "subscription-fallback-guard"}],
+        "fallbacks": [{"dest": "127.0.0.1:${subport_real}", "xver": 0}]
       },
       "streamSettings": {
         "network": "tcp",
@@ -5914,7 +5964,6 @@ cat >> "$HOME/agsbx/xr.json" <<EOF
       }
     },
 EOF
-fi
 fi
 }
 
@@ -7510,6 +7559,13 @@ cat >> "$HOME/agsbx/xr.json" <<EOF
     }
 EOF
 append_xray_secondary_outbound
+# 普通 HTTPS 由固定 fallback 处理；防护凭据即使被使用，也不开放通用 Trojan 代理。
+if [ "$subscription_core" = xray ]; then
+cat >> "$HOME/agsbx/xr.json" <<EOF
+    ,
+    {"protocol": "blackhole", "tag": "subscription-reject"}
+EOF
+fi
 # WARP 隧道两端 (xr/sb) 均显式锁定 mtu=1280（官方 WARP 客户端取值）：
 # 内核默认 1420/1408 在 IPv6 外层封装下逼近 1500 上限，途经 PMTUD 黑洞时大包静默丢失，
 # 表现为"能握手、小流量正常、大流量卡死"，内层 IPv6 (s6/x6) 模式受害最深。
@@ -7562,7 +7618,7 @@ cat >> "$HOME/agsbx/xr.json" <<EOF
       {
         "type": "field",
         "inboundTag": ["sub-https-proxy"],
-        "outboundTag": "direct"
+        "outboundTag": "subscription-reject"
       },
 EOF
 fi
