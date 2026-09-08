@@ -10,7 +10,7 @@
     与 airgosbx.sh 配套维护、同版本提交和发布。无外部资源、请求、遥测或自动持久化。
     与 airgosbx.sh 配套维护：修改 showvars、协议归属、secp、warp、rep 或 URL 生成规则时，
     同时核对 PROTOCOLS、XRAY_PROFILES、FIELDS、collect、savedCommandPlan 和 validate。
-    配套版本：V26.09.07。XHTTP_DEFAULTS_VERSION 与 BUILD.presetVersion 仅在默认参数变化时更新。
+    配套版本：V26.09.08。XHTTP_DEFAULTS_VERSION 与 BUILD.presetVersion 仅在默认参数变化时更新。
     配套脚本已发布到 GitHub main；后续存在未发布的接口变更时，应将 remoteAligned 设为 false。
     页面只生成文本，不执行命令。选择“对照脚本”时只读取用户明确选择的文件。
   -->
@@ -150,6 +150,29 @@
     .mask-choice.is-conflict .mask-state{color:var(--red);background:#f2d9d5}
     .availability-message{font-size:11px;color:var(--amber);margin:0 14px 13px}
     .extension-note{font-size:11px;color:var(--muted);margin-top:12px}
+    .config-tree{margin:10px 0 0;padding:0;border:1px solid var(--line);border-radius:8px;min-width:0;background:var(--surface)}
+    .tree-heading{display:flex;align-items:center;gap:9px;min-height:44px;padding:11px 12px;list-style:none;min-width:0;color:var(--ink)}
+    .tree-heading::-webkit-details-marker{display:none}
+    .tree-chevron{width:7px;height:7px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(-45deg);flex:none;margin-right:2px}
+    .config-tree[open]>.tree-heading>.tree-chevron{transform:rotate(45deg)}
+    .tree-label{display:flex;align-items:baseline;gap:5px 9px;flex:1;flex-wrap:wrap;min-width:0}
+    .tree-label strong{font-size:12px;font-weight:600;overflow-wrap:anywhere}.tree-label code{font-size:10px;color:var(--muted)}
+    .tree-state{font-size:10px;line-height:1.6;color:var(--muted);text-align:right;max-width:40%;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+    .tree-body{padding:0 12px 12px;min-width:0}.tree-description{font-size:11px;color:var(--muted);margin:0 0 10px}
+    .tree-group>.tree-heading{background:#e8eee3;border-radius:7px;color:var(--green)}
+    .tree-group[open]>.tree-heading{border-bottom:1px solid var(--line);border-radius:7px 7px 0 0;margin-bottom:12px}
+    .tree-module{border:0;border-top:1px solid var(--line);border-radius:0;background:transparent;margin-top:8px}
+    .tree-module>.tree-heading{padding:10px 2px}
+    .tree-module>.tree-body{padding:0 2px 12px 14px}
+    .tree-body>.form-grid{margin-top:12px}.tree-body>.mask-choice{margin-top:6px}
+    .tree-leaf{border:0;border-top:1px dotted var(--line);border-radius:0;margin-top:10px;background:transparent}
+    .tree-leaf>.tree-heading{padding:8px 0}.tree-leaf>.tree-heading .tree-label strong{font-size:11px;font-weight:500}
+    .tree-leaf>.tree-body{padding:0 0 6px 12px}
+    .tree-reference{padding-left:17px;margin:0;font-size:11px;line-height:1.85;color:var(--muted);overflow-wrap:anywhere}
+    .tree-selected>.tree-heading .tree-state{color:var(--green);font-weight:600}
+    .tree-unavailable>.tree-heading{color:#6f7b67}.tree-unavailable>.tree-heading .tree-state{background:#e3e9dd;border-radius:4px;padding:2px 6px}
+    .tree-conflict>.tree-heading .tree-state{color:var(--red);background:var(--red-bg)}
+    @media(max-width:520px){.tree-heading{padding:10px 9px;gap:7px}.tree-body{padding:0 8px 10px}.tree-module>.tree-body{padding-left:8px}.tree-label{display:block}.tree-label code{display:block;margin-top:2px}.tree-state{max-width:35%;font-size:10px}}
     .extra-section{border-top:1px solid var(--line);padding-top:14px;margin-top:16px;min-width:0}
     .extra-section h4{font-size:13px;font-weight:600;margin:0 0 10px}
     .field.is-disabled{background:#e8ede4;border:1px dashed #c7d0c0;border-radius:var(--control);padding:10px}
@@ -242,10 +265,10 @@
 
       <section class="panel" id="outbound"><div class="panel-heading"><div><span class="step">02 / EGRESS</span><h2>选择出站路径</h2><p class="intro">默认直接访问目标。WARP 与二级代理可以同时配置；secp 选中的协议优先走 B。</p></div></div><div id="outbound-fields" class="form-grid"></div><div id="warp-fields" class="form-grid" style="margin-top:14px" hidden></div><div id="secondary-panel" hidden><div id="secondary-fields" class="form-grid" style="margin-top:14px"></div><div class="routing-choice"><span class="meta">哪些协议走 B</span><button type="button" class="small-button" data-secp="all">全部可用</button><button type="button" class="small-button" data-secp="xray">Xray</button><button type="button" class="small-button" data-secp="singbox">Sing-box</button><button type="button" class="small-button" data-secp="none">清空</button></div><div id="secondary-list" class="secondary-list"></div><p class="note">Mieru/Mita 不支持当前 secp 路径。Naive 需单独选中，并通过本地 Sing-box 转交；选择 Naive 或 Sing-box 协议时，B 地址必须是 IP。</p></div></section>
 
-      <section class="panel" id="certificates"><div class="panel-heading"><div><span class="step">03 / CERTIFICATES & SYSTEM</span><h2>证书、地址与订阅</h2><p class="intro">REALITY 不要求自有域名证书。Naive 由 Caddy 管理证书，其他 TLS 协议可复用或申请证书。</p></div></div><div id="common-fields" class="form-grid"></div><div id="certificate-fields" class="form-grid" style="margin-top:16px"></div><div id="certificate-specific" class="form-grid" style="margin-top:16px"></div><div id="subscription-fields" class="form-grid" style="margin-top:16px"></div><div id="subscription-specific" class="form-grid" style="margin-top:16px" hidden></div><details><summary>更多变量：证书账户、跳跃端口与源地址</summary><div id="advanced-fields" class="form-grid"></div></details></section>
+      <section class="panel" id="certificates"><div class="panel-heading"><div><span class="step">03 / CERTIFICATES & SYSTEM</span><h2>证书、地址与订阅</h2><p class="intro">REALITY 不要求自有域名证书。Naive 由 Caddy 管理证书，其他 TLS 协议可复用或申请证书。</p></div></div><div id="common-fields" class="form-grid"></div><div id="certificate-fields" class="form-grid" style="margin-top:16px"></div><div id="certificate-specific" class="form-grid" style="margin-top:16px"></div><p class="note">自签证书需要客户端按节点输出导入信任或固定指纹；不能仅凭分享链接就认为所有客户端均可验证。VLESS Encryption 节点请使用完整 URL 或聚合订阅，脚本不会生成缺失加密参数的 Clash 节点。</p><div id="subscription-fields" class="form-grid" style="margin-top:16px"></div><div id="subscription-specific" class="form-grid" style="margin-top:16px" hidden></div><details><summary>更多变量：证书账户、跳跃端口与源地址</summary><div id="advanced-fields" class="form-grid"></div></details></section>
       </div>
 
-      <section class="panel" id="reference"><div class="panel-heading"><div><span class="step">REFERENCE</span><h2>脚本与 GUI 的维护对照</h2><p class="intro">页面以当前工作区脚本为依据；HTML 不会自动读取磁盘或远端代码。</p></div></div><div class="table-wrap"><table class="help-table"><thead><tr><th>功能位置</th><th>脚本入口</th><th>GUI 同步点</th></tr></thead><tbody><tr><td>协议及所属核心</td><td><code>showvars / ins</code></td><td>协议清单、能力标记、核心推导</td></tr><tr><td>Xray 扩展</td><td><code>各入口的 extra / mode / fm 变量</code></td><td>按协议默认方案、FM 组合与独立调参</td></tr><tr><td>CDN / Argo</td><td><code>cdnym / argo / agn / agk</code></td><td>接入条件、端口、隧道绑定</td></tr><tr><td>出站</td><td><code>warp / secp / securl</code></td><td>WARP 规则、二级代理目标及范围</td></tr><tr><td>命令生成与还原</td><td><code>环境变量与管理命令</code></td><td>字段映射、引用转义、旧版通用参数继承</td></tr><tr><td>生命周期</td><td><code>rep / del / upx / ups …</code></td><td>操作清单、参数过滤、影响说明</td></tr></tbody></table></div><p class="note">对照功能只提取你选择的脚本中的变量声明与帮助条目，不执行、不上传。它能提示变量清单差异，不能代替调用逻辑审查。</p><div class="tools" style="margin-top:14px"><label class="file-label">选择 airgosbx.sh 对照<input id="source-file" class="visually-hidden" type="file" accept=".sh,text/plain"></label><button id="clear-compare" type="button" class="text-button">清除对照</button></div><p id="sync-result" class="sync-result" role="status">对照基线：3137005 + Xray 扩展与 CDN/Tunnel 修改，2026-09-07。尚未读取其他文件。</p></section>
+      <section class="panel" id="reference"><div class="panel-heading"><div><span class="step">REFERENCE</span><h2>脚本与 GUI 的维护对照</h2><p class="intro">页面以当前工作区脚本为依据；HTML 不会自动读取磁盘或远端代码。</p></div></div><div class="table-wrap"><table class="help-table"><thead><tr><th>功能位置</th><th>脚本入口</th><th>GUI 同步点</th></tr></thead><tbody><tr><td>协议及所属核心</td><td><code>showvars / ins</code></td><td>协议清单、能力标记、核心推导</td></tr><tr><td>Xray 扩展</td><td><code>各入口的 extra / mode / fm 变量</code></td><td>按协议默认方案、FM 组合与独立调参</td></tr><tr><td>CDN / Argo</td><td><code>cdnym / argo / agn / agk</code></td><td>接入条件、端口、隧道绑定</td></tr><tr><td>出站</td><td><code>warp / secp / securl</code></td><td>WARP 规则、二级代理目标及范围</td></tr><tr><td>命令生成与还原</td><td><code>环境变量与管理命令</code></td><td>字段映射、引用转义、旧版通用参数继承</td></tr><tr><td>生命周期</td><td><code>rep / del / upx / ups …</code></td><td>操作清单、参数过滤、影响说明</td></tr></tbody></table></div><p class="note">覆盖范围：常用部署、证书、订阅、出站和管理入口。XDNS / XICMP 仍未开放；目录中标为不可配置的核心字段未接入脚本，内部证书续期和跳跃规则恢复命令由脚本管理。端口占用、服务归属、证书和真实连通性须在 VPS 检查。</p><p class="note">对照功能只提取你选择的脚本中的变量声明与帮助条目，不执行、不上传。它能提示变量清单差异，不能代替调用逻辑审查。</p><div class="tools" style="margin-top:14px"><label class="file-label">选择 airgosbx.sh 对照<input id="source-file" class="visually-hidden" type="file" accept=".sh,text/plain"></label><button id="clear-compare" type="button" class="text-button">清除对照</button></div><p id="sync-result" class="sync-result" role="status">配套版本：V26.09.08；XHTTP 默认参数版本：V26.09.07。尚未读取其他文件。</p></section>
     </main>
 
     <aside class="output" id="command" aria-labelledby="command-title">
@@ -281,9 +304,9 @@
 <script>
 /* 配置清单集中在这里，避免表单、架构图与命令生成各自维护一套名称。 */
 'use strict';
-const BUILD = {version:'V26.09.07',presetVersion:'V26.09.07',remoteAligned:true, source:'https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/main/airgosbx.sh', schema:'字段基线：Xray v26.3.27；主分支新增字段另列为暂不可用'};
+const BUILD = {version:'V26.09.08',presetVersion:'V26.09.07',remoteAligned:true, source:'https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/main/airgosbx.sh', schema:'字段基线：Xray v26.3.27；主分支新增字段另列为暂不可用'};
 const OPERATIONS = [
-  ['install','安装 / 创建节点'],['rep','重建协议配置（rep）'],['list','显示节点（list）'],['status','资源与流量（status）'],['update','更新脚本（update）'],['res','重启代理与隧道（res）'],['start','启动核心（start）'],['stop','停止核心（stop）'],['restart','重启核心（restart）'],['reload','重载配置（reload）'],['upx','升级 Xray（upx）'],['ups','升级 Sing-box（ups）'],['downx','降级 Xray（downx）'],['downs','降级 Sing-box（downs）'],['del','卸载（del）'],['vars','查看变量（vars）'],['cmds','查看命令（cmds）'],['help','完整帮助（help）']
+  ['install','安装 / 创建节点'],['rep','重建协议配置（rep）'],['restore-ip','恢复原 IP 策略'],['list','显示节点（list）'],['status','资源与流量（status）'],['update','更新脚本（update）'],['res','重启代理与隧道（res）'],['start','启动核心（start）'],['stop','停止核心（stop）'],['restart','重启核心（restart）'],['reload','重载配置（reload）'],['upx','升级 Xray（upx）'],['ups','升级 Sing-box（ups）'],['downx','降级 Xray（downx）'],['downs','降级 Sing-box（downs）'],['del','卸载（del）'],['vars','查看变量（vars）'],['cmds','查看命令（cmds）'],['help','完整帮助（help）']
 ];
 const CORE_INFO = [
   ['xray','Xray-core','VLESS、XHTTP、REALITY 与兼容协议'],['singbox','Sing-box','Hysteria2、TUIC、AnyTLS 等'],['auto','自动归属','VMess / SOCKS 由启用的固定核心决定'],['caddy','Caddy','NaiveProxy 与证书托管'],['mita','Mita','Mieru 独立系统服务']
@@ -510,8 +533,8 @@ const FIELDS = {
   fmfragsplit:{label:'最大分片数',value:'3-6',help:'限制每个握手包的切分次数，默认 3-6，避免无限细分。范围 1-64。'},
   xdnsym:{label:'XDNS 域名',placeholder:'dns.example.com'},
   obfs_pass:{label:'Hysteria2 混淆密码',type:'password',help:'可选，针对 Sing-box Hysteria2。'},
-  shyjpt:{label:'Sing-box 跳跃端口',placeholder:'20000-30000',help:'填写连续范围；命令统一使用短横线，脚本再转换为防火墙格式。'},
-  xhyjpt:{label:'Xray 跳跃端口',placeholder:'30001-40000',help:'填写连续范围，例如 30001-40000。'},
+  shyjpt:{label:'Sing-box 跳跃端口',placeholder:'20000-30000',help:'支持单端口或连续范围；命令统一使用短横线，脚本再转换为防火墙格式。'},
+  xhyjpt:{label:'Xray 跳跃端口',placeholder:'30001-40000',help:'支持单端口或连续范围，例如 30001 或 30001-40000。'},
   naive:{label:'Naive 域名',placeholder:'naive.example.com',help:'留空传 naive=y，在 VPS 交互输入；二级代理必须预先填写域名。'},
   naiveuser:{label:'Naive 用户名',placeholder:'留空自动生成'},
   naivepass:{label:'Naive 密码',type:'password',placeholder:'留空自动生成'},
@@ -523,13 +546,13 @@ const FIELDS = {
   warpEnabled:{label:'经 Cloudflare WARP 出站',type:'checkbox'},
   warp:{label:'WARP 作用范围',options:WARP_RULES,value:'sx',help:'s 表示 Sing-box，x 表示 Xray；4/6 在这些规则中选择目标 IP 族。'},
   secondaryEnabled:{label:'经 B 服务器二级代理',type:'checkbox'},
-  securl:{label:'B 服务器节点 URL',type:'password',placeholder:'socks5://用户名:密码@地址:端口',help:'支持 ss / socks5 / http / https；留空时在 VPS 隐藏输入。'},
+  securl:{label:'B 服务器节点 URL',type:'password',placeholder:'socks5://用户名:密码@地址:端口',help:'支持 Shadowsocks-2022 / socks5 / http / https；SS 密钥须符合方法规定的 Base64 长度，留空时在 VPS 隐藏输入。'},
   name:{label:'节点名称前缀',placeholder:'例如：东京-',help:'只影响生成的节点名称。'},
-  uuid:{label:'UUID / 通用密码',type:'password',placeholder:'留空自动生成',help:'VLESS / VMess 请用有效 UUID；同一值也用于部分协议认证。'},
+  uuid:{label:'UUID / 通用密码',type:'password',placeholder:'留空自动生成',help:'VLESS / VMess 请用有效 UUID；部分协议仍复用它作密码。SOCKS 凭据、传输路径和订阅 Token 独立生成。'},
   reym:{label:'REALITY 目标域名',placeholder:'留空由脚本按地区选择'},
   ipv:{label:'系统 IP 栈策略',options:[['keep','保持现状，不传 ipv'],['4','仅 IPv4'],['6','仅 IPv6'],['4;6','双栈，IPv4 优先'],['6;4','双栈，IPv6 优先'],['restore','取消受管策略，恢复原状态']],value:'keep',help:'会影响 VPS 网络配置；ipv=6 在脚本中要求 NetworkManager 等前提。'},
   certMode:{label:'TLS 证书方案',options:[['auto','脚本默认：复用或自签'],['interactive','ACME · 在 VPS 交互选择'],['http','ACME · HTTP-01'],['alpn','ACME · TLS-ALPN-01'],['dns','ACME · Cloudflare DNS-01'],['ip','ACME · IP 证书'],['external','导入 VPS 已有证书']],value:'auto'},
-  certym:{label:'证书域名',placeholder:'proxy.example.com'},
+  certym:{label:'证书域名 / 导入证书的 SNI',placeholder:'proxy.example.com',help:'导入时可留空由证书推导；泛域名证书应填写匹配的具体域名。VPS 会检查证书链、有效期、私钥和 SAN。'},
   certip:{label:'证书 IP',placeholder:'一个或两个公网 IP，空格分隔'},
   certwild:{label:'同时申请泛域名',type:'checkbox'},
   certcrt:{label:'证书完整链路径',placeholder:'/root/certs/fullchain.pem'},
@@ -537,16 +560,18 @@ const FIELDS = {
   CF_Token:{label:'Cloudflare DNS Token',type:'password',help:'需对应域名的 DNS 编辑权限；留空时由 VPS 询问。'},
   CF_Account_ID:{label:'Cloudflare Account ID',placeholder:'可选'},
   CF_Zone_ID:{label:'Cloudflare Zone ID',placeholder:'可选'},
+  CF_Key:{label:'旧版 Cloudflare Global API Key',type:'password',help:'仅兼容旧账户配置，与 CF_Email 配对；优先使用权限受限的 DNS Token。'},
+  CF_Email:{label:'旧版 Cloudflare 账户邮箱',type:'email',placeholder:'与 CF_Key 配对'},
   acmem:{label:'ACME / Caddy 邮箱',type:'email',placeholder:'可选'},
   acmetimeout:{label:'单家 CA 超时（秒）',placeholder:'5 至 600，留空使用默认值'},
   sslcom_eab_kid:{label:'SSL.com EAB Key ID',type:'password',help:'可选，仅 SSL.com 备用签发使用。'},
   sslcom_eab_hmac:{label:'SSL.com EAB HMAC',type:'password',help:'与 EAB Key ID 配对。'},
   certdns:{label:'旧证书变量兼容',options:[['','不额外设置'],['cf','certdns=cf']],help:'仅用于对照旧命令，选择 DNS-01 时不必重复设置。'},
   sub:{label:'启用本地订阅分发',type:'checkbox'},
-  subpt:{label:'订阅 HTTPS 端口',placeholder:'留空随机'},
-  subid:{label:'订阅访问 Token',type:'password',placeholder:'留空使用 UUID'},
-  hyjpt:{label:'通用 Hysteria2 跳跃范围',placeholder:'20000-30000',help:'shyjpt / xhyjpt 已填写时优先；两核心的有效跳跃范围不能重叠。'},
-  agsbxurl:{label:'脚本更新 / 快捷命令来源',placeholder:'留空采用脚本默认 GitHub main',help:'本地执行安装时，脚本仍会从此来源下载 agsbx 快捷命令。可指定同版本脚本 URL。'}
+  subpt:{label:'订阅 HTTPS 端口',placeholder:'无 CDN 时可留空随机',help:'启用 CDN 时须填写 443、2053、2083、2087、2096 或 8443，并避开其他 TCP 入口。'},
+  subid:{label:'订阅访问 Token',type:'password',placeholder:'留空生成独立随机 Token',help:'自定义值须为 16–128 位字母、数字、下划线或短横线。已有 Token 可复用；换 Token 后旧订阅地址失效。'},
+  hyjpt:{label:'通用 Hysteria2 跳跃范围',placeholder:'20000-30000',help:'支持单端口或连续范围；shyjpt / xhyjpt 已填写时优先，两核心的有效跳跃范围不能重叠。'},
+  agsbxurl:{label:'脚本更新 / 快捷命令来源',placeholder:'留空采用脚本默认 GitHub main',help:'安装时优先复制当前本地脚本作为快捷命令；此 URL 用于后续更新或无法复制时的下载来源。'}
 };
 // GUI 与 Shell 共用相同字段、默认值和覆盖顺序；不把默认值展开进命令。
 for(const spec of XHTTP_EXTRA_FIELDS){
@@ -561,7 +586,7 @@ for(const profile of Object.values(XRAY_PROFILES))if(profile.extra)profile.keys=
 for(const [id,profile] of Object.entries(XRAY_PROFILES)){
   for(const base of profile.keys)FIELDS[profile.prefix+'_'+base]={...FIELDS[base],value:profile.kind==='tunnel'&&base==='xnosse'?'true':FIELDS[base].value,base,profile:id};
 }
-const PRIVATE_KEYS = new Set(['agk','uuid','naivepass','mierupass','securl','CF_Token','sslcom_eab_kid','sslcom_eab_hmac','obfs_pass','subid','fmpass','fmheader']);
+const PRIVATE_KEYS = new Set(['agk','uuid','naivepass','mierupass','securl','CF_Token','CF_Key','sslcom_eab_kid','sslcom_eab_hmac','obfs_pass','subid','fmpass','fmheader']);
 PRIVATE_KEYS.add('xheaders64');
 for(const profile of Object.values(XRAY_PROFILES))for(const base of profile.keys)if(['fmpass','fmheader','xheaders64'].includes(base))PRIVATE_KEYS.add(profile.prefix+'_'+base);
 const UI_ONLY = new Set(['operation','scriptSource','scriptPath','scriptURL','target','version','cdnEnabled','argoEnabled','argoKind','warpEnabled','secondaryEnabled','certMode']);
@@ -684,16 +709,288 @@ function applyExtensionPreset(key,force=false){
     for(const input of container.querySelectorAll('[data-mask]'))input.checked=preset.masks.includes(input.value)&&!maskReason(key,input.value,selectedProtocols());
   }else if(profile.mode&&(force||!$(profile.mode).dataset.edited))$(profile.mode).value=preset.mode;
   container.dataset.initialized='true';
+  if(fm)revealSelectedMasks(key);
+}
+// 展示层目录：字段归属不改变命令变量、默认值或协议能力判断。
+const EXTRA_TREE = {
+  "padding": [
+    [
+      "填充长度",
+      [
+        "xpadding"
+      ]
+    ],
+    [
+      "填充布局",
+      [
+        "xpadobfs",
+        "xpadkey",
+        "xpadheader",
+        "xpadplacement",
+        "xpadmethod"
+      ]
+    ]
+  ],
+  "request": [
+    [
+      "上传请求",
+      [
+        "xupmethod",
+        "xnogrpc",
+        "xheaders64"
+      ]
+    ],
+    [
+      "服务端响应与限制",
+      [
+        "xnosse",
+        "xheaderbytes"
+      ]
+    ]
+  ],
+  "layout": [
+    [
+      "会话标识",
+      [
+        "xsessionplacement",
+        "xsessionkey"
+      ]
+    ],
+    [
+      "包序号",
+      [
+        "xseqplacement",
+        "xseqkey"
+      ]
+    ]
+  ],
+  "upload": [
+    [
+      "数据位置与分块",
+      [
+        "xdataplacement",
+        "xdatakey",
+        "xchunksize"
+      ]
+    ],
+    [
+      "分包上传 packet-up",
+      [
+        "xpostbytes",
+        "xpostinterval",
+        "xbufferposts"
+      ]
+    ],
+    [
+      "流式上传 stream-up",
+      [
+        "xstreamsecs"
+      ]
+    ]
+  ],
+  "mux": [
+    [
+      "连接分配",
+      [
+        "xmuxcon",
+        "xmuxmax"
+      ]
+    ],
+    [
+      "复用限制",
+      [
+        "xmuxreuse",
+        "xmuxrequests",
+        "xmuxsecs"
+      ]
+    ],
+    [
+      "连接保活",
+      [
+        "xmuxkeepalive"
+      ]
+    ]
+  ],
+  "download": [
+    [
+      "开关与目标地址",
+      [
+        "xdownload",
+        "xdownaddr",
+        "xdownport"
+      ]
+    ],
+    [
+      "XHTTP 下载传输",
+      [
+        "xdownhost",
+        "xdownpath",
+        "xdownmode"
+      ]
+    ],
+    [
+      "TLS / REALITY 安全层",
+      [
+        "xdownsecurity",
+        "xdownsni",
+        "xdownfp",
+        "xdownpbk",
+        "xdownsid",
+        "xdowninsecure"
+      ]
+    ],
+    [
+      "下载连接的 FinalMask",
+      [
+        "xdownfm"
+      ]
+    ]
+  ]
+};
+const FM_MODULE_FIELDS = {"fragment":["fmfraglen","fmfragdelay","fmfragsplit"],"sudoku":["fmascii","fmpadding"],"header-custom":["fmheader"],"noise":["fmnoise","fmreset","fmdelay"],"header-dns":["fmdomain"]};
+const QUIC_FIELD_KEYS=['xhycc','xhyup','xhydown','xhyjpt'];
+
+// 原生 details/summary 支持键盘折叠，不在 summary 内放入其他交互控件。
+function treeSection(title,code='',level='group',open=false){
+  const section=node('details','config-tree tree-'+level);section.open=open;section.dataset.initialOpen=String(open);
+  const summary=node('summary','tree-heading'),arrow=node('span','tree-chevron');arrow.setAttribute('aria-hidden','true');
+  const label=node('span','tree-label');label.append(node('strong','',title));if(code)label.append(node('code','',code));
+  const status=node('span','tree-state');status.dataset.treeState='';
+  summary.append(arrow,label,status);const body=node('div','tree-body');section.append(summary,body);
+  return {section,body,status};
+}
+function referenceField(label,code,value,reason){
+  const wrap=node('label','field is-disabled'),input=node('input');input.disabled=true;input.value=value||'未设置';
+  input.setAttribute('aria-label',label+'，不可配置');
+  wrap.append(node('span','field-label',label),input,node('code','',code),node('small','disabled-reason',reason));return wrap;
+}
+function appendExtraTree(parent,profile=null){
+  for(const [group,title] of Object.entries(EXTRA_GROUPS)){
+    const root=treeSection(title,group==='mux'?'xmux':group==='download'?'downloadSettings':'','group',group==='padding');
+    root.section.dataset.extraTreeGroup=group;
+    for(const [label,keys] of EXTRA_TREE[group]){
+      const child=treeSection(label,'','module',false);child.section.dataset.parameterGroup='';
+      if(!profile){child.status.textContent='不可用';child.section.classList.add('tree-unavailable');}
+      const grid=node('div','form-grid');
+      for(const key of keys){
+        const spec=XHTTP_EXTRA_FIELDS.find(field=>field.key===key);
+        grid.append(profile?makeField(profile.prefix+'_'+key):referenceField(spec.label,spec.xray,spec.value,'当前节点不是 XHTTP 传输，此字段不参与配置。'));
+      }
+      child.body.append(grid);
+      if(keys.includes('xsessionplacement')){
+        const newer=treeSection('新版会话编码','sessionIDTable / sessionIDLength','leaf');newer.status.textContent='版本限制';
+        const fields=node('div','form-grid');
+        fields.append(referenceField('会话字符表','sessionIDTable','核心默认','当前字段集未接入此主分支字段。'),referenceField('会话标识长度','sessionIDLength','16-32（客户端占位）','当前字段集未接入此主分支字段。'));
+        newer.body.append(fields);child.body.append(newer.section);
+      }
+      root.body.append(child.section);
+    }
+    if(!profile){root.status.textContent='传输不适用';root.section.classList.add('tree-unavailable');}
+    parent.append(root.section);
+  }
+}
+function appendMaskModule(parent,mask,network,key,profile){
+  const activeNetwork=profile?.kind==='udp'?'udp':'tcp';
+  const bind=Boolean(key)&&(mask.type!=='both'||network===activeNetwork);
+  const module=treeSection(mask.label,mask.id,'module');module.section.dataset.maskModule=mask.id;
+  const choice=node('label','mask-choice'+(bind?'':' is-disabled')),input=node('input');input.type='checkbox';input.value=mask.id;
+  if(bind){input.dataset.maskGroup=key;input.dataset.mask=mask.id;}else input.disabled=true;
+  const caption=node('span','mask-caption'),name=node('span','mask-name',bind?'启用此模块':'当前不可配置');
+  const badge=node('span','mask-state');badge.dataset.maskState='';name.append(badge);
+  const hint=node('small');hint.textContent=bind?'':key?'当前节点不使用 '+network.toUpperCase()+' 掩码层。':'此入口尚未开放配套配置或 URL 导出。';
+  if(bind){hint.id='mask-hint-'+key+'-'+mask.id;input.setAttribute('aria-describedby',hint.id);}
+  caption.append(name,hint);choice.append(input,caption);module.body.append(choice);
+  if(!bind){badge.textContent='不可用';module.status.textContent='不可用';module.section.classList.add('tree-unavailable');}
+  const fields=FM_MODULE_FIELDS[mask.id]||[],owned=fields.filter(base=>bind&&network===activeNetwork&&profile.keys.includes(base));
+  if(owned.length){
+    const grid=node('div','form-grid');for(const base of owned)grid.append(makeField(profile.prefix+'_'+base));module.body.append(grid);
+  }
+  if(['sudoku','salamander','mkcp-aes128gcm'].includes(mask.id)&&bind&&network===activeNetwork&&profile.keys.includes('fmpass')){
+    const note=node('p','note','配套密钥位于本层的“共享认证参数”，同一协议只保留一份。');
+    const link=node('a','','定位密钥');link.href='#'+profile.prefix+'_fmpass';link.dataset.issueTarget=profile.prefix+'_fmpass';note.append(' ',link);module.body.append(note);
+  }
+  const reference=treeSection('字段说明与扩展项','','leaf');
+  const list=node('ul','tree-reference');
+  for(const item of MASK_SUBFIELDS[mask.id]||[])list.append(node('li','',item));
+  reference.body.append(list);module.body.append(reference.section);
+  if(mask.id==='salamander')appendMaskModule(module.body,MASKS.find(item=>item.id==='gecko'),network,key,profile);
+  parent.append(module.section);
+}
+function appendQuicTree(parent,live){
+  const root=treeSection('QUIC 参数','quicParams','group');root.section.dataset.quicTree='';
+  root.status.textContent=live?'独立配置':'不可用';
+  if(!live)root.section.classList.add('tree-unavailable');
+  root.body.append(node('p','tree-description',live?'QUIC 参数独立生效，不受上方 TCP/UDP 掩码开关控制。':'当前入口不开放 QUIC 配置；以下保留完整参数层级。'));
+  const groups=[
+    ['拥塞控制与带宽',['xhycc','xhyup','xhydown'],[['调试输出','debug'],['BBR 配置','bbrProfile']]],
+    ['流与连接接收窗口',[],[['流初始接收窗口','initStreamReceiveWindow'],['流最大接收窗口','maxStreamReceiveWindow'],['连接初始接收窗口','initConnectionReceiveWindow'],['连接最大接收窗口','maxConnectionReceiveWindow']]],
+    ['连接保活与路径',[],[['最大空闲时间','maxIdleTimeout'],['保活间隔','keepAlivePeriod'],['禁用路径 MTU 发现','disablePathMTUDiscovery'],['最大入站流数','maxIncomingStreams']]],
+    ['端口跳跃',['xhyjpt'],[['跳跃间隔','udpHop.interval']]]
+  ];
+  const names={xhycc:'congestion',xhyup:'brutalUp',xhydown:'brutalDown',xhyjpt:'udpHop.ports'};
+  for(const [title,keys,references] of groups){
+    const child=treeSection(title,'','module');child.status.textContent=live&&keys.length?'可配置':'只读目录';
+    if(!live||!keys.length)child.section.classList.add('tree-unavailable');
+    const grid=node('div','form-grid');
+    for(const key of keys)grid.append(live?makeField(key):referenceField(FIELDS[key].label,names[key],FIELDS[key].value,'此入口不提供 QUIC 参数。'));
+    for(const [label,key] of references){
+      const fixed=live&&key==='udpHop.interval';
+      grid.append(referenceField(label,key,fixed?'15 秒':'核心默认',fixed?'当前脚本固定为 15 秒，未提供独立调整变量。':live?'该高级字段尚未接入脚本。':'当前传输或入口不适用。'));
+    }
+    child.body.append(grid);root.body.append(child.section);
+  }
+  parent.append(root.section);
+}
+function appendFinalMaskTree(parent,key=null,protocol=null){
+  const profile=key?extensionInfo(key).profile:null,activeNetwork=profile?.kind==='udp'?'udp':'tcp';
+  for(const network of ['tcp','udp']){
+    const root=treeSection(network.toUpperCase()+' 掩码',network,'group',Boolean(key)&&network===activeNetwork);
+    root.section.dataset.maskNetwork=network;
+    root.body.append(node('p','tree-description',network==='tcp'?'面向 TCP 字节流，按模块条件组合。':'面向 UDP 数据包，当前允许一个格式掩码叠加 noise。'));
+    for(const mask of MASKS.filter(item=>item.id!=='gecko'&&(item.type===network||item.type==='both')))appendMaskModule(root.body,mask,network,key,profile);
+    if(key&&network===activeNetwork&&profile.keys.includes('fmpass')){
+      const shared=treeSection('共享认证参数','password','module');shared.section.dataset.sharedMaskParameters='';
+      shared.body.append(node('p','note','供本协议已选的 Sudoku、Salamander 或 mKCP AES 掩码使用。'),makeField(profile.prefix+'_fmpass'));
+      root.body.append(shared.section);
+    }
+    if(!key)root.status.textContent='当前入口不可配置';
+    parent.append(root.section);
+  }
+  appendQuicTree(parent,Boolean(key)&&protocol?.id==='xhypt');
+}
+function refreshExtensionTree(container,key,protocols){
+  for(const module of container.querySelectorAll('[data-mask-module]')){
+    const check=module.querySelector('.mask-choice input[data-mask]');if(!check||check.value!==module.dataset.maskModule)continue;
+    const choice=check.closest('.mask-choice'),status=module.querySelector('[data-tree-state]');
+    status.textContent=choice.querySelector('[data-mask-state]').textContent;
+    module.classList.toggle('tree-unavailable',choice.classList.contains('is-disabled'));
+    module.classList.toggle('tree-selected',check.checked&&!check.disabled);
+    module.classList.toggle('tree-conflict',choice.classList.contains('is-conflict'));
+  }
+  for(const group of container.querySelectorAll('[data-mask-network]')){
+    const checks=[...group.querySelectorAll('[data-mask]')],available=checks.filter(input=>!maskReason(key,input.value,protocols)).length,selected=checks.filter(input=>input.checked).length;
+    group.querySelector('[data-tree-state]').textContent=available?available+' 项适用'+(selected?($('enable-'+key).checked?' · 已选 ':' · 已保存 ')+selected:''):'当前不可用';
+  }
+  for(const group of container.querySelectorAll('[data-parameter-group],[data-extra-tree-group]')){
+    const fields=[...group.querySelectorAll('[data-field]')],enabled=fields.filter(field=>!field.querySelector('input,select,textarea')?.disabled),changed=enabled.filter(field=>!isDefaultField(field.dataset.field));
+    group.querySelector('[data-tree-state]').textContent=enabled.length?enabled.length+' 项可调'+(changed.length?' · 自定义 '+changed.length:''):'当前不可调整';
+  }
+}
+function revealSelectedMasks(key){
+  const container=$('extension-'+key);if(!container)return;
+  for(const input of container.querySelectorAll('[data-mask]:checked')){
+    for(let parent=input.parentElement;parent&&parent!==container;parent=parent.parentElement)if(parent.matches('.config-tree'))parent.open=true;
+  }
 }
 function makeExtension(key){
   const {id,profile,fm}=extensionInfo(key),group=node('section','extension');
   group.id='extension-'+key;group.dataset.field=key;group.dataset.extension=key;
   const heading=node('div','extension-heading'),title=node('div','extension-title');
   const name=node('strong','',fm?'FinalMask':'XHTTP Extra');name.id='title-'+key;
-  title.append(name,node('p','extension-subtitle',fm?'按当前传输选择掩码与分片':'请求填充与连接复用'));
+  title.append(name,node('p','extension-subtitle',fm?'TCP / UDP 掩码与 QUIC 参数分层配置':'按功能分层配置请求、上传、连接复用与下载'));
   const toggle=node('label','toggle'),input=node('input');
   input.type='checkbox';input.id=fm?'enable-'+key:key;input.dataset.extensionToggle=key;input.setAttribute('role','switch');
-  input.setAttribute('aria-label',id+' 启用 '+(fm?'FinalMask':'XHTTP Extra'));input.setAttribute('aria-controls','body-'+key);
+  input.setAttribute('aria-label',id+' 启用 '+(fm?'TCP/UDP 掩码':'XHTTP Extra'));input.setAttribute('aria-controls','body-'+key);
   const state=node('span','toggle-state','关闭');state.id='state-'+key;toggle.append(input,state);heading.append(title,toggle);group.append(heading);
   const availability=node('p','availability-message');availability.id='availability-'+key;availability.hidden=true;group.append(availability);
   const body=node('div','extension-body');body.id='body-'+key;body.hidden=true;
@@ -705,46 +1002,14 @@ function makeExtension(key){
   const values=node('p','preset-values');values.id='preset-values-'+key;preset.append(label,description,values);body.append(preset);
   const custom=node('details','extension-custom');custom.id='custom-'+key;custom.append(node('summary','','自定义'+(fm?'子模块与参数':'参数')));
   const tools=node('div','tools');tools.append(node('span','meta','只修改当前协议'));
-  const reset=node('button','small-button','恢复本协议默认');reset.type='button';reset.dataset.resetExtension=key;tools.append(reset);custom.append(tools);
-  if(fm){
-    const list=node('div','mask-list');list.setAttribute('role','group');list.setAttribute('aria-labelledby',name.id);
-    for(const mask of MASKS){
-      const choice=node('label','mask-choice'),check=node('input');check.type='checkbox';check.value=mask.id;check.dataset.maskGroup=key;check.dataset.mask=mask.id;
-      const caption=node('span','mask-caption'),titleRow=node('span','mask-name',mask.label);
-      const badge=node('span','mask-state');badge.dataset.maskState='';titleRow.append(badge);
-      const hint=node('small');hint.id='mask-hint-'+key+'-'+mask.id;check.setAttribute('aria-describedby',hint.id);
-      caption.append(titleRow,node('code','',mask.id+' · '+(mask.type==='both'?'TCP / UDP':mask.type.toUpperCase())),hint);
-      const parameters=node('span','mask-parameters');for(const text of MASK_SUBFIELDS[mask.id]||[])parameters.append(node('span','',text));
-      caption.append(parameters);choice.append(check,caption);list.append(choice);
-    }
-    custom.append(list);
+  for(const [action,label] of [['expand','展开全部'],['collapse','收起子层']]){
+    const button=node('button','small-button',label);button.type='button';button.dataset.treeAction=action;button.dataset.treeRoot=custom.id;tools.append(button);
   }
-  if(fm){
-    const grid=node('div','form-grid');for(const scoped of extensionTuning(key,false))grid.append(makeField(scoped));custom.append(grid);
-    const quic=node('div','catalog-note');
-    quic.append(node('strong','','QUIC 参数区（quicParams，不是掩码）'));
-    quic.append(node('p','',profile.kind==='udp'?'此 Hysteria2 入口已提供拥塞控制、上下行速率和端口跳跃；见上方协议参数。':'当前入口使用 TCP，以下 QUIC 参数不可用。'));
-    quic.append(node('code','','congestion · brutalUp · brutalDown · udpHop.ports / interval'));
-    quic.append(node('p','','以下高级字段尚未接入脚本：'));
-    quic.append(node('code','','initStreamReceiveWindow · maxStreamReceiveWindow · initConnectionReceiveWindow · maxConnectionReceiveWindow · maxIdleTimeout · keepAlivePeriod · disablePathMTUDiscovery · maxIncomingStreams · debug · bbrProfile（新主分支）'));
-    custom.append(quic);
-  }else{
-    for(const [section,title] of Object.entries(EXTRA_GROUPS)){
-      const area=node('section','extra-section');area.append(node('h4','',title));
-      const grid=node('div','form-grid');
-      for(const spec of XHTTP_EXTRA_FIELDS.filter(spec=>spec.group===section))grid.append(makeField(profile.prefix+'_'+spec.key));
-      area.append(grid);
-      if(section==='layout'){
-        const unavailable=node('div','form-grid');
-        for(const [name,label,defaultText] of [['sessionIDTable','SessionTable / 会话字符表','核心默认'],['sessionIDLength','SessionLength / 会话标识长度','16-32（截图中的占位值）']]){
-          const row=node('label','field is-disabled'),input=node('input');input.disabled=true;input.value=defaultText;
-          row.append(node('span','field-label',label),input,node('code','',name),node('small','disabled-reason','新主分支字段；v26.3.27 字段集未包含，当前只展示，不生成参数。'));unavailable.append(row);
-        }
-        area.append(unavailable);
-      }
-      custom.append(area);
-    }
-    custom.append(node('p','extension-note','Host / Path / Mode 属于基础 xhttpSettings，不在 Extra 对象内覆盖；Host 与路径由协议域名和 UUID 配套生成。'));
+  const reset=node('button','small-button','恢复本协议默认');reset.type='button';reset.dataset.resetExtension=key;tools.append(reset);custom.append(tools);
+  if(fm)appendFinalMaskTree(custom,key,PROTOCOLS.find(protocol=>protocol.id===id));
+  else{
+    appendExtraTree(custom,profile);
+    custom.append(node('p','extension-note','Host / Path / Mode 属于基础 xhttpSettings；这里按对象层级组织 Extra 参数。'));
   }
   custom.append(node('p','extension-note',fm?'灰色项同时注明传输不适用、版本限制或脚本未接入。条件变化后失效的已选项可以取消。':'所有默认值由配套版本脚本提供。仅适用且偏离默认值的参数写入命令；XMUX 和独立下载仅用于客户端。'));
   body.append(custom);group.append(body);return group;
@@ -774,20 +1039,9 @@ function mount(id,keys){for(const key of keys)$(id).append(makeField(key));}
 function readOnlyExtensionCatalog(protocol,kind){
   const area=node('details','extension-catalog');
   area.append(node('summary','',kind==='extra'?'XHTTP Extra 字段目录 · 当前不可配置':'FinalMask 模块目录 · 当前不可配置'));
-  area.append(node('p','note',kind==='extra'?'当前节点不是 XHTTP 传输。下方仅供字段对照，不参与此协议的配置。':protocol.id==='sopt'?'当前 SOCKS URL 导入不能完整传递 FM，因此本入口不开放 FM；下方保留模块全貌。':'此专用入口的模板与导出接口尚待整理，下方仅供模块对照。'));
-  const list=node('div',kind==='extra'?'form-grid':'mask-list');
-  if(kind==='extra'){
-    for(const spec of XHTTP_EXTRA_FIELDS){
-      const label=node('label','field is-disabled'),input=node('input');input.disabled=true;input.value=spec.value||'未设置';
-      label.append(node('span','field-label',spec.label),input,node('code','',spec.xray),node('small','disabled-reason','当前传输不使用此字段。'));list.append(label);
-    }
-    for(const key of ['sessionIDTable','sessionIDLength'])list.append(node('p','catalog-note',key+' · 新主分支字段，当前字段集未开放。'));
-  }else for(const mask of MASKS){
-    const label=node('label','mask-choice is-disabled'),input=node('input');input.type='checkbox';input.disabled=true;
-    const caption=node('span','mask-caption');caption.append(node('span','mask-name',mask.label+' · 不可配置'),node('code','',mask.id),node('small','',(MASK_SUBFIELDS[mask.id]||[]).join('；')));
-    label.append(input,caption);list.append(label);
-  }
-  area.append(list);return area;
+  area.append(node('p','note',kind==='extra'?'当前节点不是 XHTTP 传输。下方保留字段层级，不参与本节点配置。':protocol.id==='sopt'?'当前 SOCKS URL 导入不能完整传递 FM，因此本入口不开放 FM。':'此专用入口的模板与导出接口尚待整理，下方保留模块层级。'));
+  if(kind==='extra')appendExtraTree(area);else appendFinalMaskTree(area,null,protocol);
+  return area;
 }
 function initialize(){
   mount('task-fields',['operation','scriptSource']);mount('source-fields',['scriptPath','scriptURL']);mount('management-fields',['target','version','ippz']);
@@ -796,7 +1050,7 @@ function initialize(){
   mount('common-fields',['name','uuid','reym','ipv']);mount('certificate-fields',['certMode']);
   mount('certificate-specific',['certym','certip','certwild','certcrt','certkey','CF_Token']);
   mount('subscription-fields',['sub']);mount('subscription-specific',['subpt','subid']);
-  mount('advanced-fields',['acmem','acmetimeout','CF_Account_ID','CF_Zone_ID','sslcom_eab_kid','sslcom_eab_hmac','certdns','hyjpt','agsbxurl']);
+  mount('advanced-fields',['acmem','acmetimeout','CF_Account_ID','CF_Zone_ID','CF_Key','CF_Email','sslcom_eab_kid','sslcom_eab_hmac','certdns','hyjpt','agsbxurl']);
   for(const [core,label,description] of CORE_INFO){
     const group=node('details','core-group');group.dataset.core=core;group.open=core==='xray';group.id='core-'+core;
     const heading=node('summary','core-heading'),arrow=node('span','core-arrow');arrow.setAttribute('aria-hidden','true');
@@ -814,7 +1068,7 @@ function initialize(){
       const catalogCore=['xray','auto'].includes(p.core);
       if(p.fields||catalogCore){
         const settings=node('div','protocol-settings');settings.id='settings-'+p.id;settings.hidden=true;const grid=node('div','form-grid');
-        const basic=(p.fields||[]).filter(key=>!['masks','extra'].includes(FIELDS[key].type)),extensions=(p.fields||[]).filter(key=>['masks','extra'].includes(FIELDS[key].type));
+        const basic=(p.fields||[]).filter(key=>!['masks','extra'].includes(FIELDS[key].type)&&(p.id!=='xhypt'||!QUIC_FIELD_KEYS.includes(key))),extensions=(p.fields||[]).filter(key=>['masks','extra'].includes(FIELDS[key].type));
         for(const key of [...basic,...extensions])grid.append(makeField(key));settings.append(grid);
         if(catalogCore&&!XRAY_PROFILES[p.id]?.extra)settings.append(readOnlyExtensionCatalog(p,'extra'));
         if(catalogCore&&!XRAY_PROFILES[p.id]?.fm)settings.append(readOnlyExtensionCatalog(p,'fm'));
@@ -845,7 +1099,7 @@ function updateExtensions(protocols){
       container.classList.toggle('is-enabled',enabled);$('body-'+key).hidden=false;
       container.querySelector('.preset-summary').hidden=!enabled;
       container.querySelector('.extension-custom>summary').textContent=enabled?(fm?'自定义子模块与参数':'自定义参数'):(fm?'查看全部 FM 模块与参数':'查看全部 Extra 参数');
-      text('state-'+key,enabled?'已开启':'关闭');
+      text('state-'+key,fm?(enabled?'掩码开启':'掩码关闭'):(enabled?'已开启':'关闭'));
       const active=new Set(enabled?extensionTuning(key):[]);
       for(const scoped of extensionTuning(key,false)){
         const input=$(scoped),wrap=input.closest('[data-field]'),reason=fm?(active.has(scoped)?'':'当前未选择使用此参数的 FM 子模块。'):extraFieldReason(id,FIELDS[scoped].base);
@@ -878,6 +1132,7 @@ function updateExtensions(protocols){
       $('availability-'+key).hidden=!unavailable;text('availability-'+key,unavailable?'当前接入条件下没有可启用的 FM 子项。'+unavailableReason:'');
       container.querySelector('[data-reset-extension]').disabled=unavailable||!enabled;
       if(unavailable&&!enabled)text('state-'+key,'不可用');
+      refreshExtensionTree(container,key,protocols);
       if(!enabled)continue;
       const preset=extensionPreset(key),activeKeys=extensionTuning(key);
       let matches=activeKeys.every(scoped=>value(scoped)===(FIELDS[scoped].value??''));
@@ -937,11 +1192,11 @@ function updateVisibility(deploy,protocols){
   const cert=value('certMode'),rep=value('operation')==='rep';
   $('certMode').disabled=rep;
   for(const key of ['certym','certip','certwild','certcrt','certkey','CF_Token']){
-    const visible=({certym:['http','alpn','dns'],certip:['ip'],certwild:['dns'],certcrt:['external'],certkey:['external'],CF_Token:['dns']})[key].includes(cert)&&!rep;
+    const visible=({certym:['http','alpn','dns','external'],certip:['ip'],certwild:['dns'],certcrt:['external'],certkey:['external'],CF_Token:['dns']})[key].includes(cert)&&!rep;
     setFieldVisibility(key,visible);
   }
-  for(const key of ['acmem','acmetimeout','CF_Account_ID','CF_Zone_ID','sslcom_eab_kid','sslcom_eab_hmac','certdns'])$(key).disabled=rep;
-  for(const key of ['CF_Account_ID','CF_Zone_ID','certdns'])$(key).disabled=rep||cert!=='dns';
+  for(const key of ['acmem','acmetimeout','CF_Account_ID','CF_Zone_ID','CF_Key','CF_Email','sslcom_eab_kid','sslcom_eab_hmac','certdns'])$(key).disabled=rep;
+  for(const key of ['CF_Account_ID','CF_Zone_ID','CF_Key','CF_Email','certdns'])$(key).disabled=rep||cert!=='dns';
   for(const key of ['acmetimeout','sslcom_eab_kid','sslcom_eab_hmac'])$(key).disabled=rep||['auto','external'].includes(cert);
   updateExtensions(protocols);
   const streamOne=[...$('vxmode').options].find(option=>option.value==='stream-one');streamOne.disabled=value('cdnEnabled');
@@ -1008,12 +1263,13 @@ function collect(deploy,protocols){
       const cert=value('certMode');
       if(cert==='interactive')add('alns','y');
       if(['http','alpn','dns','ip'].includes(cert)){add('alns','y');add('acmemode',cert);if(cert==='ip')add('certip',value('certip').trim());else add('certym',value('certym').trim());}
-      if(cert==='dns'){if(value('certwild'))add('certwild','y');for(const key of ['CF_Token','CF_Account_ID','CF_Zone_ID','certdns'])add(key,value(key));}
-      if(cert==='external'){add('certcrt',value('certcrt'));add('certkey',value('certkey'));}
+      if(cert==='dns'){if(value('certwild'))add('certwild','y');for(const key of ['CF_Token','CF_Account_ID','CF_Zone_ID','CF_Key','CF_Email','certdns'])add(key,value(key));}
+      if(cert==='external'){add('certcrt',value('certcrt'));add('certkey',value('certkey'));add('certym',value('certym').trim());}
       if(!['auto','external'].includes(cert)){for(const key of ['acmetimeout','sslcom_eab_kid','sslcom_eab_hmac'])add(key,value(key));}
       add('acmem',value('acmem'));
     }
   }else if(value('operation')==='list')add('ippz',value('ippz'));
+  else if(value('operation')==='restore-ip')add('ipv','',true);
   if(value('scriptSource')==='custom'){
     const i=pairs.findIndex(([key])=>key==='agsbxurl');if(i>=0)pairs.splice(i,1);
     add('agsbxurl',value('scriptURL').trim());
@@ -1022,7 +1278,7 @@ function collect(deploy,protocols){
 }
 function shellQuote(input){return "'"+String(input).replace(/'/g,"'\\''")+"'";}
 function commandArgs(){
-  const op=value('operation');if(op==='install')return [];
+  const op=value('operation');if(['install','restore-ip'].includes(op))return [];
   if(['start','stop','restart','reload'].includes(op))return [op,value('target')];
   if(['upx','ups','downx','downs'].includes(op))return [op,...(value('version').trim()?[value('version').trim()]:[])];
   return [op];
@@ -1128,8 +1384,8 @@ function parseSavedCommand(raw){
   if(values.length){
     const aliases={'-h':'help','--help':'help',stats:'status',top:'status'};
     result.operation=aliases[values[0]]||values[0];
-    if(!OPERATIONS.some(([id])=>id===result.operation)||result.operation==='install')throw new Error('命令的操作名称不在当前 GUI 支持范围内。');
-    if(['start','stop','restart','reload'].includes(result.operation)){if(values.length>2)throw new Error('核心管理命令有多余参数。');result.target=values[1]||'all';}
+    if(!OPERATIONS.some(([id])=>id===result.operation)||['install','restore-ip'].includes(result.operation))throw new Error('命令的操作名称不在当前 GUI 支持范围内。');
+    if(['start','stop','restart','reload'].includes(result.operation)){if(values.length>2)throw new Error('核心管理命令有多余参数。');result.target=({x:'xray','sing-box':'sb',mieru:'mita'})[values[1]]||values[1]||'all';}
     else if(['upx','ups','downx','downs'].includes(result.operation)){if(values.length>2)throw new Error('版本管理命令有多余参数。');result.version=values[1]||'';}
     else if(values.length>1)throw new Error('这项管理操作不接受额外位置参数。');
   }
@@ -1176,6 +1432,7 @@ function savedCommandPlan(parsed){
     if(p.fixed===undefined)ports.set(p.id,pairs.get(p.portKey||p.id)||'');
   }
   Object.assign(fields,{operation:parsed.operation,scriptSource:parsed.scriptSource,scriptPath:parsed.scriptPath||FIELDS.scriptPath.value,scriptURL:parsed.scriptURL,target:parsed.target,version:parsed.version});
+  if(parsed.operation==='install'&&!selected.size&&pairs.has('ipv')&&pairs.get('ipv')==='')fields.operation='restore-ip';
   fields.cdnEnabled=Boolean(pairs.get('cdnym'));
   fields.argoEnabled=Boolean(pairs.get('argo'))||selected.has('xvargopt');
   if(selected.has('xvargopt')&&!pairs.get('argo'))fields.argo='xvargopt';
@@ -1218,8 +1475,8 @@ function savedCommandPlan(parsed){
       else throw new Error('secp 包含未启用或不支持二级出站的协议。');
     }
   }
-  if(!['install','rep'].includes(parsed.operation)){
-    for(const key of pairs.keys())if(!(key==='ippz'&&parsed.operation==='list')&&!(key==='agsbxurl'&&parsed.scriptSource==='custom'))throw new Error('此管理命令携带 '+key+'，当前 GUI 的该操作没有对应输入，无法完整还原。');
+  if(!['install','rep'].includes(fields.operation)){
+    for(const key of pairs.keys())if(!(key==='ipv'&&fields.operation==='restore-ip')&&!(key==='ippz'&&fields.operation==='list')&&!(key==='agsbxurl'&&parsed.scriptSource==='custom'))throw new Error('此管理命令携带 '+key+'，当前 GUI 的该操作没有对应输入，无法完整还原。');
   }
   // 不执行默认方案按钮：还原命令中的具体值，防止当前预设覆盖历史命令。
   return {fields,selected,ports,masks,secondary,notes,variableCount:pairs.size};
@@ -1240,7 +1497,7 @@ function applySavedCommandPlan(plan){
     if(profile.mode)$(profile.mode).dataset.edited='true';
     for(const key of [profile.fm,profile.extra].filter(Boolean)){
       const enabled=key===profile.fm?$('enable-'+key).checked:$(key).checked;
-      if(enabled)$('extension-'+key).dataset.initialized='true';
+      if(enabled){$('extension-'+key).dataset.initialized='true';if(key===profile.fm)revealSelectedMasks(key);}
     }
   }
   secondarySelection=plan.secondary;
@@ -1293,11 +1550,18 @@ function secondaryEndpoint(raw){
     const split=auth.indexOf(':');if(split<1||split===auth.length-1)throw new Error('代理认证信息需要非空的用户名/方法和密码。');
     const user=decodeURIComponent(auth.slice(0,split)),password=decodeURIComponent(auth.slice(split+1));
     if(!user||!password||/[\u0000-\u001F\u007F]/.test(user+password))throw new Error('代理认证信息为空或含控制字符。');
-    if(scheme!=='ss'&&/[^\x20-\x7E]/.test(user+password))throw new Error('脚本的 SOCKS / HTTP 上游认证仅支持可打印 ASCII。');
+    if(scheme!=='ss'&&(/[^\x20-\x7E]/.test(user+password)||user.length>255||password.length>1024))throw new Error('SOCKS / HTTP 上游认证仅支持可打印 ASCII；用户名最多 255 字符，密码最多 1024 字符。');
+    if(scheme==='ss'){
+      const lengths={'2022-blake3-aes-128-gcm':16,'2022-blake3-aes-256-gcm':32,'2022-blake3-chacha20-poly1305':32};
+      if(!Object.prototype.hasOwnProperty.call(lengths,user))throw new Error('SS 二级出站仅支持三种 Shadowsocks-2022 方法。');
+      if(!/^[A-Za-z0-9+/]+={0,2}$/.test(password))throw new Error('Shadowsocks-2022 密钥必须为标准 Base64。');
+      let decoded;try{decoded=atob(password);}catch{throw new Error('Shadowsocks-2022 密钥不是有效 Base64。');}
+      if(decoded.length!==lengths[user])throw new Error(user+' 密钥解码后应为 '+lengths[user]+' 字节。');
+    }
     if(['http','https'].includes(scheme)&&user.includes(':'))throw new Error('HTTP Basic 用户名不能包含冒号。');
   }else if(scheme==='ss')throw new Error('SS URL 缺少方法、密钥或服务器地址。');
   body=body.replace(/\/$/,'');const authority=body.slice(body.lastIndexOf('@')+1);
-  const endpoint=authority.match(/^(?:\[([^\]]+)\]|([^:/]+)):(\d+)$/);
+  const endpoint=authority.match(/^(?:\[([^\]]+)\]|([^:/]+)):(\d{1,5})$/);
   if(!endpoint||Number(endpoint[3])<1||Number(endpoint[3])>65535)throw new Error('B URL 需要明确的地址和 1 至 65535 端口；IPv6 使用 [地址]:端口。');
   const host=endpoint[1]||endpoint[2];if(!isIPv4(host)&&!isIPv6(host)&&!validDomain(host))throw new Error('B 服务器地址应为有效 IP 或域名。');
   return {host,scheme};
@@ -1347,7 +1611,10 @@ function scriptInterface(contents){
 }
 function validate(deploy,protocols,pairs){
   const issues=[];const add=(severity,message,id)=>issues.push({severity,message,id});const error=(m,id)=>add('error',m,id);const warn=(m,id)=>add('warning',m,id);
-  for(const [key,v] of pairs){if(/[\u0000-\u001F\u007F]/.test(v))error(key+' 含有控制字符，请去掉换行、制表符等。',key);}
+  for(const [key,v] of pairs){
+    if(/[\u0000-\u001F\u007F]/.test(v))error(key+' 含有控制字符，请去掉换行、制表符等。',key);
+    if(['uuid','obfs_pass','name','naiveuser','naivepass','mieruuser','mierupass','acmem','naivesite'].includes(key)&&v.length>1024)error(key+' 不能超过 1024 字符。',key);
+  }
   const source=value('scriptSource');
   if(source==='local'&&!value('scriptPath').trim())error('填写 VPS 上的脚本路径。','scriptPath');
   if(source==='custom'&&!validURL(value('scriptURL').trim()))error('脚本来源需为不含账号密码和片段的完整 HTTPS URL。','scriptURL');
@@ -1360,22 +1627,23 @@ function validate(deploy,protocols,pairs){
   }
   for(const p of protocols)if(p.blocked)error(p.blocked,'select-'+p.id);
   const ids=new Set(protocols.map(p=>p.id)),cores=inferredCores(protocols),ports=new Map();
+  if(ids.has('naive'))ports.set('tcp:80','Naive/Caddy 证书入口');
   for(const p of protocols){
     const port=typeof p.fixed==='number'?String(p.fixed):value('port-'+p.id).trim()||p.defaultPort||'';
     if(p.fixed!==undefined&&typeof p.fixed!=='number')continue;
-    if(port&&!/^\d+$/.test(port)||port&&(Number(port)<(p.id==='mieru'?1025:1)||Number(port)>65535)){error(p.id+' 的端口应为 '+(p.id==='mieru'?'1025':'1')+' 至 65535 的整数。','port-'+p.id);continue;}
+    if(port&&!/^\d{1,5}$/.test(port)||port&&(Number(port)<(p.id==='mieru'?1025:1)||Number(port)>65535)){error(p.id+' 的端口应为 '+(p.id==='mieru'?'1025':'1')+' 至 65535 的整数。','port-'+p.id);continue;}
     const sockets=p.id==='mieru'?[value('mierutrans')]:p.sockets;
     if(port)for(const socket of sockets){const k=socket+':'+Number(port);if(ports.has(k))error(p.id+' 与 '+ports.get(k)+' 同时使用 '+port+'/'+socket+'。','port-'+p.id);ports.set(k,p.id);}
   }
   for(const key of ['shyjpt','xhyjpt','hyjpt']){
     const active=key==='hyjpt'?(ids.has('shypt')||ids.has('xhypt')):ids.has(key==='shyjpt'?'shypt':'xhypt');
-    if(active&&value(key)&&!/^\d{1,5}[:-]\d{1,5}$/.test(value(key).trim()))error(key+' 使用 起始端口-结束端口 的格式。',key);
-    else if(active&&value(key)){const [a,b]=value(key).trim().split(/[:-]/).map(Number);if(a<1||a>b||b>65535)error(key+' 的范围应在 1 至 65535 之间，起点不能大于终点。',key);}
+    if(active&&value(key)&&!/^\d{1,5}(?:[:-]\d{1,5})?$/.test(value(key).trim()))error(key+' 使用单端口或 起始端口-结束端口 的格式。',key);
+    else if(active&&value(key)){const [a,b=a]=value(key).trim().split(/[:-]/).map(Number);if(a<1||a>b||b>65535)error(key+' 的范围应在 1 至 65535 之间，起点不能大于终点。',key);}
   }
   const hops=[];
   for(const [id,key] of [['shypt','shyjpt'],['xhypt','xhyjpt']]){
     const raw=(value(key)||value('hyjpt')).trim();
-    if(ids.has(id)&&/^\d{1,5}[:-]\d{1,5}$/.test(raw)){const [a,b]=raw.split(/[:-]/).map(Number);hops.push({id,key,a,b});}
+    if(ids.has(id)&&/^\d{1,5}(?:[:-]\d{1,5})?$/.test(raw)){const [a,b=a]=raw.split(/[:-]/).map(Number);hops.push({id,key,a,b});}
   }
   if(hops.length===2&&hops[0].a<=hops[1].b&&hops[1].a<=hops[0].b)error('两个 Hysteria2 的跳跃范围重叠，请填写不同的 shyjpt 与 xhyjpt。','hyjpt');
   for(const hop of hops)for(const [socket,owner] of ports){const [kind,p]=socket.split(':');if(kind==='udp'&&owner!==hop.id&&Number(p)>=hop.a&&Number(p)<=hop.b)error(hop.key+' 的范围覆盖了 '+owner+' 的 UDP 端口。',hop.key);}
@@ -1384,11 +1652,16 @@ function validate(deploy,protocols,pairs){
   if(value('reym')&&!validDomain(value('reym')))error('REALITY 目标应为域名，不包含协议头、路径或端口。','reym');
   if(ids.has('naive')&&value('naive')&&!validDomain(value('naive')))error('Naive 需要有效域名，留空可在 VPS 输入。','naive');
   if(ids.has('naive')&&!value('naive'))warn('Naive 域名留空，将在 VPS 上交互输入。','naive');
+  if(ids.has('naive')){
+    if(value('naiveuser').includes(':')||value('naiveuser').length>255)error('Naive 用户名不能含冒号，且不能超过 255 字符。','naiveuser');
+    if(value('naivesite')&&!validDomain(value('naivesite').replace(/^https?:\/\//,'')))error('伪装站须为支持 HTTPS 的域名，不包含端口或路径。','naivesite');
+    if(value('operation')!=='rep'&&value('acmem')&&!/^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$/.test(value('acmem')))error('Naive 的 ACME 邮箱格式无效。','acmem');
+  }
   if(value('uuid')&&protocols.some(p=>['vlpt','xhpt','vxpt','vwpt','vmpt','xvcdnpt','xvargopt','xdns','xicmp'].includes(p.id))&&!/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(value('uuid')))error('混合 VLESS / VMess 时请填写标准 UUID，或留空自动生成。','uuid');
   if(value('cdnEnabled')){
     if(!validDomain(value('cdnym').trim()))error('启用 CDN 后需要填写有效的 cdnym 域名。','cdnym');
     const cdn=protocols.filter(p=>p.access.includes('cdn'));if(!cdn.length)error('当前选择没有支持 CDN 的协议；可选择 vxpt、vwpt 或 vmpt。','protocols');
-    for(const p of cdn.filter(p=>!p.blocked)){const port=value('port-'+p.id).trim()||p.defaultPort||'',allowed=p.id==='xvcdnpt'?CDN_HTTPS_PORTS:CDN_HTTP_PORTS;if(!allowed.has(port))error(p.id+' 需要对应的 Cloudflare '+(p.id==='xvcdnpt'?'HTTPS':'HTTP')+' 代理端口。','port-'+p.id);}
+    for(const p of cdn.filter(p=>!p.blocked)){const port=value('port-'+p.id).trim()||p.defaultPort||'',allowed=p.id==='xvcdnpt'?CDN_HTTPS_PORTS:CDN_HTTP_PORTS;if(port&&!allowed.has(String(Number(port))))error(p.id+' 需要对应的 Cloudflare '+(p.id==='xvcdnpt'?'HTTPS':'HTTP')+' 代理端口。','port-'+p.id);}
   }
   if(value('argoEnabled')){
     const p=value('argo');if(!ids.has(p))error('Argo 绑定的 '+p+' 尚未选中。','select-'+p);
@@ -1449,15 +1722,21 @@ function validate(deploy,protocols,pairs){
   if(value('operation')==='rep'&&value('certMode')!=='auto')warn('rep 保留证书，不会传入此表单的证书申请参数。','operation');
   if(value('ipv')==='6'&&ids.has('xicmp'))error('脚本不支持 ipv=6 与 XICMP 同时使用。','ipv');
   if(!['keep','restore'].includes(value('ipv')))warn('ipv 会修改 VPS 系统网络策略；所需平台条件由脚本在 VPS 检查。','ipv');
-  if(value('sub')&&value('subpt')){const p=value('subpt');if(!/^\d+$/.test(p)||Number(p)<1||Number(p)>65535)error('订阅端口应为 1 至 65535。','subpt');else if(ports.has('tcp:'+Number(p)))error('订阅端口与 '+ports.get('tcp:'+Number(p))+' 的 TCP 端口重复。','subpt');}
-  if(value('sub')&&value('subid')&&!/^[A-Za-z0-9_-]{1,128}$/.test(value('subid')))error('订阅 Token 使用 1 至 128 位字母、数字、下划线或短横线，避免路径分隔符。','subid');
+  if(value('sub')&&value('subpt')){const p=value('subpt').trim();if(!/^\d{1,5}$/.test(p)||Number(p)<1||Number(p)>65535)error('订阅端口应为 1 至 65535。','subpt');else if(ports.has('tcp:'+Number(p)))error('订阅端口与 '+ports.get('tcp:'+Number(p))+' 的 TCP 端口重复。','subpt');}
+  if(value('sub')&&value('cdnEnabled')&&!CDN_HTTPS_PORTS.has(String(Number(value('subpt').trim()))))error('CDN 订阅须显式填写受支持的 HTTPS 端口。','subpt');
+  if(value('sub')&&value('subid')&&!/^[A-Za-z0-9_-]{16,128}$/.test(value('subid')))error('订阅 Token 使用 16 至 128 位字母、数字、下划线或短横线。','subid');
   const cert=value('certMode');
   if(value('operation')!=='rep'){
     if(ids.has('xvcdnpt')&&cert==='auto')warn('CDN 的 HTTPS 回源需要 Cloudflare 接受源站证书；严格校验模式应使用域名匹配的可信证书。可选择 DNS-01 或导入证书。','certMode');
     if(['http','alpn','dns'].includes(cert)&&!validDomain(value('certym').trim()))error('所选 ACME 方式需要有效的证书域名。','certym');
     if(cert==='ip'){const ips=value('certip').trim().split(/\s+/);if(!value('certip').trim()||ips.length>2||ips.some(ip=>!isIPv4(ip)&&!isIPv6(ip)))error('IP 证书填写一个或两个有效 IP，使用空格分隔。','certip');}
     if(cert==='external'&&(!value('certcrt')||!value('certkey')))error('导入证书需要同时填写证书完整链和私钥的 VPS 路径。','certcrt');
-    if(cert==='dns'&&!value('CF_Token'))warn('DNS Token 留空，将在 VPS 上隐藏输入。','CF_Token');
+    if(cert==='external'&&value('certym')&&!validDomain(value('certym').trim()))error('导入证书的 SNI 应为具体域名，不填写星号或路径。','certym');
+    if(cert==='dns'){
+      if(!value('CF_Token')&&Boolean(value('CF_Key'))!==Boolean(value('CF_Email')))error('旧版 Cloudflare Key 与邮箱须成对填写。','CF_Key');
+      if(!value('CF_Token')&&!value('CF_Key'))warn('DNS Token 留空，将在 VPS 上隐藏输入。','CF_Token');
+      if(value('CF_Token')&&(value('CF_Key')||value('CF_Email')))warn('同时填写两种 Cloudflare 凭据；脚本优先使用 DNS Token。','CF_Key');
+    }
     if(ids.has('naive')&&cert==='alpn')warn('Naive/Caddy 会使用 443；TLS-ALPN-01 也要求独占 443，请考虑复用 Caddy 证书或 DNS-01。','certMode');
     if(!['auto','external'].includes(cert)){
       if(value('acmetimeout')&&(!/^\d+$/.test(value('acmetimeout'))||Number(value('acmetimeout'))<5||Number(value('acmetimeout'))>600))error('ACME 超时应为 5 至 600 秒。','acmetimeout');
@@ -1507,8 +1786,8 @@ function update(){
   }
   if(!issues.length)$('issues').append(node('p','valid-note',idle?'尚未选择协议，可直接开始选择。':'配置项匹配，可以复制命令。'));
   $('parameter-list').replaceChildren();for(const [key,v] of pairs){const row=node('div','parameter-row');row.append(node('code','',key),node('span','',!value('show-secrets')&&PRIVATE_KEYS.has(key)?'已隐藏':v===''?'空值（保留）':v));$('parameter-list').append(row);}if(!pairs.length)$('parameter-list').append(node('p','note','当前没有需要传入的变量。'));
-  const source=value('scriptSource');text('source-hint',source==='local'?'使用 VPS 上与此 GUI 配套的脚本文件。安装时 agsbx 快捷命令按 agsbxurl 下载，可指定相同版本的更新来源。':source==='repo'?(BUILD.remoteAligned?'默认使用 GitHub main 的配套脚本。下载和执行发生在 VPS，页面只生成命令文本。':'当前工作区接口尚未发布，请使用配套的 VPS 本地脚本或指定来源。'):source==='custom'?'此 URL 同时传入 agsbxurl，保持本次执行与后续快捷命令来源一致。页面不访问这个地址。':'执行 VPS 上已有的 agsbx。请确认已安装脚本包含本页所使用的变量。');
-  text('operation-hint',op==='rep'?'rep 会停止并重建所选非 Caddy 协议，保留已有 Naive/Caddy 和证书；旧协议未选中时可能被移除。':op==='install'?'用于首次安装；已有部署变更协议请选 rep。执行时可能安装依赖、下载核心、修改 VPS 服务与系统网络设置，页面只生成文本。':op==='res'?'res 重启 Xray / Sing-box / Argo，并处理已配置的 Caddy；不包含 Mita。':op==='reload'?'Xray 的 reload 会转为 restart；Mita 需显式选择。':op==='del'?'卸载操作的影响发生在执行命令的 VPS 上。':'管理已有部署；协议表单中的选择不会附加到这条命令。');
+  const source=value('scriptSource');text('source-hint',source==='local'?'使用 VPS 上与此 GUI 配套的脚本文件。安装时优先复制它作为 agsbx 快捷命令；agsbxurl 控制后续更新与下载回退来源。':source==='repo'?(BUILD.remoteAligned?'默认使用 GitHub main 的配套脚本。下载和执行发生在 VPS，页面只生成命令文本。':'当前工作区接口尚未发布，请使用配套的 VPS 本地脚本或指定来源。'):source==='custom'?'此 URL 同时传入 agsbxurl，保持本次执行与后续快捷命令来源一致。页面不访问这个地址。':'执行 VPS 上已有的 agsbx。请确认已安装脚本包含本页所使用的变量。');
+  text('operation-hint',op==='rep'?'rep 会停止并重建所选非 Caddy 协议，保留已有 Naive/Caddy 和证书；未选协议可能移除。路径和 SOCKS 凭据会重新生成，请重新导入节点。已有 Naive 二级链路不支持此重建方式。':op==='restore-ip'?'仅用于已有部署：生成 ipv=空值 的恢复命令。按 VPS 保存的快照恢复网络策略；快照不完整时脚本会停止并提示人工处理。':op==='install'?'用于首次安装；已有部署变更协议请选 rep。执行时可能安装依赖、下载核心、修改 VPS 服务与系统网络设置，页面只生成文本。':op==='res'?'res 重启已配置的 Xray / Sing-box / Caddy、Argo 与订阅服务；不包含 Mita。':op==='reload'?'Xray 的 reload 会转为 restart；all 处理已配置的 Xray / Sing-box / Caddy，Mita 需显式选择。':op==='del'?'卸载操作的影响发生在执行命令的 VPS 上。':'管理已有部署；协议表单中的选择不会附加到这条命令。');
   updateArchitecture(deploy,protocols,cores);
 }
 async function copyCommand(){
@@ -1552,11 +1831,14 @@ function onFormEdit(event){
   if(target.dataset.protocol==='xvcdnpt'&&target.checked)$('cdnEnabled').checked=true;
   if(['xhmode','vxmode','xvcdnmode'].includes(target.id))target.dataset.edited='true';
   if(target.dataset.extensionToggle&&target.checked)applyExtensionPreset(target.dataset.extensionToggle);
+  if(target.dataset.maskGroup&&target.checked)revealSelectedMasks(target.dataset.maskGroup);
   update();
 }
 $('builder').addEventListener('input',onFormEdit);
 $('builder').addEventListener('change',onFormEdit);
 document.addEventListener('click',event=>{
+  const treeButton=event.target.closest('[data-tree-action]');
+  if(treeButton)for(const section of $(treeButton.dataset.treeRoot).querySelectorAll('.config-tree'))section.open=treeButton.dataset.treeAction==='expand';
   const modeButton=event.target.closest('[data-command-mode]');
   if(modeButton){commandMode=modeButton.dataset.commandMode;renderCommandPanel();if(commandMode==='import')$('command-text').focus();}
   const filterButton=event.target.closest('[data-filter]');if(filterButton){filter=filterButton.dataset.filter;for(const b of document.querySelectorAll('[data-filter]'))b.setAttribute('aria-pressed',String(b===filterButton));update();}
@@ -1585,6 +1867,7 @@ function resetConfiguration(selectDefault=false){
   for(const container of document.querySelectorAll('[data-extension]')){
     delete container.dataset.initialized;container.querySelector('details').open=false;
     for(const input of container.querySelectorAll('[data-mask]'))input.checked=false;
+    for(const section of container.querySelectorAll('.config-tree'))section.open=section.dataset.initialOpen==='true';
   }
   for(const p of PROTOCOLS){$('select-'+p.id).checked=selectDefault&&p.id==='vlpt';if($('port-'+p.id))$('port-'+p.id).value='';}
   secondarySelection.clear();filterSnapshot=null;previousFilter='';clearProtocolFilter();$('show-secrets').checked=false;
