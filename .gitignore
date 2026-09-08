@@ -1,10 +1,11 @@
 # 默认忽略所有文件与目录
 *
 
-# 显式排除核心文件，确保只有它们能被同步
+# 显式允许配套发布文件进入版本管理
 !.gitignore
 !LICENSE
 !airgosbx.sh
+!airgosbx-gui.html
 
 # 本地审计报告，不同步到远程仓库
 /auditreport.md

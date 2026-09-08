@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
+AIRGOSBX_VERSION='V26.09.07'
+# 仅在内置 XHTTP 默认参数改变时更新此标记，普通脚本版本更新不使旧命令失效。
+XHTTP_DEFAULTS_VERSION='V26.09.07'
 # SSL.com EAB 仅在 ACME 注册步骤按需读取，禁止无关子进程继承敏感凭据。
-export -n sslcom_eab_kid sslcom_eab_hmac 2>/dev/null || true
+export -n sslcom_eab_kid sslcom_eab_hmac fmpass fmheader \
+  vl_fmpass xh_fmpass vx_fmpass vw_fmpass vm_fmpass hy_fmpass \
+  vx_fmheader vw_fmheader vm_fmheader hy_fmheader 2>/dev/null || true
+export -n xheaders64 xh_xheaders64 vx_xheaders64 xvd_xheaders64 xva_xheaders64 2>/dev/null || true
 # 说明：脚本使用了花括号展开、echo 转义等 Bash 语法，且安装后的 agsbx 快捷方式会按 shebang 执行；
 # 固定使用 bash 可避免在以 dash 作为 /bin/sh 的系统（如 Debian/Ubuntu）上 `agsbx rep` 等命令静默失效。
 #============================================================
@@ -370,6 +376,54 @@ node_title(){ printf '%s\n' "${C_BOLD}${C_CYAN}$1${C_RESET}"; }
 # vg() 打印分组小标题，vrow() 打印对齐的"变量 — 说明"行（变量名为 ASCII，%-11s 列对齐稳定）。
 vg(){ echo; printf '%s\n' "${C_GREEN}${C_BOLD}$1${C_RESET}"; }
 vrow(){ printf "  ${C_YELLOW}%-11s${C_RESET} %s\n" "$1" "$2"; }
+# XHTTP 扩展字段清单：变量名|Xray 字段|类型和范围|默认值|作用端。
+# 与本地 GUI 的 XHTTP_EXTRA_FIELDS 同步。置于帮助入口之前，帮助不执行部署逻辑。
+xhttp_extra_schema() {
+  cat <<'XHTTP_EXTRA_SCHEMA'
+xpadding|xPaddingBytes|range:1:4096|100-1000|both
+xpadobfs|xPaddingObfsMode|enum:true,false|true|both
+xpadkey|xPaddingKey|token|x_padding|both
+xpadheader|xPaddingHeader|token|Referer|both
+xpadplacement|xPaddingPlacement|enum:queryInHeader,query,header,cookie|queryInHeader|both
+xpadmethod|xPaddingMethod|enum:repeat-x,tokenish|repeat-x|both
+xheaders64|headers|headers||client
+xnogrpc|noGRPCHeader|enum:true,false|false|client
+xnosse|noSSEHeader|enum:true,false|false|server
+xupmethod|uplinkHTTPMethod|enum:POST,PUT,PATCH,GET|POST|both
+xsessionplacement|sessionPlacement|enum:path,query,header,cookie|path|both
+xsessionkey|sessionKey|opt-token||both
+xseqplacement|seqPlacement|enum:path,query,header,cookie|path|both
+xseqkey|seqKey|opt-token||both
+xdataplacement|uplinkDataPlacement|enum:body,auto,header,cookie|body|both
+xdatakey|uplinkDataKey|opt-token||both
+xchunksize|uplinkChunkSize|range:0:16777216|0|client
+xpostbytes|scMaxEachPostBytes|range:1:16777216|1000000|both
+xpostinterval|scMinPostsIntervalMs|range:0:60000|30|client
+xbufferposts|scMaxBufferedPosts|int:1:4096|30|server
+xstreamsecs|scStreamUpServerSecs|range:0:86400|20-80|server
+xheaderbytes|serverMaxHeaderBytes|int:0:1048576|8192|server
+xmuxcon|xmux.maxConcurrency|range:0:1024|0|client
+xmuxmax|xmux.maxConnections|range:0:128|3|client
+xmuxreuse|xmux.cMaxReuseTimes|range:0:2147483647|0|client
+xmuxrequests|xmux.hMaxRequestTimes|range:0:2147483647|600-900|client
+xmuxsecs|xmux.hMaxReusableSecs|range:0:2147483647|1800-3000|client
+xmuxkeepalive|xmux.hKeepAlivePeriod|keepalive|0|client
+xdownload|downloadSettings|enum:true,false|false|control
+xdownaddr|address|address||download
+xdownport|port|int:1:65535|443|download
+xdownsecurity|security|enum:tls,reality,none|tls|download
+xdownsni|serverName|hostname||download
+xdownhost|host|host||download
+xdownpath|path|path||download
+xdownmode|mode|enum:auto,packet-up,stream-up|auto|download
+xdownfp|fingerprint|enum:chrome,firefox,safari,edge,random,randomized|chrome|download
+xdownpbk|password|pubkey||download
+xdownsid|shortId|hex||download
+xdowninsecure|allowInsecure|enum:true,false|false|download
+xdownfm|finalmask|enum:none,inherit|none|download
+XHTTP_EXTRA_SCHEMA
+}
+
 showvars(){
 printf '%s\n' "${C_CYAN}~~~~~~~~~~~~~~~~~~~~ Airgosbx 变量速查表 ~~~~~~~~~~~~~~~~~~~~${C_RESET}"
 printf '%s\n' "${C_BOLD}用法：在脚本前以「变量=值」空格分隔传入，可任意组合${C_RESET}"
@@ -378,12 +432,26 @@ echo "取消IP策略并恢复VPS原状态：ipv=\"\" agsbx（list/status 等查�
 echo "说明：端口类变量留空(如 vlpt)即自动随机分配；带 pt 后缀的为可指定端口版"
 
 vg "① Xray 内核协议（端口留空＝自动分配）"
-vrow "xhpt"     "Vlessenc-xhttp-reality-vision-fm（旗舰·自带ENC加密）"
-vrow "vlpt"     "Vless-tcp-reality-vision-fm（经典抗封锁主力）"
+vrow "xhpt"     "VLESS Encryption＋XHTTP＋REALITY＋Vision（默认无 extra/FM）"
+vrow "vlpt"     "VLESS＋TCP/RAW＋REALITY＋Vision（默认无 FM）"
+vrow "xhextra"  "仅 xhpt：y 启用内置 XHTTP 扩展参数；n/未设置＝关闭"
+vrow "xhfm"     "xhpt 的 FM：sudoku、fragment，逗号多选；none＝关闭"
+vrow "vlfm"     "vlpt 的 FM：sudoku、fragment，逗号多选；none＝关闭"
+vrow "vxextra"  "vxpt 的 XHTTP extra：y/n（默认 n）"
+vrow "vxfm"     "vxpt 的 FM：header-custom、sudoku；套 CDN 时关闭"
+vrow "vwfm"     "vwpt 的 FM：header-custom、sudoku；CDN/Argo 时关闭"
+vrow "vmfm"     "Xray VMess 的 FM：header-custom、sudoku；Sing-box/CDN/Argo 时关闭"
+vrow "xhmode"   "xhpt 模式：auto/packet-up/stream-up/stream-one；基础默认 auto，开启 extra 默认 stream-one"
+vrow "vxmode"   "vxpt 模式；CDN 默认 packet-up，不开放 stream-one"
+echo "             fragment 只进入 TLS/REALITY 客户端，不写入服务端。"
+echo "             示例：xhpt=2087 xhextra=y xhfm=sudoku（完整参数随 VLESS URL 导出）"
+echo "             rep 按本次选项重建；list 使用已保存的配置，不读取本次增强选项。"
 vrow "vxpt"     "Vlessenc-xhttp-vision（裸ENC，配 cdnym 走CDN）"
 vrow "vwpt"     "Vlessenc-ws-vision（裸ENC，配 cdnym 走CDN）"
 vrow "xhypt"    "Xray-Hysteria2（QUIC，需TLS证书）"
+vrow "xhyfm"    "UDP FM：noise，可叠加一个 salamander/sudoku/header-*/mkcp-* 格式掩码"
 vrow "xdns"     "Vless-kcp-xdns-fm（备用DNS隧道，需配 xdnsym=域名）"
+vrow "xdnsym"   "XDNS 专用域名；该旧模板仍待独立适配，GUI 暂不生成其命令"
 vrow "xicmp"    "Vless-kcp-xicmp-fm（特种L3 Ping隧道，独占ICMP）"
 
 vg "② Sing-box 内核协议（端口留空＝自动分配）"
@@ -406,12 +474,17 @@ echo "             secp 命中 Sing-box 或 naive 时，B 地址须使用 IPv4 �
 
 vg "⑤ Cloudflare Argo 隧道（纯出站，VPS无需开放端口）"
 vrow "argo"     "指定哪个协议走隧道：vmpt / vwpt / xvargopt"
-vrow "xvargopt" "Vlessenc-xhttp-tls-vision-fm-argo（旗舰隧道节点）"
+vrow "xvargopt" "VLESS Encryption＋XHTTP＋Vision（回环 HTTP，packet-up；自动绑定 Argo）"
+vrow "xvargoextra" "Argo XHTTP extra：y/n；始终关闭 SSE 响应头"
+vrow "xvargofm" "Argo 客户端 FM：none/fragment；禁止私有包头、sudoku"
 vrow "agn"      "固定隧道域名（留空＝临时trycloudflare隧道）"
 vrow "agk"      "固定隧道 Token（与 agn 配对使用）"
 
 vg "⑥ Cloudflare CDN 回源 / 优选"
-vrow "xvcdnpt"  "Vlessenc-xhttp-tls-vision-fm-cdn（旗舰CDN节点）"
+vrow "xvcdnpt"  "VLESS Encryption＋XHTTP＋TLS＋Vision CDN（默认 2087，必须配 cdnym）"
+vrow "xvcdnextra" "CDN XHTTP extra：y/n（默认 n）"
+vrow "xvcdnmode" "CDN 模式：packet-up（默认）或 stream-up（需 CDN 支持流式上传）"
+vrow "xvcdnfm"  "CDN 客户端 FM：none/fragment；禁止私有包头、sudoku"
 vrow "cdnym"    "CDN host域名/优选IP域名（须已解析到CF）"
 
 vg "⑦ TLS 证书（alns=y 启用 acme.sh；未请求 ACME 时自动自签）"
@@ -462,6 +535,89 @@ vrow "mierupt"    "可选预设：端口（留空＝随机高位端口）"
 vrow "mieruuser"  "可选预设：用户名（留空＝自动生成）"
 vrow "mierupass"  "可选预设：密码（留空＝自动生成）"
 vrow "mierutrans" "可选预设：tcp（默认）或 udp"
+
+vg "⑬ Xray 扩展参数（仅作用于本次启用的对应扩展）"
+vrow "xpadding" "XHTTP 填充范围：1-4096 字节，默认 100-1000"
+vrow "xmuxcon"  "XMUX 并发数：0-1024，默认 0；不能与 xmuxmax 同时为正"
+vrow "xmuxmax"  "XMUX 连接数：0-128，默认 3"
+vrow "fmpass"   "FM 共用密钥（可选；留空按协议生成独立密钥）"
+vrow "fmascii"  "Sudoku 外观：prefer_entropy（默认）/prefer_ascii"
+vrow "fmpadding" "Sudoku 额外填充率：0-100，默认 0-0；不是字节数"
+vrow "fmheader" "header-custom 的配套十六进制前缀，1-128 字节；留空随机"
+vrow "fmdomain" "header-dns 的外观域名；仅选择该掩码时必填"
+vrow "fmnoise"  "UDP 噪声长度：1-1200 字节，默认 32-128"
+vrow "fmreset"  "UDP 噪声重置：0-3600 秒，默认 30-60"
+vrow "fmdelay"  "UDP 噪声延迟：0-1000 毫秒，默认 0"
+vrow "fmfraglen" "TLS 客户端分片长度：1-16384，默认 100-200"
+vrow "fmfragdelay" "TLS 分片延迟：0-1000 毫秒，默认 0"
+vrow "fmfragsplit" "TLS 分片数量：1-64，默认 3-6"
+vrow "xhycc"    "Xray Hysteria2 QUIC：auto/bbr/reno/brutal/force-brutal"
+vrow "xhyup"    "客户端上行 Mbps：0-100000；force-brutal 需明确正值"
+vrow "xhydown"  "客户端下行 Mbps：0-100000；force-brutal 需明确正值"
+echo "             FM 多项必须使用匹配的 Xray 客户端实现；完整参数随 URL 导出。"
+
+vg "⑭ Xray 按协议覆盖（未设置或空值＝沿用上方通用参数）"
+echo "             GUI 为每个协议独立传参；范围与同名通用参数一致。"
+vrow "vl_fmpass" "vlpt 专用 fmpass，仅作用于该协议"
+vrow "vl_fmascii" "vlpt 专用 fmascii，仅作用于该协议"
+vrow "vl_fmpadding" "vlpt 专用 fmpadding，仅作用于该协议"
+vrow "vl_fmfraglen" "vlpt 专用 fmfraglen，仅作用于该协议"
+vrow "vl_fmfragdelay" "vlpt 专用 fmfragdelay，仅作用于该协议"
+vrow "vl_fmfragsplit" "vlpt 专用 fmfragsplit，仅作用于该协议"
+vrow "xh_xpadding" "xhpt 专用 xpadding，仅作用于该协议"
+vrow "xh_xmuxcon" "xhpt 专用 xmuxcon，仅作用于该协议"
+vrow "xh_xmuxmax" "xhpt 专用 xmuxmax，仅作用于该协议"
+vrow "xh_fmpass" "xhpt 专用 fmpass，仅作用于该协议"
+vrow "xh_fmascii" "xhpt 专用 fmascii，仅作用于该协议"
+vrow "xh_fmpadding" "xhpt 专用 fmpadding，仅作用于该协议"
+vrow "xh_fmfraglen" "xhpt 专用 fmfraglen，仅作用于该协议"
+vrow "xh_fmfragdelay" "xhpt 专用 fmfragdelay，仅作用于该协议"
+vrow "xh_fmfragsplit" "xhpt 专用 fmfragsplit，仅作用于该协议"
+vrow "vx_xpadding" "vxpt 专用 xpadding，仅作用于该协议"
+vrow "vx_xmuxcon" "vxpt 专用 xmuxcon，仅作用于该协议"
+vrow "vx_xmuxmax" "vxpt 专用 xmuxmax，仅作用于该协议"
+vrow "vx_fmpass" "vxpt 专用 fmpass，仅作用于该协议"
+vrow "vx_fmascii" "vxpt 专用 fmascii，仅作用于该协议"
+vrow "vx_fmpadding" "vxpt 专用 fmpadding，仅作用于该协议"
+vrow "vx_fmheader" "vxpt 专用 fmheader，仅作用于该协议"
+vrow "vw_fmpass" "vwpt 专用 fmpass，仅作用于该协议"
+vrow "vw_fmascii" "vwpt 专用 fmascii，仅作用于该协议"
+vrow "vw_fmpadding" "vwpt 专用 fmpadding，仅作用于该协议"
+vrow "vw_fmheader" "vwpt 专用 fmheader，仅作用于该协议"
+vrow "vm_fmpass" "vmpt 专用 fmpass，仅作用于该协议"
+vrow "vm_fmascii" "vmpt 专用 fmascii，仅作用于该协议"
+vrow "vm_fmpadding" "vmpt 专用 fmpadding，仅作用于该协议"
+vrow "vm_fmheader" "vmpt 专用 fmheader，仅作用于该协议"
+vrow "hy_fmpass" "xhypt 专用 fmpass，仅作用于该协议"
+vrow "hy_fmascii" "xhypt 专用 fmascii，仅作用于该协议"
+vrow "hy_fmpadding" "xhypt 专用 fmpadding，仅作用于该协议"
+vrow "hy_fmheader" "xhypt 专用 fmheader，仅作用于该协议"
+vrow "hy_fmdomain" "xhypt 专用 fmdomain，仅作用于该协议"
+vrow "hy_fmnoise" "xhypt 专用 fmnoise，仅作用于该协议"
+vrow "hy_fmreset" "xhypt 专用 fmreset，仅作用于该协议"
+vrow "hy_fmdelay" "xhypt 专用 fmdelay，仅作用于该协议"
+vrow "xvd_xpadding" "xvcdnpt 专用 xpadding，仅作用于该协议"
+vrow "xvd_xmuxcon" "xvcdnpt 专用 xmuxcon，仅作用于该协议"
+vrow "xvd_xmuxmax" "xvcdnpt 专用 xmuxmax，仅作用于该协议"
+vrow "xvd_fmfraglen" "xvcdnpt 专用 fmfraglen，仅作用于该协议"
+vrow "xvd_fmfragdelay" "xvcdnpt 专用 fmfragdelay，仅作用于该协议"
+vrow "xvd_fmfragsplit" "xvcdnpt 专用 fmfragsplit，仅作用于该协议"
+vrow "xva_xpadding" "xvargopt 专用 xpadding，仅作用于该协议"
+vrow "xva_xmuxcon" "xvargopt 专用 xmuxcon，仅作用于该协议"
+vrow "xva_xmuxmax" "xvargopt 专用 xmuxmax，仅作用于该协议"
+vrow "xva_fmfraglen" "xvargopt 专用 fmfraglen，仅作用于该协议"
+vrow "xva_fmfragdelay" "xvargopt 专用 fmfragdelay，仅作用于该协议"
+vrow "xva_fmfragsplit" "xvargopt 专用 fmfragsplit，仅作用于该协议"
+
+vg "⑮ 完整 XHTTP Extra（空值继承默认；GUI 仅传入偏离默认的值）"
+vrow "cfgver" "默认配置版本标记，与脚本/GUI 版本配套，避免历史命令静默套用新默认"
+echo "             通用变量可加 xh_ / vx_ / xvd_ / xva_ 前缀，分别覆盖直连/CDN/Tunnel。"
+local extra_key extra_name extra_type extra_default extra_side
+while IFS='|' read -r extra_key extra_name extra_type extra_default extra_side; do
+  vrow "$extra_key" "$extra_name；默认 ${extra_default:-空}；$extra_type；$extra_side"
+done < <(xhttp_extra_schema)
+echo "             xheaders64：最多 24 行请求头的 Base64；GUI 接受逐行文本，自动编码。"
+echo "             SessionPlacement/Key 兼容输出 sessionIDPlacement/Key；新主分支 Table/Length 暂不生成。"
 echo
 hr
 echo "命令速查见 ${C_YELLOW}agsbx cmds${C_RESET} ｜ 完整帮助 ${C_YELLOW}agsbx help${C_RESET}"
@@ -582,6 +738,481 @@ json_escape() {
   input=${input//\\/\\\\}
   input=${input//\"/\\\"}
   printf '%s' "$input"
+}
+
+# Xray 扩展按传输与接入路径校验；fragment 仅生成到 TLS/REALITY 客户端。
+# 只使用固定变量名、枚举和结构化渲染，不接收 eval/source 或未校验的原始 JSON。
+xray_range_valid() {
+  local value="$1" minimum="$2" maximum="$3" first last
+  [[ "$value" =~ ^[0-9]{1,10}(-[0-9]{1,10})?$ ]] || return 1
+  first=${value%%-*}; last=${value##*-}
+  first=$((10#$first)); last=$((10#$last))
+  [ "$first" -ge "$minimum" ] && [ "$last" -le "$maximum" ] && [ "$first" -le "$last" ]
+}
+
+xray_mask_selected() {
+  case ",$1," in *",$2,"*) return 0 ;; *) return 1 ;; esac
+}
+
+xray_normalize_masks() {
+  local value="${1:-none}" transport="$2" token normalized='' format_count=0
+  local -a tokens
+  [ "$value" != none ] || { printf 'none'; return 0; }
+  case "$value" in ''|,*|*,|*,,*|*[!a-z0-9,-]*) return 1 ;; esac
+  IFS=',' read -r -a tokens <<< "$value"
+  for token in "${tokens[@]}"; do
+    case "$transport:$token" in
+      tcp:sudoku|tcp:header-custom|tcp:fragment) ;;
+      udp:noise|udp:salamander|udp:sudoku|udp:header-custom|udp:header-dns|udp:header-dtls|udp:header-srtp|udp:header-utp|udp:header-wechat|udp:header-wireguard|udp:mkcp-original|udp:mkcp-aes128gcm) ;;
+      *) return 1 ;;
+    esac
+    xray_mask_selected "$normalized" "$token" && continue
+    if [ "$transport" = udp ] && [ "$token" != noise ]; then format_count=$((format_count + 1)); fi
+    normalized="${normalized:+$normalized,}$token"
+  done
+  # UDP 只开放一个格式转换掩码，可叠加 noise；专用 XDNS/XICMP 不混入通用 QUIC 链路。
+  [ "$format_count" -le 1 ] || return 1
+  # 固定序列，不依赖勾选顺序。两端必须使用兼容的核心；不能跨版本假定包裹顺序不变。
+  value=''
+  for token in noise header-custom header-dns header-dtls header-srtp header-utp header-wechat header-wireguard mkcp-original mkcp-aes128gcm salamander sudoku fragment; do
+    xray_mask_selected "$normalized" "$token" && value="${value:+$value,}$token"
+  done
+  printf '%s' "$value"
+}
+
+# 协议覆盖参数白名单，与 HTML 的 XRAY_PROFILES 同步。未设置时沿用通用参数。
+# 仅固定名称可间接取值；不读取任意前缀、不解析命令，也不执行用户输入。
+
+# 覆盖顺序：协议专用值、通用值、脚本默认。变量名仅来自固定 schema。
+xhttp_extra_value() {
+  local profile="$1" key="$2" fallback="$3" scoped="${1}_${2}"
+  [ "$profile:$key" != xva:xnosse ] || fallback=true
+  if [ -n "${!scoped}" ]; then printf '%s' "${!scoped}"
+  elif [ -n "${!key}" ]; then printf '%s' "${!key}"
+  else printf '%s' "$fallback"; fi
+}
+
+# 请求头以 Base64 传入，逐行验证后转义为 JSON，不接收原始 JSON。
+xhttp_headers_json() {
+  local encoded="$1" decoded canonical line name value lower seen='|' output='' count=0
+  [ -n "$encoded" ] || { printf '{}'; return 0; }
+  [ "${#encoded}" -le 8192 ] && [[ "$encoded" =~ ^[A-Za-z0-9+/]*={0,2}$ ]] || return 1
+  decoded=$(printf '%s' "$encoded" | base64 -d 2>/dev/null) || return 1
+  canonical=$(printf '%s' "$decoded" | base64 | tr -d '\r\n') || return 1
+  [ "$canonical" = "$encoded" ] || return 1
+  while IFS= read -r line || [ -n "$line" ]; do
+    [[ "$line" == *:* ]] || return 1
+    name=${line%%:*}; value=${line#*:}
+    [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] && [ "${#name}" -le 128 ] || return 1
+    while [[ "$value" == ' '* ]]; do value=${value# }; done
+    [ "${#value}" -le 2048 ] && ! printf '%s' "$value" | LC_ALL=C grep -q '[[:cntrl:]]' || return 1
+    lower=$(printf '%s' "$name" | tr 'A-Z' 'a-z')
+    case "$lower" in host|content-length|transfer-encoding|connection) return 1 ;; esac
+    case "$seen" in *"|$lower|"*) return 1 ;; esac
+    seen="$seen$lower|"; count=$((count + 1)); [ "$count" -le 24 ] || return 1
+    output="${output:+$output,}\"$(json_escape "$name")\":\"$(json_escape "$value")\""
+  done <<< "$decoded"
+  printf '{%s}' "$output"
+}
+
+xhttp_validate_extra() {
+  local profile="$1" mode="$2" key field kind fallback side value minimum maximum choice
+  local download method placement security mask_key masks
+  download=$(xhttp_extra_value "$profile" xdownload false)
+  while IFS='|' read -r key field kind fallback side; do
+    value=$(xhttp_extra_value "$profile" "$key" "$fallback")
+    [ "${#value}" -le 8192 ] && ! printf '%s' "$value" | LC_ALL=C grep -q '[[:cntrl:]]' \
+      || { echo "错误：${profile}_${key} 太长或含有控制字符。"; return 1; }
+    case "$kind" in
+      range:*|int:*)
+        IFS=: read -r choice minimum maximum <<< "$kind"
+        [ "$choice" != int ] || [[ "$value" =~ ^[0-9]{1,10}$ ]] || { echo "错误：${profile}_${key} 应为整数。"; return 1; }
+        xray_range_valid "$value" "$minimum" "$maximum" || { echo "错误：${profile}_${key} 的范围无效。"; return 1; } ;;
+      keepalive) [ "$value" = -1 ] || xray_range_valid "$value" 0 86400 && [[ "$value" != *-* || "$value" = -1 ]] || { echo "错误：HTTP 保活间隔仅支持 -1 或 0-86400 的整数。"; return 1; } ;;
+      enum:*) case ",${kind#enum:}," in *",$value,"*) ;; *) echo "错误：${profile}_${key} 不在允许的枚举中。"; return 1 ;; esac ;;
+      headers) xhttp_headers_json "$value" >/dev/null || { echo "错误：${profile}_${key} 不是有效的 Base64 请求头列表。"; return 1; } ;;
+      token|opt-token)
+        { [ "$kind" = opt-token ] && [ -z "$value" ]; } || [[ "$value" =~ ^[A-Za-z0-9_.-]{1,128}$ ]] \
+          || { echo "错误：${profile}_${key} 只允许 1-128 位字母、数字、点、短横线和下划线。"; return 1; } ;;
+      address|hostname|host)
+        [ -z "$value" ] || { [ "${#value}" -le 1024 ] && [[ "$value" =~ ^(\[[0-9A-Fa-f:]+\]|[A-Za-z0-9._:-]+)$ ]]; } \
+          || { echo "错误：${profile}_${key} 需填写地址，不含 URL 协议头或路径。"; return 1; } ;;
+      path) [ -z "$value" ] || { [ "${#value}" -le 1024 ] && [[ "$value" == /* ]]; } || { echo "错误：下载路径应以 / 开头。"; return 1; } ;;
+      pubkey) [ -z "$value" ] || [[ "$value" =~ ^[A-Za-z0-9_-]{43}$ ]] || { echo "错误：下载 REALITY 公钥格式无效。"; return 1; } ;;
+      hex) [[ "$value" =~ ^([0-9A-Fa-f]{2}){0,8}$ ]] || { echo "错误：下载 Short ID 必须为不超过 16 位的偶数位十六进制。"; return 1; } ;;
+      *) return 1 ;;
+    esac
+  done < <(xhttp_extra_schema)
+  method=$(xhttp_extra_value "$profile" xupmethod POST)
+  placement=$(xhttp_extra_value "$profile" xdataplacement body)
+  if { [ "$method" = GET ] || [ "$placement" = header ] || [ "$placement" = cookie ]; } && [ "$mode" != packet-up ]; then
+    echo "错误：$profile 的 GET/header/cookie 上传必须显式选择 packet-up。"; return 1
+  fi
+  if [ "$method" = GET ] && [ "$placement" != header ] && [ "$placement" != cookie ]; then
+    echo "错误：GET 上传需要将数据放入 header 或 cookie。"; return 1
+  fi
+  if [ "$profile" = xva ] && [ "$(xhttp_extra_value "$profile" xnosse true)" != true ]; then
+    echo "错误：Tunnel 的 noSSEHeader 必须保持 true。"; return 1
+  fi
+  if [ "$download" = true ]; then
+    [ "$mode" != stream-one ] || { echo "错误：stream-one 不能使用独立 downloadSettings。"; return 1; }
+    [ -n "$(xhttp_extra_value "$profile" xdownaddr '')" ] || { echo "错误：独立下载需要目标地址。"; return 1; }
+    security=$(xhttp_extra_value "$profile" xdownsecurity tls)
+    if [ "$security" = reality ]; then
+      [ -n "$(xhttp_extra_value "$profile" xdownpbk '')" ] && [ -n "$(xhttp_extra_value "$profile" xdownsni '')" ] \
+        || { echo "错误：REALITY 下载需要 SNI 与公钥。"; return 1; }
+    fi
+    if [ "$method" = GET ] || [ "$placement" = header ] || [ "$placement" = cookie ]; then
+      [ "$(xhttp_extra_value "$profile" xdownmode auto)" = packet-up ] \
+        || { echo "错误：下载侧继承了 GET/header/cookie 设置，其模式也应设为 packet-up。"; return 1; }
+    fi
+    if [ "$(xhttp_extra_value "$profile" xdownfm none)" = inherit ]; then
+      case "$profile" in xh) mask_key=xhfm ;; vx) mask_key=vxfm ;; xvd) mask_key=xvcdnfm ;; xva) mask_key=xvargofm ;; esac
+      masks=${!mask_key}
+      if [ "$security" = none ] && xray_mask_selected "$masks" fragment; then echo "错误：无 TLS 的下载侧不能继承 tlshello 分片。"; return 1; fi
+      if [ "$security" = reality ] && xray_mask_selected "$masks" header-custom; then echo "错误：REALITY 下载侧不开放 header-custom。"; return 1; fi
+    fi
+  fi
+}
+
+xray_profile_keys() {
+  case "$1" in xh|vx|xvd|xva) printf '%s ' 'xpadobfs xpadkey xpadheader xpadplacement xpadmethod xheaders64 xnogrpc xnosse xupmethod xsessionplacement xsessionkey xseqplacement xseqkey xdataplacement xdatakey xchunksize xpostbytes xpostinterval xbufferposts xstreamsecs xheaderbytes xmuxreuse xmuxrequests xmuxsecs xmuxkeepalive xdownload xdownaddr xdownport xdownsecurity xdownsni xdownhost xdownpath xdownmode xdownfp xdownpbk xdownsid xdowninsecure xdownfm' ;; esac
+  case "$1" in
+    vl) printf '%s' 'fmpass fmascii fmpadding fmfraglen fmfragdelay fmfragsplit' ;;
+    xh) printf '%s' 'xpadding xmuxcon xmuxmax fmpass fmascii fmpadding fmfraglen fmfragdelay fmfragsplit' ;;
+    vx) printf '%s' 'xpadding xmuxcon xmuxmax fmpass fmascii fmpadding fmheader' ;;
+    vw|vm) printf '%s' 'fmpass fmascii fmpadding fmheader' ;;
+    hy) printf '%s' 'fmpass fmascii fmpadding fmheader fmdomain fmnoise fmreset fmdelay' ;;
+    xvd|xva) printf '%s' 'xpadding xmuxcon xmuxmax fmfraglen fmfragdelay fmfragsplit' ;;
+    *) return 1 ;;
+  esac
+}
+
+xray_apply_profile_tuning() {
+  local profile="$1" keys key scoped
+  keys=$(xray_profile_keys "$profile") || return 1
+  for key in $keys; do
+    case "$key" in xpadding|xmuxcon|xmuxmax|fm*) ;; *) continue ;; esac
+    scoped="${profile}_${key}"
+    [ -n "${!scoped}" ] || continue
+    printf -v "$key" '%s' "${!scoped}"
+  done
+}
+
+xray_validate_tuning() {
+  local context="$1"
+  xray_range_valid "$xpadding" 1 4096 && xray_range_valid "$xmuxcon" 0 1024 && xray_range_valid "$xmuxmax" 0 128 \
+    && xray_range_valid "$fmpadding" 0 100 && xray_range_valid "$fmnoise" 1 1200 \
+    && xray_range_valid "$fmreset" 0 3600 && xray_range_valid "$fmdelay" 0 1000 \
+    && xray_range_valid "$fmfraglen" 1 16384 && xray_range_valid "$fmfragdelay" 0 1000 && xray_range_valid "$fmfragsplit" 1 64 \
+    || { echo "错误：$context 的 XHTTP/FM 范围参数无效，请查看 agsbx vars。"; return 1; }
+  [ "$((10#${xmuxcon##*-}))" = 0 ] || [ "$((10#${xmuxmax##*-}))" = 0 ] || { echo "错误：$context 的 xmuxcon 与 xmuxmax 不能同时为正值。"; return 1; }
+  case "$fmascii" in prefer_entropy|prefer_ascii) ;; *) echo "错误：$context 的 fmascii 仅支持 prefer_entropy/prefer_ascii。"; return 1 ;; esac
+  if [ -n "$fmheader" ] && ! [[ "$fmheader" =~ ^([0-9A-Fa-f]{2}){1,128}$ ]]; then echo "错误：$context 的 fmheader 应为 1 至 128 字节的十六进制字符串。"; return 1; fi
+  if [ -n "$fmpass" ] && { [ "${#fmpass}" -gt 256 ] || printf '%s' "$fmpass" | LC_ALL=C grep -q '[[:cntrl:]]'; }; then echo "错误：$context 的 fmpass 过长或包含控制字符。"; return 1; fi
+  if [ "$context" = hy ] && xray_mask_selected "$xhyfm" header-dns \
+    && ! [[ "$fmdomain" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?\.[A-Za-z]{2,63}$ ]]; then
+    echo "错误：header-dns 需要有效的 hy_fmdomain 或通用 fmdomain。"; return 1
+  fi
+}
+
+xray_validate_profile_tuning() {
+  # Bash 动态作用域：覆盖只写入本函数的局部变量，不污染其他协议。
+  local xpadding="$xpadding" xmuxcon="$xmuxcon" xmuxmax="$xmuxmax"
+  local fmpass="$fmpass" fmascii="$fmascii" fmpadding="$fmpadding" fmheader="$fmheader" fmdomain="$fmdomain"
+  local fmnoise="$fmnoise" fmreset="$fmreset" fmdelay="$fmdelay"
+  local fmfraglen="$fmfraglen" fmfragdelay="$fmfragdelay" fmfragsplit="$fmfragsplit"
+  xray_apply_profile_tuning "$1" && xray_validate_tuning "$1"
+}
+
+validate_xray_options() {
+  local option flag transport normalized spec mode allowed has_xray=no has_singbox=no
+  if [ -n "$cfgver" ] && [ "$cfgver" != "$XHTTP_DEFAULTS_VERSION" ]; then
+    echo "错误：命令的默认配置版本为 $cfgver，当前预设为 $XHTTP_DEFAULTS_VERSION；请使用配套版本。"; return 1
+  fi
+  for spec in xhextra:xhp vxextra:vxp xvcdnextra:xvcdn xvargoextra:xvargo; do
+    option=${spec%:*}; flag=${spec#*:}
+    case "${!option:-n}" in
+      y|yes|1) printf -v "$option" '%s' yes ;;
+      n|no|0) printf -v "$option" '%s' no ;;
+      *) echo "错误：$option 仅支持 y/yes/1 或 n/no/0。"; return 1 ;;
+    esac
+    if [ "${!option}" = yes ] && [ "${!flag}" != yes ]; then echo "错误：$option 必须同时启用对应的协议端口变量。"; return 1; fi
+  done
+  for spec in xhfm:xhp:tcp vlfm:vlp:tcp vxfm:vxp:tcp vwfm:vwp:tcp vmfm:vmp:tcp xhyfm:xhyp:udp xvcdnfm:xvcdn:tcp xvargofm:xvargo:tcp; do
+    IFS=: read -r option flag transport <<< "$spec"
+    normalized=$(xray_normalize_masks "${!option:-none}" "$transport") || {
+      echo "错误：$option 的掩码类型或组合不受支持。TCP 支持 header-custom/sudoku/fragment；UDP 允许一个格式掩码加 noise。"
+      return 1
+    }
+    printf -v "$option" '%s' "$normalized"
+    if [ "$normalized" != none ] && [ "${!flag}" != yes ]; then echo "错误：$option 必须同时启用对应协议。"; return 1; fi
+  done
+  for option in xvcdnfm xvargofm; do
+    case "${!option}" in none|fragment) ;; *) echo "错误：$option 只允许客户端 TLS 分片，Cloudflare 不解码私有 FM。"; return 1 ;; esac
+  done
+  for option in vxfm vwfm vmfm; do
+    if xray_mask_selected "${!option}" fragment; then echo "错误：$option 的直连入口没有外层 TLS，不能使用 tlshello 分片。"; return 1; fi
+  done
+  for option in xhfm vlfm; do
+    if xray_mask_selected "${!option}" header-custom; then echo "错误：REALITY 入站的 header-custom 连接接口兼容性未确认，当前仅开放 sudoku 与客户端 fragment。"; return 1; fi
+  done
+  if [ -n "$cdnym" ] && { [ "$vxfm" != none ] || [ "$vwfm" != none ] || [ "$vmfm" != none ]; }; then
+    echo "错误：cdnym 会为 vxpt/vwpt/vmpt 生成 CDN 节点，这些共享入站不能同时启用私有 TCP FM。"; return 1
+  fi
+  case "$argo" in
+    '') [ "$xvargo" != yes ] || argo=xvargopt ;;
+    vmpt) [ "$vmp" = yes ] && [ "$vmfm" = none ] || { echo "错误：argo=vmpt 需要 vmpt，且不能启用 vmfm。"; return 1; } ;;
+    vwpt) [ "$vwp" = yes ] && [ "$vwfm" = none ] || { echo "错误：argo=vwpt 需要 vwpt，且不能启用 vwfm。"; return 1; } ;;
+    xvargopt) [ "$xvargo" = yes ] || { echo "错误：argo=xvargopt 需要设置 xvargopt。"; return 1; } ;;
+    *) echo "错误：argo 仅支持 vmpt、vwpt、xvargopt。"; return 1 ;;
+  esac
+  [ "$xvargo" != yes ] || [ "$argo" = xvargopt ] || { echo "错误：xvargopt 必须作为本次唯一的 Argo 绑定协议。"; return 1; }
+  if [ -n "$argo" ]; then
+    if { [ -n "$agn" ] && [ -z "$agk" ]; } || { [ -z "$agn" ] && [ -n "$agk" ]; }; then echo "错误：固定隧道需要同时填写 agn 与 agk。"; return 1; fi
+    if [ -n "$agn" ] && ! [[ "$agn" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?\.[A-Za-z]{2,63}$ ]]; then echo "错误：agn 必须是有效的固定隧道域名。"; return 1; fi
+  fi
+  for option in vlpt xhpt vxpt vwpt vmpt xhypt xvcdnpt xvargopt; do
+    [ -n "${!option}" ] || continue
+    [[ "${!option}" =~ ^[0-9]{1,6}$ ]] && xray_range_valid "${!option}" 1 65535 || { echo "错误：$option 必须是 1 至 65535 的端口或空值。"; return 1; }
+    printf -v "$option" '%s' "$((10#${!option}))"
+  done
+  for option in xhyjpt shyjpt hyjpt; do
+    normalized=${!option}; [ -n "$normalized" ] || continue
+    normalized=${normalized//:/-}
+    xray_range_valid "$normalized" 1 65535 || { echo "错误：$option 必须是有效端口或连续范围。"; return 1; }
+    printf -v "$option" '%s' "$normalized"
+  done
+  for flag in xhp vlp vxp vwp xhyp xdns xicp xvcdn xvargo; do [ "${!flag}" != yes ] || has_xray=yes; done
+  for flag in hyp tup anp arp ssp; do [ "${!flag}" != yes ] || has_singbox=yes; done
+  if [ "$vmfm" != none ] && [ "$has_xray" = no ] && [ "$has_singbox" = yes ]; then
+    echo "错误：本次 vmpt 归属 Sing-box，不能使用 Xray 的 vmfm。"; return 1
+  fi
+  for spec in xhmode:xhp vxmode:vxp xvcdnmode:xvcdn; do
+    option=${spec%:*}; flag=${spec#*:}; mode=auto
+    if [ "$flag" = xhp ] && [ "$xhextra" = yes ]; then mode=stream-one; fi
+    if [ "$flag" = vxp ] && [ "$vxextra" = yes ]; then mode=packet-up; fi
+    mode=${!option:-$mode}
+    case "$mode" in auto|packet-up|stream-up|stream-one) ;; *) echo "错误：$option 模式无效。"; return 1 ;; esac
+    if [ "$flag" = xvcdn ] || { [ "$flag" = vxp ] && [ -n "$cdnym" ]; }; then
+      [ "$mode" != auto ] || mode=packet-up
+      [ "$mode" != stream-one ] || { echo "错误：CDN 不开放 stream-one，请用 packet-up，或确认支持流式上传后用 stream-up。"; return 1; }
+    fi
+    printf -v "$option" '%s' "$mode"
+  done
+  # 在依赖安装前完成纯文本域名/端口检查，避免输入错误时仍改动系统。
+  if [ "$xvcdn" = yes ]; then
+    [[ "$cdnym" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?\.[A-Za-z]{2,63}$ ]] && [[ "$cdnym" != *..* ]] || { echo "错误：xvcdnpt 必须提供有效的 cdnym 域名。"; return 1; }
+    xvcdnpt=${xvcdnpt:-2087}
+    case "$xvcdnpt" in 443|2053|2083|2087|2096|8443) ;; *) echo "错误：xvcdnpt 需使用 Cloudflare HTTPS 代理端口：443/2053/2083/2087/2096/8443。"; return 1 ;; esac
+  fi
+  xpadding=${xpadding:-100-1000}; xmuxcon=${xmuxcon:-0}; xmuxmax=${xmuxmax:-3}
+  fmascii=${fmascii:-prefer_entropy}; fmpadding=${fmpadding:-0-0}
+  fmnoise=${fmnoise:-32-128}; fmreset=${fmreset:-30-60}; fmdelay=${fmdelay:-0}
+  fmfraglen=${fmfraglen:-100-200}; fmfragdelay=${fmfragdelay:-0}; fmfragsplit=${fmfragsplit:-3-6}
+  xhycc=${xhycc:-auto}; xhyup=${xhyup:-0}; xhydown=${xhydown:-0}
+  case "$xhycc" in auto|bbr|reno|brutal|force-brutal) ;; *) echo "错误：xhycc 拥塞控制无效。"; return 1 ;; esac
+  [[ "$xhyup" =~ ^[0-9]{1,6}$ ]] && [[ "$xhydown" =~ ^[0-9]{1,6}$ ]] && xray_range_valid "$xhyup" 0 100000 && xray_range_valid "$xhydown" 0 100000 || { echo "错误：xhyup/xhydown 必须是 0-100000 的整数 Mbps。"; return 1; }
+  xhyup=$((10#$xhyup)); xhydown=$((10#$xhydown))
+  if [ "$xhycc" = force-brutal ] && { [ "$xhyup" = 0 ] || [ "$xhydown" = 0 ]; }; then echo "错误：force-brutal 需要明确设置正值 xhyup/xhydown。"; return 1; fi
+  if [ "$xhyp" != yes ] && { [ "$xhycc" != auto ] || [ "$xhyup" != 0 ] || [ "$xhydown" != 0 ]; }; then echo "错误：Xray QUIC 参数必须同时启用 xhypt。"; return 1; fi
+  xray_validate_tuning '通用参数' || return 1
+  for spec in vl xh vx vw vm hy xvd xva; do xray_validate_profile_tuning "$spec" || return 1; done
+  [ "$xhextra" != yes ] || xhttp_validate_extra xh "$xhmode" || return 1
+  [ "$vxextra" != yes ] || xhttp_validate_extra vx "$vxmode" || return 1
+  [ "$xvcdnextra" != yes ] || xhttp_validate_extra xvd "$xvcdnmode" || return 1
+  [ "$xvargoextra" != yes ] || xhttp_validate_extra xva packet-up || return 1
+}
+
+# 显式的内置参数组，不声称是所有网络的最佳值。未启用 extra 时完全省略该对象。
+# XMUX 为客户端连接复用策略，必须放在 extra.xmux，不写入服务端接收参数。
+# 默认会话/序号位于路径；会话字段兼容输出新旧名称，仅在启用时生成 downloadSettings。
+render_xhttp_extra() {
+  local side="$1" profile="$2" inherited_fm="$3" key field kind fallback target value rendered body='' mux='' result
+  local address port security sni host path mode fingerprint public_key short_id tls_fields='' down_fm=''
+  while IFS='|' read -r key field kind fallback target; do
+    case "$target" in control|download) continue ;; esac
+    [ "$target" = both ] || [ "$target" = "$side" ] || continue
+    value=$(xhttp_extra_value "$profile" "$key" "$fallback")
+    case "$kind" in
+      headers) rendered=$(xhttp_headers_json "$value") || return 1 ;;
+      enum:true,false) rendered="$value" ;;
+      int:*|keepalive) if [ "$value" = -1 ]; then rendered=-1; else rendered=$((10#$value)); fi ;;
+      *) rendered="\"$(json_escape "$value")\"" ;;
+    esac
+    case "$field" in
+      xmux.*) mux="${mux:+$mux,}\"${field#xmux.}\":$rendered" ;;
+      *)
+        body="${body:+$body,}\"$field\":$rendered"
+        case "$field" in
+          sessionPlacement) body="$body,\"sessionIDPlacement\":$rendered" ;;
+          sessionKey) body="$body,\"sessionIDKey\":$rendered" ;;
+        esac ;;
+    esac
+  done < <(xhttp_extra_schema)
+  [ -z "$mux" ] || body="$body,\"xmux\":{$mux}"
+  result="{$body}"
+  if [ "$side" = client ] && [ "$(xhttp_extra_value "$profile" xdownload false)" = true ]; then
+    address=$(xhttp_extra_value "$profile" xdownaddr '')
+    port=$(xhttp_extra_value "$profile" xdownport 443); port=$((10#$port))
+    security=$(xhttp_extra_value "$profile" xdownsecurity tls)
+    sni=$(xhttp_extra_value "$profile" xdownsni ''); [ -n "$sni" ] || sni="$address"
+    host=$(xhttp_extra_value "$profile" xdownhost '')
+    path=$(xhttp_extra_value "$profile" xdownpath ''); [ -n "$path" ] || path="/$uuid-$profile"
+    mode=$(xhttp_extra_value "$profile" xdownmode auto)
+    fingerprint=$(xhttp_extra_value "$profile" xdownfp chrome)
+    case "$security" in
+      tls) tls_fields=",\"tlsSettings\":{\"serverName\":\"$(json_escape "$sni")\",\"fingerprint\":\"$fingerprint\",\"alpn\":[\"h2\"],\"allowInsecure\":$(xhttp_extra_value "$profile" xdowninsecure false)}" ;;
+      reality)
+        public_key=$(xhttp_extra_value "$profile" xdownpbk '')
+        short_id=$(xhttp_extra_value "$profile" xdownsid '')
+        tls_fields=",\"realitySettings\":{\"serverName\":\"$(json_escape "$sni")\",\"fingerprint\":\"$fingerprint\",\"password\":\"$public_key\",\"shortId\":\"$short_id\"}" ;;
+    esac
+    if [ "$(xhttp_extra_value "$profile" xdownfm none)" = inherit ] && [ -n "$inherited_fm" ]; then down_fm=",\"finalmask\":$inherited_fm"; fi
+    body="$body,\"downloadSettings\":{\"address\":\"$(json_escape "$address")\",\"port\":$port,\"network\":\"xhttp\",\"security\":\"$security\"$tls_fields$down_fm,\"xhttpSettings\":{\"host\":\"$(json_escape "$host")\",\"path\":\"$(json_escape "$path")\",\"mode\":\"$mode\",\"extra\":$result}}"
+  fi
+  printf '{%s}' "$body"
+}
+
+# 按接入路径生成配套参数。客户端分片不进入服务端，其余所选掩码两端配套。
+# paddingMin/Max 是额外填充率，不是字节数；FM 默认不复用 VLESS UUID。
+prepare_xray_profile() {
+  local protocol="$1" mode=none password extra_client='' fm_json='' server_json='' target tmp extra=no transport=tcp token settings masks='' server_masks='' header pad_min pad_max
+  local xpadding="$xpadding" xmuxcon="$xmuxcon" xmuxmax="$xmuxmax"
+  local fmpass="$fmpass" fmascii="$fmascii" fmpadding="$fmpadding" fmheader="$fmheader" fmdomain="$fmdomain"
+  local fmnoise="$fmnoise" fmreset="$fmreset" fmdelay="$fmdelay"
+  local fmfraglen="$fmfraglen" fmfragdelay="$fmfragdelay" fmfragsplit="$fmfragsplit"
+  xray_apply_profile_tuning "$protocol" || return 1
+  direct_server_extra=''
+  direct_server_fm=''
+  direct_client_mode=auto
+  direct_server_mode=auto
+  direct_no_sse=false
+  case "$protocol" in
+    xh) mode="$xhfm"; extra="$xhextra"; direct_client_mode="$xhmode" ;;
+    vl) mode="$vlfm" ;;
+    vx) mode="$vxfm"; extra="$vxextra"; direct_client_mode="$vxmode" ;;
+    vw) mode="$vwfm" ;;
+    vm) mode="$vmfm" ;;
+    hy) mode="$xhyfm"; transport=udp ;;
+    xvd) mode="$xvcdnfm"; extra="$xvcdnextra"; direct_client_mode="$xvcdnmode" ;;
+    xva) mode="$xvargofm"; extra="$xvargoextra"; direct_client_mode=packet-up; direct_no_sse=true ;;
+    *) return 1 ;;
+  esac
+  if [ "$extra" = yes ]; then
+    direct_server_mode=$direct_client_mode
+    direct_server_extra=$(render_xhttp_extra server "$protocol" '') || return 1
+    direct_server_extra=", \"extra\": $direct_server_extra"
+  elif [ "$direct_no_sse" = true ]; then
+    # Tunnel 的基础兼容行为，不是用户启用的可选 extra 参数组。
+    direct_server_extra=', "noSSEHeader": true'
+  fi
+  if [ "$mode" != none ]; then
+    password=''; header=''
+    if xray_mask_selected "$mode" sudoku || xray_mask_selected "$mode" salamander || xray_mask_selected "$mode" mkcp-aes128gcm; then
+      password=${fmpass:-$(openssl rand -hex 32)}; [ -n "$password" ] || return 1
+      password=$(json_escape "$password")
+    fi
+    if xray_mask_selected "$mode" header-custom; then
+      header=${fmheader:-$(openssl rand -hex 16)}; [ -n "$header" ] || return 1
+    fi
+    pad_min=${fmpadding%%-*}; pad_max=${fmpadding##*-}
+    pad_min=$((10#$pad_min)); pad_max=$((10#$pad_max))
+    local -a selected_masks
+    IFS=',' read -r -a selected_masks <<< "$mode"
+    for token in "${selected_masks[@]}"; do
+      case "$token" in
+        fragment) settings="{\"packets\":\"tlshello\",\"length\":\"$fmfraglen\",\"delay\":\"$fmfragdelay\",\"maxSplit\":\"$fmfragsplit\"}" ;;
+        sudoku) settings="{\"password\":\"$password\",\"ascii\":\"$fmascii\",\"paddingMin\":$pad_min,\"paddingMax\":$pad_max}" ;;
+        salamander|mkcp-aes128gcm) settings="{\"password\":\"$password\"}" ;;
+        noise) settings="{\"reset\":\"$fmreset\",\"noise\":[{\"rand\":\"$fmnoise\",\"randRange\":\"0-255\",\"delay\":\"$fmdelay\"}]}" ;;
+        header-custom)
+          if [ "$transport" = tcp ]; then settings="{\"clients\":[[{\"type\":\"hex\",\"packet\":\"$header\"}]],\"servers\":[[{\"type\":\"hex\",\"packet\":\"$header\"}]]}"
+          else settings="{\"client\":[{\"type\":\"hex\",\"packet\":\"$header\"}],\"server\":[{\"type\":\"hex\",\"packet\":\"$header\"}]}"; fi ;;
+        header-dns) settings="{\"domain\":\"$fmdomain\"}" ;;
+        *) settings='{}' ;;
+      esac
+      masks="${masks:+$masks,}{\"type\":\"$token\",\"settings\":$settings}"
+      [ "$token" = fragment ] || server_masks="${server_masks:+$server_masks,}{\"type\":\"$token\",\"settings\":$settings}"
+    done
+    fm_json="\"$transport\":[$masks]"
+    [ -z "$server_masks" ] || server_json="\"$transport\":[$server_masks]"
+  fi
+  if [ "$protocol" = hy ] && { [ -n "$xhyjpt" ] || [ "$xhycc" != auto ] || [ "$xhyup" != 0 ] || [ "$xhydown" != 0 ]; }; then
+    local hopping=${xhyjpt//:/-} congestion=${xhycc/auto/brutal} hop_json=''
+    [ -z "$hopping" ] || hop_json=",\"udpHop\":{\"ports\":\"$hopping\",\"interval\":15}"
+    fm_json="${fm_json:+$fm_json,}\"quicParams\":{\"congestion\":\"$congestion\",\"brutalUp\":\"${xhyup}mbps\",\"brutalDown\":\"${xhydown}mbps\"$hop_json}"
+    server_json="${server_json:+$server_json,}\"quicParams\":{\"congestion\":\"$congestion\",\"brutalUp\":\"${xhydown}mbps\",\"brutalDown\":\"${xhyup}mbps\"$hop_json}"
+  fi
+  [ -z "$fm_json" ] || fm_json="{$fm_json}"
+  [ -z "$server_json" ] || direct_server_fm=", \"finalmask\": {$server_json}"
+  if [ "$extra" = yes ]; then extra_client=$(render_xhttp_extra client "$protocol" "$fm_json") || return 1; fi
+  local extra_encoded fm_encoded
+  extra_encoded=$(uri_percent_encode "$extra_client")
+  fm_encoded=$(uri_percent_encode "$fm_json")
+  [ "${#extra_encoded}" -le 65536 ] && [ "${#fm_encoded}" -le 65536 ] || { echo "错误：配套 URL 参数过长。"; return 1; }
+  # 精确保存已生成的 URL 参数，而不是只保存开关；以后修改内置参数也不改变旧部署的 list。
+  # 版本 2：版本、客户端模式、extra、fm。旧直连版本 1 仍可读取，禁止 source/eval。
+  target="$HOME/agsbx/xray_${protocol}_profile"
+  [ -d "$HOME/agsbx" ] && [ ! -L "$HOME/agsbx" ] && [ ! -L "$target" ] || return 1
+  if [ -e "$target" ] && [ ! -f "$target" ]; then
+    echo "错误：直连配置状态不是普通文件：$target"; return 1
+  fi
+  tmp=$(mktemp "$HOME/agsbx/.direct-profile.XXXXXX") || return 1
+  if ! printf '%s\n' '2' "$direct_client_mode" "$extra_encoded" "$fm_encoded" > "$tmp" \
+    || ! chmod 600 "$tmp" || ! mv -f "$tmp" "$target"; then
+    rm -f "$tmp"
+    echo "错误：无法保存直连增强配置。"
+    return 1
+  fi
+}
+
+load_xray_profile() {
+  local protocol="$1" legacy_extra="$2" legacy_fm="$3" target version trailing='' field decoded current=no expected_version=2
+  case "$protocol" in xh|vl|vx|vw|vm|hy|xvd|xva) ;; *) return 1 ;; esac
+  target="$HOME/agsbx/xray_${protocol}_profile"
+  direct_extra_encoded=''
+  direct_fm_encoded=''
+  direct_url_options=''
+  direct_extra_label=''
+  direct_fm_label=''
+  direct_client_mode=auto
+  if grep -Fq "\"agsbx-profile-${protocol}-v2\"" "$HOME/agsbx/xr.json" 2>/dev/null; then current=yes
+  elif grep -Fq "\"agsbx-direct-${protocol}-v1\"" "$HOME/agsbx/xr.json" 2>/dev/null; then current=yes; expected_version=1; target="$HOME/agsbx/direct_${protocol}_profile"; fi
+  if [ "$current" = no ]; then
+    # update 只替换脚本；没有新生成器 email 标记的旧入站，仍使用历史参数。
+    # 标记同时防止回退旧脚本重建后，误用遗留的新状态文件。
+    direct_extra_encoded=$(uri_percent_encode "$legacy_extra")
+    direct_fm_encoded=$(uri_percent_encode "$legacy_fm")
+  else
+    if [ ! -f "$target" ] || [ -L "$target" ]; then
+      echo "错误：当前直连缺少有效的配套状态文件，拒绝生成不匹配的节点链接：$target"; return 1
+    fi
+    if ! {
+      IFS= read -r version && [ "$version" = "$expected_version" ] && { [ "$version" = 1 ] || { [ "$version" = 2 ] && IFS= read -r direct_client_mode; }; } \
+        && IFS= read -r direct_extra_encoded && IFS= read -r direct_fm_encoded \
+        && ! { IFS= read -r trailing || [ -n "$trailing" ]; }
+    } < "$target"; then
+      echo "错误：直连配置状态损坏，拒绝生成不匹配的节点链接：$target"; return 1
+    fi
+    for field in "$direct_extra_encoded" "$direct_fm_encoded"; do
+      # 只接受完整、规范的 URI 组件，不能让损坏状态注入额外查询参数。
+      [ "${#field}" -le 65536 ] || return 1
+      decoded=$(uri_percent_decode "$field") || return 1
+      [ "$(uri_percent_encode "$decoded")" = "$field" ] || return 1
+      case "$decoded" in ''|\{*\}) ;; *) echo "错误：直连参数状态不是 JSON 对象。"; return 1 ;; esac
+    done
+    case "$direct_client_mode" in auto|packet-up|stream-up|stream-one) ;; *) return 1 ;; esac
+    case "$protocol" in vl|vw|vm|hy) [ -z "$direct_extra_encoded" ] || return 1 ;; esac
+  fi
+  if [ -n "$direct_extra_encoded" ]; then
+    direct_url_options="&extra=$direct_extra_encoded"
+    direct_extra_label='-extra'
+  fi
+  if [ -n "$direct_fm_encoded" ]; then
+    direct_url_options="$direct_url_options&fm=$direct_fm_encoded"
+    direct_fm_label='-fm'
+  fi
 }
 
 # Caddyfile 双引号参数转义：防止 Naive 自定义凭据中的空格、引号或反斜杠破坏配置结构。
@@ -886,6 +1517,11 @@ esac
 # vmag 是"存在可走 Argo 隧道的协议"总开关，决定第8段是否拉起 cloudflared。
 # 此前仅 vmpt/vwpt 置位，导致单独设 xvargopt+argo=xvargopt 时隧道被静默跳过；补齐 xvargo。
 [ -z "${xvargopt+x}" ] || { xvargo=yes; vmag=yes; }
+case "$1" in
+  ''|rep) validate_xray_options || exit 1 ;;
+  del|list|status|stats|top|update|res|start|stop|restart|reload|upx|ups|downx|downs) ;;
+  *) echo "错误：未知命令 $1，请使用 agsbx help。"; exit 1 ;;
+esac
 # 布尔开关 sub 归一化：仅 sub=y/yes/1 视为显式启用，其余值或空/未设一律=关闭，统一规范（禁用 sub=on 之类写法）。
 # 随后 subpt/subid 一旦设值仍视为启用（向后兼容旧用法）。naive=<域名>、argo=<协议> 属「带值即启用」，不在此归一化。
 case "${sub:-}" in y|yes|1) sub=yes ;; *) sub='' ;; esac
@@ -1001,7 +1637,7 @@ printf '%s\n' "${C_CYAN}~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 printf '%s\n' "${C_BOLD}Airgosbx 小钢炮脚本 💣${C_RESET}"
 echo "项目地址：github.com/hugobaum/sbxrago"
 echo "基于 yonggekkk/argosbx"
-printf '%s\n' "当前版本：${C_GREEN}V26.08.05${C_RESET}"
+printf '%s\n' "当前版本：${C_GREEN}${AIRGOSBX_VERSION}${C_RESET}"
 printf '%s\n' "${C_CYAN}~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~${C_RESET}"
 hostname=$(uname -n)
 op=$(cat /etc/redhat-release 2>/dev/null || cat /etc/os-release 2>/dev/null | grep -i pretty_name | cut -d \" -f2)
@@ -3962,6 +4598,10 @@ if [ ! -e "$HOME/agsbx/xray" ]; then
 upxray || return 1
 fi
 [ -x "$HOME/agsbx/xray" ] || { echo "错误：Xray 内核不存在或不可执行。"; return 1; }
+local xray_version
+xray_version=$("$HOME/agsbx/xray" version 2>/dev/null | awk '/^Xray/{print $2}')
+[[ "$xray_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && [ "$(vercmp "$xray_version" 26.3.27)" != lt ] \
+  || { echo "错误：当前配置需要 Xray 26.3.27 或更新版本；请先更新核心。"; return 1; }
 cat > "$HOME/agsbx/xr.json" <<EOF
 {
   "log": {
@@ -3997,22 +4637,25 @@ private_key_x=$(cat "$HOME/agsbx/xrk/private_key")
 public_key_x=$(cat "$HOME/agsbx/xrk/public_key")
 short_id_x=$(cat "$HOME/agsbx/xrk/short_id")
 fi
-if [ -n "$xhp" ] || [ -n "$vxp" ] || [ -n "$vwp" ]; then
-if [ ! -e "$HOME/agsbx/xrk/dekey" ]; then
-vlkey=$("$HOME/agsbx/xray" vlessenc)
+if [ -n "$xhp" ] || [ -n "$vxp" ] || [ -n "$vwp" ] || [ "$xvcdn" = yes ] || [ "$xvargo" = yes ]; then
+[ ! -L "$HOME/agsbx/xrk/dekey" ] && [ ! -L "$HOME/agsbx/xrk/enkey" ] || { echo "错误：ENC 密钥文件不能是符号链接。"; return 1; }
+if [ ! -e "$HOME/agsbx/xrk/dekey" ] && [ ! -e "$HOME/agsbx/xrk/enkey" ]; then
+vlkey=$("$HOME/agsbx/xray" vlessenc) || { echo "错误：无法生成 VLESS Encryption 密钥。"; return 1; }
 dekey=$(echo "$vlkey" | grep '"decryption":' | sed -n '2p' | cut -d' ' -f2- | tr -d '"')
 enkey=$(echo "$vlkey" | grep '"encryption":' | sed -n '2p' | cut -d' ' -f2- | tr -d '"')
-echo "$dekey" > "$HOME/agsbx/xrk/dekey"
-echo "$enkey" > "$HOME/agsbx/xrk/enkey"
+case "$dekey:$enkey" in mlkem768x25519plus.*:mlkem768x25519plus.*) ;; *) echo "错误：核心输出的 ENC 密钥格式无法识别。"; return 1 ;; esac
+printf '%s\n' "$dekey" > "$HOME/agsbx/xrk/dekey" && printf '%s\n' "$enkey" > "$HOME/agsbx/xrk/enkey" || return 1
 fi
-dekey=$(cat "$HOME/agsbx/xrk/dekey")
-enkey=$(cat "$HOME/agsbx/xrk/enkey")
+dekey=$(cat "$HOME/agsbx/xrk/dekey") && enkey=$(cat "$HOME/agsbx/xrk/enkey") || return 1
+case "$dekey:$enkey" in mlkem768x25519plus.*:mlkem768x25519plus.*) ;; *) echo "错误：现有 ENC 密钥不完整，已停止生成配置。"; return 1 ;; esac
+chmod 600 "$HOME/agsbx/xrk/dekey" "$HOME/agsbx/xrk/enkey" || return 1
 fi
 
 if [ -n "$xhp" ]; then
 xhp=xhpt
 port_xh=$(init_port "$port_xh" port_xh)
-echo "Vlessenc-xhttp-reality-vision-fm端口：$port_xh"
+prepare_xray_profile xh || return 1
+echo "VLESS Encryption＋XHTTP＋REALITY＋Vision 端口：$port_xh（extra=$xhextra，FM=$xhfm）"
 cat >> "$HOME/agsbx/xr.json" <<EOF
     {
       "tag":"xhttp-reality",
@@ -4023,6 +4666,7 @@ cat >> "$HOME/agsbx/xr.json" <<EOF
         "clients": [
           {
             "id": "${uuid}",
+            "email": "agsbx-profile-xh-v2",
             "flow": "xtls-rprx-vision"
           }
         ],
@@ -4041,66 +4685,8 @@ cat >> "$HOME/agsbx/xr.json" <<EOF
         },
         "xhttpSettings": {
           "path": "/${uuid}-xh",
-          "mode": "auto",
-          "extra": {
-            "noGRPCHeader": false,
-            "noSSEHeader": false,
-            "xPaddingObfsMode": true,
-            "xPaddingBytes": "100-1000",
-            "xPaddingKey": "cf_clearance",
-            "xPaddingHeader": "Referer",
-            "xPaddingPlacement": "queryInHeader",
-            "xPaddingMethod": "repeat-x",
-            "uplinkHTTPMethod": "POST",
-            "sessionPlacement": "path",
-            "sessionKey": "",
-            "seqPlacement": "path",
-            "seqKey": "",
-            "uplinkDataPlacement": "body",
-            "uplinkDataKey": "",
-            "uplinkChunkSize": 0,
-            "scMaxEachPostBytes": 1000000,
-            "scMinPostsIntervalMs": "10-50",
-            "scMaxBufferedPosts": 30,
-            "scStreamUpServerSecs": "20-80",
-            "maxConcurrency": "16-32",
-            "maxConnections": "0-0",
-            "cMaxReuseTimes": "64-128",
-            "hMaxReusableSecs": "1800-3000",
-            "hKeepAlivePeriod": 45,
-            "downloadTargetHost": "",
-            "downloadTargetPort": 0,
-            "downloadServerName": "",
-            "downloadHTTPHost": ""
-          }
-        },
-        "finalmask": {
-          "tcp": [
-            {
-              "type": "sudoku",
-              "settings": {
-                "password": "${uuid}",
-                "paddingMin": 16,
-                "paddingMax": 64
-              }
-            }
-          ],
-          "udp": [
-            {
-              "type": "noise",
-              "settings": {
-                "reset": "30-60",
-                "noise": [
-                  {
-                    "rand": "32-128",
-                    "randRange": "0-255",
-                    "delay": "10-20"
-                  }
-                ]
-              }
-            }
-          ]
-        }
+          "mode": "$direct_server_mode"$direct_server_extra
+        }$direct_server_fm
       },
       "sniffing": {
         "enabled": true,
@@ -4115,6 +4701,7 @@ fi
 if [ -n "$vxp" ]; then
 vxp=vxpt
 port_vx=$(init_port "$port_vx" port_vx)
+prepare_xray_profile vx || return 1
 echo "Vlessenc-xhttp-vision端口：$port_vx"
 if [ -n "$cdnym" ]; then
 echo "$cdnym" > "$HOME/agsbx/cdnym"
@@ -4130,6 +4717,7 @@ cat >> "$HOME/agsbx/xr.json" <<EOF
         "clients": [
           {
             "id": "${uuid}",
+            "email": "agsbx-profile-vx-v2",
             "flow": "xtls-rprx-vision"
           }
         ],
@@ -4139,39 +4727,8 @@ cat >> "$HOME/agsbx/xr.json" <<EOF
         "network": "xhttp",
         "xhttpSettings": {
           "path": "${uuid}-vx",
-          "mode": "auto",
-          "extra": {
-            "noGRPCHeader": false,
-            "noSSEHeader": false,
-            "xPaddingObfsMode": true,
-            "xPaddingBytes": "100-1000",
-            "xPaddingKey": "cf_clearance",
-            "xPaddingHeader": "Referer",
-            "xPaddingPlacement": "queryInHeader",
-            "xPaddingMethod": "repeat-x",
-            "uplinkHTTPMethod": "POST",
-            "sessionPlacement": "path",
-            "sessionKey": "",
-            "seqPlacement": "path",
-            "seqKey": "",
-            "uplinkDataPlacement": "body",
-            "uplinkDataKey": "",
-            "uplinkChunkSize": 0,
-            "scMaxEachPostBytes": 1000000,
-            "scMinPostsIntervalMs": "10-50",
-            "scMaxBufferedPosts": 30,
-            "scStreamUpServerSecs": "20-80",
-            "maxConcurrency": "16-32",
-            "maxConnections": "0-0",
-            "cMaxReuseTimes": "64-128",
-            "hMaxReusableSecs": "1800-3000",
-            "hKeepAlivePeriod": 45,
-            "downloadTargetHost": "",
-            "downloadTargetPort": 0,
-            "downloadServerName": "",
-            "downloadHTTPHost": ""
-          }
-        }
+          "mode": "$direct_server_mode"$direct_server_extra
+        }$direct_server_fm
       },
         "sniffing": {
         "enabled": true,
@@ -4186,6 +4743,7 @@ fi
 if [ -n "$vwp" ]; then
 vwp=vwpt
 port_vw=$(init_port "$port_vw" port_vw)
+prepare_xray_profile vw || return 1
 echo "Vlessenc-ws-vision端口：$port_vw"
 if [ -n "$cdnym" ]; then
 echo "$cdnym" > "$HOME/agsbx/cdnym"
@@ -4201,6 +4759,7 @@ cat >> "$HOME/agsbx/xr.json" <<EOF
         "clients": [
           {
             "id": "${uuid}",
+            "email": "agsbx-profile-vw-v2",
             "flow": "xtls-rprx-vision"
           }
         ],
@@ -4210,7 +4769,7 @@ cat >> "$HOME/agsbx/xr.json" <<EOF
         "network": "ws",
         "wsSettings": {
           "path": "${uuid}-vw"
-        }
+        }$direct_server_fm
       },
         "sniffing": {
         "enabled": true,
@@ -4225,7 +4784,8 @@ fi
 if [ -n "$vlp" ]; then
 vlp=vlpt
 port_vl_re=$(init_port "$port_vl_re" port_vl_re)
-echo "Vless-tcp-reality-vision-fm端口：$port_vl_re"
+prepare_xray_profile vl || return 1
+echo "VLESS＋TCP/RAW＋REALITY＋Vision 端口：$port_vl_re（FM=$vlfm）"
 cat >> "$HOME/agsbx/xr.json" <<EOF
         {
             "tag":"reality-vision",
@@ -4236,6 +4796,7 @@ cat >> "$HOME/agsbx/xr.json" <<EOF
                 "clients": [
                     {
                         "id": "${uuid}",
+                        "email": "agsbx-profile-vl-v2",
                         "flow": "xtls-rprx-vision"
                     }
                 ],
@@ -4251,28 +4812,7 @@ cat >> "$HOME/agsbx/xr.json" <<EOF
                     ],
                     "privateKey": "$private_key_x",
                     "shortIds": ["$short_id_x"]
-                },
-                "finalmask": {
-                    "tcp": [
-                        {
-                            "type": "fragment",
-                            "settings": {
-                                "packets": "tlshello",
-                                "length": "100-200",
-                                "delay": "10-20",
-                                "maxSplit": "3-6"
-                            }
-                        },
-                        {
-                            "type": "sudoku",
-                            "settings": {
-                                "password": "${uuid}",
-                                "paddingMin": 16,
-                                "paddingMax": 64
-                            }
-                        }
-                    ]
-                }
+                }$direct_server_fm
             },
           "sniffing": {
           "enabled": true,
@@ -4287,9 +4827,9 @@ fi
 if [ -n "$xhyp" ]; then
 xhyp=xhypt
 port_xhy2=$(init_port "$port_xhy2" port_xhy2)
-echo "Xray-Hysteria2端口：$port_xhy2"
-setup_tls_certificate
-if [ -n "$xhyjpt" ]; then
+setup_tls_certificate || return 1
+prepare_xray_profile hy || return 1
+echo "Xray-Hysteria2 端口：$port_xhy2（UDP FM=$xhyfm）"
 cat >> "$HOME/agsbx/xr.json" <<EOF
     {
       "port": ${port_xhy2},
@@ -4297,76 +4837,19 @@ cat >> "$HOME/agsbx/xr.json" <<EOF
       "tag": "hy2-xr",
       "settings": {
         "version": 2,
-        "clients": [
-          {
-            "auth": "${uuid}"
-          }
-        ]
+        "clients": [{"auth": "${uuid}", "email": "agsbx-profile-hy-v2"}]
       },
       "streamSettings": {
         "network": "hysteria",
         "security": "tls",
         "tlsSettings": {
-          "alpn": [
-            "h3"
-          ],
-          "certificates": [
-            {
-              "certificateFile": "$tls_cert_file",
-              "keyFile": "$tls_key_file"
-            }
-          ]
+          "alpn": ["h3"],
+          "certificates": [{"certificateFile": "$tls_cert_file", "keyFile": "$tls_key_file"}]
         },
-        "hysteriaSettings": {
-          "version": 2
-        },
-        "finalmask": {
-          "quicParams": {
-            "congestion": "brutal",
-            "udpHop": {
-              "ports": "${xhyjpt}",
-              "interval": 15
-            }
-          }
-        }
+        "hysteriaSettings": {"version": 2}$direct_server_fm
       }
     },
 EOF
-else
-cat >> "$HOME/agsbx/xr.json" <<EOF
-    {
-      "port": ${port_xhy2},
-      "protocol": "hysteria",
-      "tag": "hy2-xr",
-      "settings": {
-        "version": 2,
-        "clients": [
-          {
-            "auth": "${uuid}"
-          }
-        ]
-      },
-      "streamSettings": {
-        "network": "hysteria",
-        "security": "tls",
-        "tlsSettings": {
-          "alpn": [
-            "h3"
-          ],
-          "certificates": [
-            {
-              "certificateFile": "$tls_cert_file",
-              "keyFile": "$tls_key_file"
-            }
-          ]
-        },
-        "hysteriaSettings": {
-          "version": 2
-        }
-      }
-    },
-EOF
-fi
 else
 xhyp=xhyptargo
 fi
@@ -4464,8 +4947,11 @@ EOF
 fi
 if [ "$xvcdn" = yes ]; then
 port_xvcdn=$(init_port "$port_xvcdn" port_xvcdn)
-echo "Vlessenc-xhttp-tls-vision-fm-cdn端口：$port_xvcdn"
-setup_tls_certificate
+printf '%s\n' "$cdnym" > "$HOME/agsbx/cdnym" || return 1
+setup_tls_certificate || return 1
+[ -s "$tls_cert_file" ] && [ -s "$tls_key_file" ] || return 1
+prepare_xray_profile xvd || return 1
+echo "VLESS Encryption＋XHTTP＋TLS＋Vision CDN 端口：$port_xvcdn（客户端模式=$direct_client_mode）"
 cat >> "$HOME/agsbx/xr.json" <<EOF
     {
       "tag": "vlessenc-xhttp-cdn",
@@ -4473,86 +4959,19 @@ cat >> "$HOME/agsbx/xr.json" <<EOF
       "port": ${port_xvcdn},
       "protocol": "vless",
       "settings": {
-        "clients": [
-          {
-            "id": "${uuid}",
-            "flow": "xtls-rprx-vision"
-          }
-        ],
+        "clients": [{"id": "${uuid}", "email": "agsbx-profile-xvd-v2", "flow": "xtls-rprx-vision"}],
         "decryption": "${dekey}"
       },
       "streamSettings": {
         "network": "xhttp",
         "security": "tls",
         "tlsSettings": {
-          "alpn": [
-            "h2",
-            "http/1.1"
-          ],
-          "certificates": [
-            {
-              "certificateFile": "$tls_cert_file",
-              "keyFile": "$tls_key_file"
-            }
-          ]
+          "alpn": ["h2", "http/1.1"],
+          "certificates": [{"certificateFile": "$tls_cert_file", "keyFile": "$tls_key_file"}]
         },
         "xhttpSettings": {
           "path": "/${uuid}-xvd",
-          "mode": "auto",
-          "extra": {
-            "noGRPCHeader": false,
-            "noSSEHeader": false,
-            "xPaddingObfsMode": true,
-            "xPaddingBytes": "100-1000",
-            "xPaddingKey": "cf_clearance",
-            "xPaddingHeader": "Referer",
-            "xPaddingPlacement": "queryInHeader",
-            "xPaddingMethod": "repeat-x",
-            "uplinkHTTPMethod": "POST",
-            "sessionPlacement": "path",
-            "sessionKey": "",
-            "seqPlacement": "path",
-            "seqKey": "",
-            "uplinkDataPlacement": "body",
-            "uplinkDataKey": "",
-            "uplinkChunkSize": 0,
-            "scMaxEachPostBytes": 1000000,
-            "scMinPostsIntervalMs": "10-50",
-            "scMaxBufferedPosts": 30,
-            "scStreamUpServerSecs": "20-80",
-            "maxConcurrency": "16-32",
-            "maxConnections": "0-0",
-            "cMaxReuseTimes": "64-128",
-            "hMaxReusableSecs": "1800-3000",
-            "hKeepAlivePeriod": 45
-          }
-        },
-        "finalmask": {
-          "tcp": [
-            {
-              "type": "sudoku",
-              "settings": {
-                "password": "${uuid}",
-                "paddingMin": 16,
-                "paddingMax": 64
-              }
-            }
-          ],
-          "udp": [
-            {
-              "type": "noise",
-              "settings": {
-                "reset": "30-60",
-                "noise": [
-                  {
-                    "rand": "32-128",
-                    "randRange": "0-255",
-                    "delay": "10-20"
-                  }
-                ]
-              }
-            }
-          ]
+          "mode": "$direct_server_mode"$direct_server_extra
         }
       }
     },
@@ -4560,8 +4979,10 @@ EOF
 fi
 if [ "$xvargo" = yes ]; then
 port_xvargo=$(init_port "$port_xvargo" port_xvargo)
-echo "Vlessenc-xhttp-tls-vision-fm-argo端口：$port_xvargo"
-setup_tls_certificate
+prepare_xray_profile xva || return 1
+echo "VLESS Encryption＋XHTTP＋Vision Argo 回环端口：$port_xvargo（HTTP / packet-up）"
+# 客户端到 Cloudflare 为 HTTPS；cloudflared 到同机回环端口为 HTTP。
+# VLESS Encryption 保留端到端加密；本地不添加需要 cloudflared 解码的 FM。
 cat >> "$HOME/agsbx/xr.json" <<EOF
     {
       "tag": "vlessenc-xhttp-argo",
@@ -4569,86 +4990,15 @@ cat >> "$HOME/agsbx/xr.json" <<EOF
       "port": ${port_xvargo},
       "protocol": "vless",
       "settings": {
-        "clients": [
-          {
-            "id": "${uuid}",
-            "flow": "xtls-rprx-vision"
-          }
-        ],
+        "clients": [{"id": "${uuid}", "email": "agsbx-profile-xva-v2", "flow": "xtls-rprx-vision"}],
         "decryption": "${dekey}"
       },
       "streamSettings": {
         "network": "xhttp",
-        "security": "tls",
-        "tlsSettings": {
-          "alpn": [
-            "h2",
-            "http/1.1"
-          ],
-          "certificates": [
-            {
-              "certificateFile": "$tls_cert_file",
-              "keyFile": "$tls_key_file"
-            }
-          ]
-        },
+        "security": "none",
         "xhttpSettings": {
           "path": "/${uuid}-xva",
-          "mode": "auto",
-          "extra": {
-            "noGRPCHeader": false,
-            "noSSEHeader": false,
-            "xPaddingObfsMode": true,
-            "xPaddingBytes": "100-1000",
-            "xPaddingKey": "cf_clearance",
-            "xPaddingHeader": "Referer",
-            "xPaddingPlacement": "queryInHeader",
-            "xPaddingMethod": "repeat-x",
-            "uplinkHTTPMethod": "POST",
-            "sessionPlacement": "path",
-            "sessionKey": "",
-            "seqPlacement": "path",
-            "seqKey": "",
-            "uplinkDataPlacement": "body",
-            "uplinkDataKey": "",
-            "uplinkChunkSize": 0,
-            "scMaxEachPostBytes": 1000000,
-            "scMinPostsIntervalMs": "10-50",
-            "scMaxBufferedPosts": 30,
-            "scStreamUpServerSecs": "20-80",
-            "maxConcurrency": "16-32",
-            "maxConnections": "0-0",
-            "cMaxReuseTimes": "64-128",
-            "hMaxReusableSecs": "1800-3000",
-            "hKeepAlivePeriod": 45
-          }
-        },
-        "finalmask": {
-          "tcp": [
-            {
-              "type": "sudoku",
-              "settings": {
-                "password": "${uuid}",
-                "paddingMin": 16,
-                "paddingMax": 64
-              }
-            }
-          ],
-          "udp": [
-            {
-              "type": "noise",
-              "settings": {
-                "reset": "30-60",
-                "noise": [
-                  {
-                    "rand": "32-128",
-                    "randRange": "0-255",
-                    "delay": "10-20"
-                  }
-                ]
-              }
-            }
-          ]
+          "mode": "packet-up"$direct_server_extra
         }
       }
     },
@@ -5338,6 +5688,7 @@ echo "$cdnym" > "$HOME/agsbx/cdnym"
 echo "80系CDN或者回源CDN的host域名 (确保IP已解析在CF域名)：$cdnym"
 fi
 if [ -e "$HOME/agsbx/xr.json" ]; then
+prepare_xray_profile vm || return 1
 cat >> "$HOME/agsbx/xr.json" <<EOF
         {
             "tag": "vmess-xr",
@@ -5347,7 +5698,8 @@ cat >> "$HOME/agsbx/xr.json" <<EOF
             "settings": {
                 "clients": [
                     {
-                        "id": "${uuid}"
+                        "id": "${uuid}",
+                        "email": "agsbx-profile-vm-v2"
                     }
                 ]
             },
@@ -5356,7 +5708,7 @@ cat >> "$HOME/agsbx/xr.json" <<EOF
                 "security": "none",
                 "wsSettings": {
                   "path": "${uuid}-vm"
-            }
+            }$direct_server_fm
         },
             "sniffing": {
             "enabled": true,
@@ -6516,6 +6868,14 @@ fi
 # - 本大段定义了安装编排的总发动机函数 ins()。负责协调内核下载、UUID分配、防火墙端口跳跃控制、Xray/Sing-box Inbound装配、配置文件最终闭合、Argo 隧道守护以及系统快捷键注入。
 # - 关联性: 由第 12 段 (主入口流程决策) 在判定为新安装或重置时调用，是串联整个 3300 行脚本全流程安装逻辑的核心中枢。
 #============================================================
+argo_origin_from_state(){
+  argoscheme=http; argoxtls=''; argo_origin_host=localhost
+  case "$(cat "$HOME/agsbx/vlvm" 2>/dev/null)" in
+    Vlessenc-xhttp-tls-vision-fm) argoscheme=https; argoxtls='--no-tls-verify ' ;;
+    Vlessenc-xhttp-vision) argo_origin_host=127.0.0.1 ;;
+  esac
+}
+
 cloudflared_supports_token_file(){
   [ -x "$HOME/agsbx/cloudflared" ] \
     && "$HOME/agsbx/cloudflared" tunnel run --help 2>&1 | grep -Fq -- '--token-file'
@@ -6794,14 +7154,14 @@ install_required_singbox="$need_singbox"
 if [ "$need_xray" = yes ] || [ "$need_singbox" = yes ]; then
   if [ "$need_xray" = yes ] && [ "$need_singbox" = no ]; then
     installxray || return 1
-    xrsbvm
+    xrsbvm || return 1
     xrsbso
     warpsx
     xrsbout || return 1
     hyp="shyptargo"; tup="tuptargo"; anp="anptargo"; arp="arptargo"; ssp="ssptargo"
   elif [ "$need_xray" = no ] && [ "$need_singbox" = yes ]; then
     installsb || return 1
-    xrsbvm
+    xrsbvm || return 1
     xrsbso
     warpsx
     xrsbout || return 1
@@ -6809,7 +7169,7 @@ if [ "$need_xray" = yes ] || [ "$need_singbox" = yes ]; then
   else
     installsb || return 1
     installxray || return 1
-    xrsbvm
+    xrsbvm || return 1
     xrsbso
     warpsx
     xrsbout || return 1
@@ -6864,11 +7224,9 @@ fi
 chmod +x "$HOME/agsbx/cloudflared" || { echo "错误：无法设置 Cloudflared 执行权限。"; return 1; }
 "$HOME/agsbx/cloudflared" --version >/dev/null 2>&1 || { echo "错误：Cloudflared 文件不可执行或架构不兼容。"; return 1; }
 fi
-if [ "$argo" = "vmpt" ]; then argoport=$(cat "$HOME/agsbx/port_vm_ws" 2>/dev/null); echo "Vmess" > "$HOME/agsbx/vlvm"; elif [ "$argo" = "vwpt" ]; then argoport=$(cat "$HOME/agsbx/port_vw" 2>/dev/null); echo "Vless" > "$HOME/agsbx/vlvm"; elif [ "$argo" = "xvargopt" ]; then argoport=$(cat "$HOME/agsbx/port_xvargo" 2>/dev/null); echo "Vlessenc-xhttp-tls-vision-fm" > "$HOME/agsbx/vlvm"; fi; echo "$argoport" > "$HOME/agsbx/argoport.log"
-# Argo 隧道本地回源协议自适应：vmess-ws / vless-ws 入站为明文，回源走 http；
-# xvargo (Vlessenc-xhttp-tls) 入站自带 TLS 层，cloudflared 必须以 https 回源并跳过本地证书校验，
-# 否则明文 HTTP 打到 TLS 监听端口，握手直接失败（Argo 为纯出站隧道，与防火墙端口无关）。
-if [ "$argo" = "xvargopt" ]; then argoscheme="https"; argoxtls="--no-tls-verify "; else argoscheme="http"; argoxtls=""; fi
+if [ "$argo" = "vmpt" ]; then argoport=$(cat "$HOME/agsbx/port_vm_ws" 2>/dev/null); echo "Vmess" > "$HOME/agsbx/vlvm"; elif [ "$argo" = "vwpt" ]; then argoport=$(cat "$HOME/agsbx/port_vw" 2>/dev/null); echo "Vless" > "$HOME/agsbx/vlvm"; elif [ "$argo" = "xvargopt" ]; then argoport=$(cat "$HOME/agsbx/port_xvargo" 2>/dev/null); echo "Vlessenc-xhttp-vision" > "$HOME/agsbx/vlvm"; fi; echo "$argoport" > "$HOME/agsbx/argoport.log"
+# 新 XHTTP 使用回环 HTTP；旧 HTTPS 部署的 res/回滚仍从原状态恢复。
+argo_origin_from_state
 if [ "$argo_fixed" = yes ]; then
 if ! cloudflared_supports_token_file; then
   echo "错误：当前 Cloudflared 不支持 --token-file（需 2025.4.0 或更高版本）。"
@@ -6905,10 +7263,10 @@ sleep 1
 kill -0 "$argo_pid" >/dev/null 2>&1 || { echo "错误：Cloudflared Argo 后台进程启动失败。"; return 1; }
 fi
 echo "${ARGO_DOMAIN}" > "$HOME/agsbx/sbargoym.log"
-[ "$argo" = "xvargopt" ] && echo "提示：xvargo 为 TLS 入站，固定隧道请在 CF 仪表盘将服务指向 https://localhost:${argoport} 并开启 noTLSVerify。"
+[ "$argo" = "xvargopt" ] && echo "固定隧道回源需配置为 http://127.0.0.1:${argoport}（HTTP，无需 noTLSVerify 或 HTTP/2 回源）。"
 else
 argoname='临时'
-nohup "$HOME/agsbx/cloudflared" tunnel --url ${argoscheme}://localhost:$(cat $HOME/agsbx/argoport.log) ${argoxtls}--edge-ip-version auto --no-autoupdate --protocol http2 > $HOME/agsbx/argo.log 2>&1 &
+nohup "$HOME/agsbx/cloudflared" tunnel --url "${argoscheme}://${argo_origin_host}:${argoport}" ${argoxtls}--edge-ip-version auto --no-autoupdate --protocol http2 > "$HOME/agsbx/argo.log" 2>&1 &
 argo_pid=$!
 sleep 1
 kill -0 "$argo_pid" >/dev/null 2>&1 || { echo "错误：临时 Argo 后台进程启动失败。"; return 1; }
@@ -6992,7 +7350,7 @@ if ! pidof systemd >/dev/null 2>&1 && ! command -v rc-service >/dev/null 2>&1; t
 echo '@reboot sleep 10 && /bin/sh -c "nohup $HOME/agsbx/cloudflared tunnel --no-autoupdate --edge-ip-version auto --protocol http2 run --token-file $HOME/agsbx/sbargotoken.log > $HOME/agsbx/argo.log 2>&1 &" # AIRGOSBX_ARGO' >> "$cron_tmp"
 fi
 else
-echo '@reboot sleep 10 && /bin/sh -c "nohup $HOME/agsbx/cloudflared tunnel --url '"$argoscheme"'://localhost:$(cat $HOME/agsbx/argoport.log) '"$argoxtls"'--edge-ip-version auto --no-autoupdate --protocol http2 > $HOME/agsbx/argo.log 2>&1 &" # AIRGOSBX_ARGO' >> "$cron_tmp"
+echo '@reboot sleep 10 && /bin/sh -c "nohup $HOME/agsbx/cloudflared tunnel --url '"$argoscheme"'://'"$argo_origin_host"':$(cat $HOME/agsbx/argoport.log) '"$argoxtls"'--edge-ip-version auto --no-autoupdate --protocol http2 > $HOME/agsbx/argo.log 2>&1 &" # AIRGOSBX_ARGO' >> "$cron_tmp"
 fi
 fi
 crontab "$cron_tmp" >/dev/null 2>&1 || { rm -f "$cron_tmp"; echo "错误：无法写入开机启动任务。"; return 1; }
@@ -7087,6 +7445,9 @@ if secondary_saved_protocol_is_selected naive; then
 fi
 }
 cip(){
+local direct_xh_options='' direct_xh_title='' direct_vl_options='' direct_vl_title='' direct_vl_export_yaml=no
+# 同一进程重复展示时，不能复用上次定义的直连订阅函数。
+unset -f clvlpt clvlpt1 clvmpt clvmpt1 clxhypt clxhypt1
 ipbest(){
 # 优先复用 v4v6() 已探测到的地址，两者皆空时才重新发起外网探测
 first_family="$ip_policy_preferred_family"
@@ -7159,7 +7520,6 @@ ipbest
 fi
 }
 ipchange
-rm -rf "$HOME/agsbx/jh.txt"
 uuid=$(cat "$HOME/agsbx/uuid" 2>/dev/null)
 server_ip=$(cat "$HOME/agsbx/server_ip.log")
 sxname=$(cat "$HOME/agsbx/name" 2>/dev/null)
@@ -7195,95 +7555,69 @@ public_key_s=$(cat "$HOME/agsbx/sbk/public_key" 2>/dev/null)
 short_id_s=$(cat "$HOME/agsbx/sbk/short_id" 2>/dev/null)
 sskey=$(cat "$HOME/agsbx/sskey" 2>/dev/null)
 fi
-# 构建 XHTTP extra JSON 并 URL 编码（用于分享链接下发给客户端）
+# 旧参数仅用于 update 后尚未重建的入站；新直连/CDN/Tunnel 都读取配套 profile。
 xh_extra='{"noGRPCHeader":false,"noSSEHeader":false,"xPaddingObfsMode":true,"xPaddingBytes":"100-1000","xPaddingKey":"cf_clearance","xPaddingHeader":"Referer","xPaddingPlacement":"queryInHeader","xPaddingMethod":"repeat-x","uplinkHTTPMethod":"POST","sessionPlacement":"path","sessionKey":"","seqPlacement":"path","seqKey":"","uplinkDataPlacement":"body","uplinkDataKey":"","uplinkChunkSize":0,"scMaxEachPostBytes":1000000,"scMinPostsIntervalMs":"10-50","scMaxBufferedPosts":30,"scStreamUpServerSecs":"20-80","maxConcurrency":"16-32","maxConnections":"0-0","cMaxReuseTimes":"64-128","hMaxReusableSecs":"1800-3000","hKeepAlivePeriod":45,"downloadTargetHost":"","downloadTargetPort":0,"downloadServerName":"","downloadHTTPHost":""}'
-xh_extra_encoded=$(printf '%s' "$xh_extra" | sed 's/{/%7B/g;s/}/%7D/g;s/"/%22/g;s/:/%3A/g;s/,/%2C/g;s/ //g')
-# 构建 TCP 专属 Finalmask JSON 并 URL 编码（包含 fragment + sudoku，专属于 TCP-Reality 裸节点对抗 TLS 指纹）
-fm_tcp_config="{\"tcp\":[{\"type\":\"fragment\",\"settings\":{\"packets\":\"tlshello\",\"length\":\"100-200\",\"delay\":\"10-20\",\"maxSplit\":\"3-6\"}},{\"type\":\"sudoku\",\"settings\":{\"password\":\"$uuid\",\"paddingMin\":16,\"paddingMax\":64}}]}"
-fm_tcp_encoded=$(printf '%s' "$fm_tcp_config" | sed 's/{/%7B/g;s/}/%7D/g;s/"/%22/g;s/:/%3A/g;s/,/%2C/g;s/ //g;s/\[/%5B/g;s/\]/%5D/g')
-# 构建 XHTTP 专属 Finalmask JSON 并 URL 编码（TCP 用 sudoku，UDP 使用 noise）
+# 旧 TCP 入站的历史链保持原样；新建/rep 的 fragment 只存在于客户端参数中。
+legacy_direct_tcp_fm="{\"tcp\":[{\"type\":\"fragment\",\"settings\":{\"packets\":\"tlshello\",\"length\":\"100-200\",\"delay\":\"10-20\",\"maxSplit\":\"3-6\"}},{\"type\":\"sudoku\",\"settings\":{\"password\":\"$uuid\",\"paddingMin\":16,\"paddingMax\":64}}]}"
+# 旧 XHTTP FM 同样只供兼容展示，不再写入新的 CDN/Tunnel 入站。
 fm_xh_config="{\"tcp\":[{\"type\":\"sudoku\",\"settings\":{\"password\":\"$uuid\",\"paddingMin\":16,\"paddingMax\":64}}],\"udp\":[{\"type\":\"noise\",\"settings\":{\"reset\":\"30-60\",\"noise\":[{\"rand\":\"32-128\",\"randRange\":\"0-255\",\"delay\":\"10-20\"}]}}]}"
-fm_xh_encoded=$(printf '%s' "$fm_xh_config" | sed 's/{/%7B/g;s/}/%7D/g;s/"/%22/g;s/:/%3A/g;s/,/%2C/g;s/ //g;s/\[/%5B/g;s/\]/%5D/g')
+local profile_key profile_tag legacy_extra legacy_fm profile_spec
+for profile_spec in xh:xhttp-reality vl:reality-vision vx:vless-xhttp vw:vless-ws vm:vmess-xr hy:hy2-xr xvd:vlessenc-xhttp-cdn xva:vlessenc-xhttp-argo; do
+  profile_key=${profile_spec%%:*}; profile_tag=${profile_spec#*:}
+  local "profile_${profile_key}_options=" "profile_${profile_key}_mode=auto" "profile_${profile_key}_suffix=" "profile_${profile_key}_fm="
+  grep -Fq "\"$profile_tag\"" "$HOME/agsbx/xr.json" 2>/dev/null || continue
+  legacy_extra=''; legacy_fm=''
+  case "$profile_key" in
+    xh|xvd|xva) legacy_extra="$xh_extra"; legacy_fm="$fm_xh_config" ;;
+    vx) legacy_extra="$xh_extra" ;;
+    vl) legacy_fm="$legacy_direct_tcp_fm" ;;
+  esac
+  load_xray_profile "$profile_key" "$legacy_extra" "$legacy_fm" || return 1
+  printf -v "profile_${profile_key}_options" '%s' "$direct_url_options"
+  printf -v "profile_${profile_key}_mode" '%s' "$direct_client_mode"
+  printf -v "profile_${profile_key}_suffix" '%s' "$direct_extra_label$direct_fm_label"
+  printf -v "profile_${profile_key}_fm" '%s' "$direct_fm_encoded"
+done
+direct_xh_options="$profile_xh_options"
+direct_xh_title="${sxname}vlessenc-xhttp-reality-vision${profile_xh_suffix}-$hostname"
+direct_vl_options="$profile_vl_options"
+direct_vl_title="${sxname}vless-tcp-reality-vision${profile_vl_suffix}-$hostname"
+[ -n "$profile_vl_fm" ] || direct_vl_export_yaml=yes
+# 配套状态全部读取成功后才重建聚合链接，避免状态损坏时清空旧节点文件。
+rm -f "$HOME/agsbx/jh.txt"
 if grep -q xhttp-reality "$HOME/agsbx/xr.json" 2>/dev/null; then
-node_title "💣【 Vlessenc-xhttp-reality-vision-fm 】支持ENC加密，节点信息如下："
+node_title "💣【 $direct_xh_title 】节点信息如下："
 port_xh=$(cat "$HOME/agsbx/port_xh")
-vl_xh_link="vless://$uuid@$server_ip:$port_xh?encryption=$enkey&flow=xtls-rprx-vision&security=reality&sni=$ym_vl_re&fp=chrome&pbk=$public_key_x&sid=$short_id_x&type=xhttp&path=/$uuid-xh&mode=auto&extra=$xh_extra_encoded&fm=$fm_xh_encoded#${sxname}vlessenc-xhttp-reality-vision-fm-$hostname"
+vl_xh_link="vless://$(uri_percent_encode "$uuid")@$server_ip:$port_xh?encryption=$(uri_percent_encode "$enkey")&flow=xtls-rprx-vision&security=reality&sni=$(uri_percent_encode "$ym_vl_re")&fp=chrome&pbk=$(uri_percent_encode "$public_key_x")&sid=$(uri_percent_encode "$short_id_x")&type=xhttp&path=$(uri_percent_encode "/$uuid-xh")&mode=$profile_xh_mode${direct_xh_options}#$(uri_percent_encode "$direct_xh_title")"
 echo "$vl_xh_link" >> "$HOME/agsbx/jh.txt"
 echo "$vl_xh_link"
 echo
 if [ "$sub" = yes ]; then
-clxhpt(){
-cat <<EOF
-- name: "${sxname}vlessenc-xhttp-reality-vision-fm-$hostname"
-  type: vless
-  server: $server_ip
-  port: $port_xh
-  uuid: $uuid
-  network: xhttp
-  udp: true
-  tls: true
-  flow: xtls-rprx-vision
-  servername: $ym_vl_re
-  reality-opts:
-    public-key: $public_key_x
-    short-id: $short_id_x
-  client-fingerprint: chrome
-  xhttp-opts:
-    path: "/$uuid-xh"
-EOF
-}
-clxhpt1(){
-echo "- ${sxname}vlessenc-xhttp-reality-vision-fm-$hostname"
-}
+echo "提示：xhpt 的完整 ENC/extra/FM 参数包含在上方 VLESS URL 和聚合订阅中；当前 Clash 模板不输出这个 ENC 节点。"
 fi
 fi
 if grep -q vlessenc-xhttp-cdn "$HOME/agsbx/xr.json" 2>/dev/null; then
-node_title "💣【 Vlessenc-xhttp-tls-vision-fm-cdn 】支持ENC/FM双端混淆与回源TLS加密，节点信息如下："
+node_title "💣【 VLESS Encryption＋XHTTP＋TLS＋Vision CDN$profile_xvd_suffix 】"
 port_xvcdn=$(cat "$HOME/agsbx/port_xvcdn")
 xvvmcdnym=$(cat "$HOME/agsbx/cdnym" 2>/dev/null)
-if [ -z "$xvvmcdnym" ]; then
-  xvvmcdnym="$server_ip"
-fi
-vl_xvcdn_link="vless://$uuid@icook.hk:$port_xvcdn?encryption=$enkey&flow=xtls-rprx-vision&security=tls&sni=$xvvmcdnym&host=$xvvmcdnym&type=xhttp&path=/$uuid-xvd&mode=auto&extra=$xh_extra_encoded&fm=$fm_xh_encoded#${sxname}vlessenc-xhttp-tls-vision-fm-cdn-$hostname"
+valid_domain "$xvvmcdnym" || { echo "错误：CDN 域名状态缺失，无法生成正确的 Host/SNI。"; return 1; }
+vl_xvcdn_link="vless://$(uri_percent_encode "$uuid")@$xvvmcdnym:$port_xvcdn?encryption=$(uri_percent_encode "$enkey")&flow=xtls-rprx-vision&security=tls&alpn=h2&sni=$(uri_percent_encode "$xvvmcdnym")&host=$(uri_percent_encode "$xvvmcdnym")&type=xhttp&path=$(uri_percent_encode "/$uuid-xvd")&mode=$profile_xvd_mode${profile_xvd_options}#$(uri_percent_encode "${sxname}vlessenc-xhttp-tls-vision-cdn${profile_xvd_suffix}-$hostname")"
 echo "$vl_xvcdn_link" >> "$HOME/agsbx/jh.txt"
 echo "$vl_xvcdn_link"
 echo
-if [ "$sub" = yes ]; then
-clxvcdnpt(){
-cat <<EOF
-- name: "${sxname}vlessenc-xhttp-tls-vision-fm-cdn-$hostname"
-  type: vless
-  server: icook.hk
-  port: $port_xvcdn
-  uuid: $uuid
-  network: xhttp
-  udp: true
-  tls: true
-  flow: xtls-rprx-vision
-  servername: "$xvvmcdnym"
-  client-fingerprint: chrome
-  xhttp-opts:
-    path: "/$uuid-xvd"
-  headers:
-    Host: "$xvvmcdnym"
-EOF
-}
-clxvcdnpt1(){
-echo "- ${sxname}vlessenc-xhttp-tls-vision-fm-cdn-$hostname"
-}
-fi
+[ "$sub" != yes ] || echo "CDN ENC 节点使用完整 VLESS URL/聚合订阅；不输出缺少 ENC/extra/FM 的 Clash 节点。"
 fi
 if grep -q vless-xhttp "$HOME/agsbx/xr.json" 2>/dev/null; then
-node_title "💣【 Vlessenc-xhttp-vision 】支持ENC加密，节点信息如下："
+node_title "💣【 VLESS Encryption＋XHTTP＋Vision$profile_vx_suffix 】"
 port_vx=$(cat "$HOME/agsbx/port_vx")
-vl_vx_link="vless://$uuid@$server_ip:$port_vx?encryption=$enkey&flow=xtls-rprx-vision&type=xhttp&path=$uuid-vx&mode=auto&extra=$xh_extra_encoded#${sxname}vlessenc-xhttp-vision-$hostname"
+vl_vx_link="vless://$(uri_percent_encode "$uuid")@$server_ip:$port_vx?encryption=$(uri_percent_encode "$enkey")&flow=xtls-rprx-vision&security=none&type=xhttp&path=$(uri_percent_encode "/$uuid-vx")&mode=$profile_vx_mode${profile_vx_options}#$(uri_percent_encode "${sxname}vlessenc-xhttp-vision${profile_vx_suffix}-$hostname")"
 echo "$vl_vx_link" >> "$HOME/agsbx/jh.txt"
 echo "$vl_vx_link"
 echo
-if [ -f "$HOME/agsbx/cdnym" ]; then
-node_title "💣【 Vlessenc-xhttp-vision-cdn 】支持ENC加密，节点信息如下："
-echo "注：默认地址 icook.hk 可自行更换优选IP域名，如是回源端口需手动修改443或者80系端口"
-vl_vx_cdn_link="vless://$uuid@icook.hk:$port_vx?encryption=$enkey&flow=xtls-rprx-vision&type=xhttp&host=$xvvmcdnym&path=$uuid-vx&mode=auto&extra=$xh_extra_encoded#${sxname}vlessenc-xhttp-vision-cdn-$hostname"
+if [ -f "$HOME/agsbx/cdnym" ] && [ -z "$profile_vx_fm" ]; then
+xvvmcdnym=$(cat "$HOME/agsbx/cdnym")
+valid_domain "$xvvmcdnym" || return 1
+vl_vx_cdn_link="vless://$(uri_percent_encode "$uuid")@$xvvmcdnym:$port_vx?encryption=$(uri_percent_encode "$enkey")&flow=xtls-rprx-vision&security=none&type=xhttp&host=$(uri_percent_encode "$xvvmcdnym")&path=$(uri_percent_encode "/$uuid-vx")&mode=$profile_vx_mode${profile_vx_options}#$(uri_percent_encode "${sxname}vlessenc-xhttp-vision-cdn${profile_vx_suffix}-$hostname")"
 echo "$vl_vx_cdn_link" >> "$HOME/agsbx/jh.txt"
 echo "$vl_vx_cdn_link"
 echo
@@ -7292,11 +7626,11 @@ fi
 if grep -q vless-ws "$HOME/agsbx/xr.json" 2>/dev/null; then
 node_title "💣【 Vlessenc-ws-vision 】支持ENC加密，节点信息如下："
 port_vw=$(cat "$HOME/agsbx/port_vw")
-vl_vw_link="vless://$uuid@$server_ip:$port_vw?encryption=$enkey&flow=xtls-rprx-vision&type=ws&path=$uuid-vw#${sxname}vlessenc-ws-vision-$hostname"
+vl_vw_link="vless://$(uri_percent_encode "$uuid")@$server_ip:$port_vw?encryption=$(uri_percent_encode "$enkey")&flow=xtls-rprx-vision&security=none&type=ws&path=$(uri_percent_encode "/$uuid-vw")${profile_vw_options}#$(uri_percent_encode "${sxname}vlessenc-ws-vision${profile_vw_suffix}-$hostname")"
 echo "$vl_vw_link" >> "$HOME/agsbx/jh.txt"
 echo "$vl_vw_link"
 echo
-if [ -f "$HOME/agsbx/cdnym" ]; then
+if [ -f "$HOME/agsbx/cdnym" ] && [ -z "$profile_vw_fm" ]; then
 node_title "💣【 Vlessenc-ws-vision-cdn 】支持ENC加密，节点信息如下："
 echo "注：默认地址 icook.hk 可自行更换优选IP域名，如是回源端口需手动修改443或者80系端口"
 vl_vw_cdn_link="vless://$uuid@icook.hk:$port_vw?encryption=$enkey&flow=xtls-rprx-vision&type=ws&host=$xvvmcdnym&path=$uuid-vw#${sxname}vlessenc-ws-vision-cdn-$hostname"
@@ -7306,16 +7640,16 @@ echo
 fi
 fi
 if grep -q reality-vision "$HOME/agsbx/xr.json" 2>/dev/null; then
-node_title "💣【 Vless-tcp-reality-vision-fm 】节点信息如下："
+node_title "💣【 $direct_vl_title 】节点信息如下："
 port_vl_re=$(cat "$HOME/agsbx/port_vl_re")
-vl_link="vless://$uuid@$server_ip:$port_vl_re?encryption=none&flow=xtls-rprx-vision&security=reality&sni=$ym_vl_re&fp=chrome&pbk=$public_key_x&sid=$short_id_x&type=tcp&headerType=none&fm=$fm_tcp_encoded#${sxname}vl-reality-vision-fm-$hostname"
+vl_link="vless://$(uri_percent_encode "$uuid")@$server_ip:$port_vl_re?encryption=none&flow=xtls-rprx-vision&security=reality&sni=$(uri_percent_encode "$ym_vl_re")&fp=chrome&pbk=$(uri_percent_encode "$public_key_x")&sid=$(uri_percent_encode "$short_id_x")&type=tcp&headerType=none${direct_vl_options}#$(uri_percent_encode "$direct_vl_title")"
 echo "$vl_link" >> "$HOME/agsbx/jh.txt"
 echo "$vl_link"
 echo
-if [ "$sub" = yes ]; then
+if [ "$sub" = yes ] && [ "$direct_vl_export_yaml" = yes ]; then
 clvlpt(){
 cat <<EOF
-- name: "${sxname}vl-reality-vision-fm-$hostname"
+- name: "$(json_escape "$direct_vl_title")"
   type: vless
   server: $server_ip
   port: $port_vl_re
@@ -7332,8 +7666,10 @@ cat <<EOF
 EOF
 }
 clvlpt1(){
-echo "- ${sxname}vl-reality-vision-fm-$hostname"
+printf -- '- "%s"\n' "$(json_escape "$direct_vl_title")"
 }
+elif [ "$sub" = yes ]; then
+echo "提示：带 FM 的 vlpt 请使用完整 VLESS URL 或聚合订阅；当前 Clash 模板不输出缺少掩码的节点。"
 fi
 fi
 if grep -q vless-kcp-xdns "$HOME/agsbx/xr.json" 2>/dev/null; then
@@ -7385,11 +7721,16 @@ fi
 if grep -q vmess-xr "$HOME/agsbx/xr.json" 2>/dev/null || grep -q vmess-sb "$HOME/agsbx/sb.json" 2>/dev/null; then
 node_title "💣【 Vmess-ws 】节点信息如下："
 port_vm_ws=$(cat "$HOME/agsbx/port_vm_ws")
+if [ -n "$profile_vm_fm" ]; then
+# v2rayN 的标准 VMess URI 解析器读取 fm；旧 Base64 VMess 格式没有配套字段。
+vm_link="vmess://$(uri_percent_encode "$uuid")@$server_ip:$port_vm_ws?encryption=auto&security=none&type=ws&path=$(uri_percent_encode "/$uuid-vm")${profile_vm_options}#$(uri_percent_encode "${sxname}vmess-ws-fm-$hostname")"
+else
 vm_link="vmess://$(echo "{ \"v\": \"2\", \"ps\": \"${sxname}vm-ws-$hostname\", \"add\": \"$server_ip\", \"port\": \"$port_vm_ws\", \"id\": \"$uuid\", \"aid\": \"0\", \"scy\": \"auto\", \"net\": \"ws\", \"type\": \"none\", \"host\": \"www.bing.com\", \"path\": \"/$uuid-vm\", \"tls\": \"\"}" | safe_base64)"
+fi
 echo "$vm_link" >> "$HOME/agsbx/jh.txt"
 echo "$vm_link"
 echo
-if [ "$sub" = yes ]; then
+if [ "$sub" = yes ] && [ -z "$profile_vm_fm" ]; then
 clvmpt(){
 cat <<EOF
 - name: "${sxname}vmess-ws-$hostname"
@@ -7413,7 +7754,7 @@ clvmpt1(){
 echo "- ${sxname}vmess-ws-$hostname"
 }
 fi
-if [ -f "$HOME/agsbx/cdnym" ]; then
+if [ -f "$HOME/agsbx/cdnym" ] && [ -z "$profile_vm_fm" ]; then
 node_title "💣【 Vmess-ws-cdn 】节点信息如下："
 echo "注：默认地址 icook.hk 可自行更换优选IP域名，如是回源端口需手动修改443或者80系端口"
 vm_cdn_link="vmess://$(echo "{ \"v\": \"2\", \"ps\": \"${sxname}vm-ws-cdn-$hostname\", \"add\": \"icook.hk\", \"port\": \"$port_vm_ws\", \"id\": \"$uuid\", \"aid\": \"0\", \"scy\": \"auto\", \"net\": \"ws\", \"type\": \"none\", \"host\": \"$xvvmcdnym\", \"path\": \"/$uuid-vm\", \"tls\": \"\"}" | safe_base64)"
@@ -7541,14 +7882,14 @@ if [ -n "$xby_hop" ]; then
   echo "Xray-Hysteria2 跳跃端口已启用：$xby_hop"
 fi
 if cert_trusted "$cert_mode" && [ -n "$ran_sni" ]; then
-xhy2_link="hysteria2://$uuid@$server_ip:$port_xhy2?security=tls&alpn=h3&sni=$ran_sni&insecure=0&allowInsecure=0${xby_mport}#${sxname}xray-hy2-$hostname"
+xhy2_link="hysteria2://$(uri_percent_encode "$uuid")@$server_ip:$port_xhy2?security=tls&alpn=h3&sni=$(uri_percent_encode "$ran_sni")&insecure=0&allowInsecure=0${xby_mport}${profile_hy_options}#$(uri_percent_encode "${sxname}xray-hy2${profile_hy_suffix}-$hostname")"
 else
-xhy2_link="hysteria2://$uuid@$server_ip:$port_xhy2?pinSHA256=$cert_hash&alpn=h3&sni=$ran_sni&insecure=1&allowInsecure=1${xby_mport}#${sxname}xray-hy2-$hostname"
+xhy2_link="hysteria2://$(uri_percent_encode "$uuid")@$server_ip:$port_xhy2?security=tls&pinSHA256=$(uri_percent_encode "$cert_hash")&alpn=h3&sni=$(uri_percent_encode "$ran_sni")&insecure=1&allowInsecure=1${xby_mport}${profile_hy_options}#$(uri_percent_encode "${sxname}xray-hy2${profile_hy_suffix}-$hostname")"
 fi
 echo "$xhy2_link" >> "$HOME/agsbx/jh.txt"
 echo "$xhy2_link"
 echo
-if [ "$sub" = yes ]; then
+if [ "$sub" = yes ] && [ -z "$profile_hy_fm" ]; then
 clxhypt(){
 local xby_hop_clean=$(echo "$xby_hop" | tr ':' '-')
 local cl_skip_cert="true"
@@ -7786,46 +8127,23 @@ echo "- ${sxname}vlessenc-ws-tls-vision-argo-$hostname"
 echo "- ${sxname}vlessenc-ws-vision-argo-$hostname"
 }
 fi
-elif [ "$vlvm" = "Vlessenc-xhttp-tls-vision-fm" ]; then
-vwa_xvargo_link="vless://$uuid@icook.hk:443?encryption=$enkey&flow=xtls-rprx-vision&security=tls&sni=$argodomain&host=$argodomain&type=xhttp&path=/$uuid-xva&mode=auto&extra=$xh_extra_encoded&fm=$fm_xh_encoded#${sxname}vlessenc-xhttp-tls-vision-fm-argo-$hostname"
+elif [ "$vlvm" = "Vlessenc-xhttp-tls-vision-fm" ] || [ "$vlvm" = "Vlessenc-xhttp-vision" ]; then
+vwa_xvargo_link="vless://$(uri_percent_encode "$uuid")@$argodomain:443?encryption=$(uri_percent_encode "$enkey")&flow=xtls-rprx-vision&security=tls&alpn=h2&sni=$(uri_percent_encode "$argodomain")&host=$(uri_percent_encode "$argodomain")&type=xhttp&path=$(uri_percent_encode "/$uuid-xva")&mode=$profile_xva_mode${profile_xva_options}#$(uri_percent_encode "${sxname}vlessenc-xhttp-vision-argo${profile_xva_suffix}-$hostname")"
 echo "$vwa_xvargo_link" >> "$HOME/agsbx/jh.txt"
-if [ "$sub" = yes ]; then
-clxvargopt(){
-cat <<EOF
-- name: "${sxname}vlessenc-xhttp-tls-vision-fm-argo-$hostname"
-  type: vless
-  server: icook.hk
-  port: 443
-  uuid: $uuid
-  network: xhttp
-  udp: true
-  tls: true
-  flow: xtls-rprx-vision
-  servername: "$argodomain"
-  client-fingerprint: chrome
-  xhttp-opts:
-    path: "/$uuid-xva"
-  headers:
-    Host: "$argodomain"
-EOF
-}
-clxvargopt1(){
-echo "- ${sxname}vlessenc-xhttp-tls-vision-fm-argo-$hostname"
-}
-fi
+[ "$sub" != yes ] || echo "Argo ENC 节点通过完整 VLESS URL/聚合订阅导入，不生成缺失 ENC 参数的 Clash 节点。"
 fi
 if [ -s "$argo_token_file" ]; then
 nametn="Argo固定隧道token：已安全保存（不显示）"
 else
 nametn=""
 fi
-if [ "$vlvm" = "Vlessenc-xhttp-tls-vision-fm" ]; then
+if [ "$vlvm" = "Vlessenc-xhttp-tls-vision-fm" ] || [ "$vlvm" = "Vlessenc-xhttp-vision" ]; then
 argoshow=$(
 echo "Argo隧道端口正在使用$vlvm主协议端口：$(cat $HOME/agsbx/argoport.log 2>/dev/null)
 Argo域名：$argodomain
 $nametn
 
-💣【 vlessenc-xhttp-tls-vision-fm-argo 超旗舰 Argo 隧道节点 】
+💣【 VLESS Encryption＋XHTTP＋Vision Argo 节点 】
 $vwa_xvargo_link
 "
 )
@@ -7855,8 +8173,8 @@ get_func() {
 }
 # 注：vless-xhttp(vxp) 与 vless-ws(vwp) 为 vlessenc 裸协议，mihomo 暂不支持其 ENC 加密，
 # 因此不导出到 Clash 订阅（此前这里引用的 clvxpt/clvwpt 系列函数从未定义，等同空操作，已移除）。
-clxy="$(get_func clvlpt; get_func clsspt; get_func clvmpt; get_func clvmcdnpt; get_func clxhpt; get_func clxvcdnpt; get_func clhypt; get_func clxhypt; get_func cltupt; get_func clvmargopt; get_func clvlargopt; get_func clxvargopt)"
-clgz="$({ get_func clvlpt1; get_func clsspt1; get_func clvmpt1; get_func clvmcdnpt1; get_func clxhpt1; get_func clxvcdnpt1; get_func clhypt1; get_func clxhypt1; get_func cltupt1; get_func clvmargopt1; get_func clvlargopt1; get_func clxvargopt1; } | sed '2,$s/^/    /')"
+clxy="$(get_func clvlpt; get_func clsspt; get_func clvmpt; get_func clvmcdnpt; get_func clhypt; get_func clxhypt; get_func cltupt; get_func clvmargopt; get_func clvlargopt)"
+clgz="$({ get_func clvlpt1; get_func clsspt1; get_func clvmpt1; get_func clvmcdnpt1; get_func clhypt1; get_func clxhypt1; get_func cltupt1; get_func clvmargopt1; get_func clvlargopt1; } | sed '2,$s/^/    /')"
 cat > "$HOME/agsbx/clmi.yaml" <<EOF
 port: 7890
 allow-lan: true
@@ -8030,7 +8348,7 @@ rep_validate_preserved_certificate(){
   local mode source cert_file key_file identifier
   if [ "$sub" != yes ] && [ "$hyp" != yes ] && [ "$xhyp" != yes ] \
     && [ "$tup" != yes ] && [ "$ssp" != yes ] && [ "$anp" != yes ] \
-    && [ "$xvcdn" != yes ] && [ "$xvargo" != yes ]; then
+    && [ "$xvcdn" != yes ]; then
     return 0
   fi
   mode=$(cat "$HOME/agsbx/cert_mode" 2>/dev/null)
@@ -8304,7 +8622,7 @@ rep_restore_snapshot_files(){
 }
 
 rep_restore_argo_runtime(){
-  local action="${1:-start}" restored_argo_port restored_vlvm restored_scheme=http restored_tls=""
+  local action="${1:-start}" restored_argo_port
   case "$action" in start|restart) ;; *) return 1 ;; esac
   case "$argo_persistent_mode" in
   fixed)
@@ -8335,10 +8653,9 @@ rep_restore_argo_runtime(){
     openrc) rc-service argo "$action" >/dev/null 2>&1 || return 1 ;;
     cron)
       restored_argo_port=$(cat "$HOME/agsbx/argoport.log" 2>/dev/null)
-      restored_vlvm=$(cat "$HOME/agsbx/vlvm" 2>/dev/null)
-      [ "$restored_vlvm" = "Vlessenc-xhttp-tls-vision-fm" ] && { restored_scheme=https; restored_tls="--no-tls-verify"; }
-      nohup "$HOME/agsbx/cloudflared" tunnel --url "${restored_scheme}://localhost:${restored_argo_port}" \
-        $restored_tls --edge-ip-version auto --no-autoupdate --protocol http2 > "$HOME/agsbx/argo.log" 2>&1 &
+      argo_origin_from_state
+      nohup "$HOME/agsbx/cloudflared" tunnel --url "${argoscheme}://${argo_origin_host}:${restored_argo_port}" \
+        $argoxtls --edge-ip-version auto --no-autoupdate --protocol http2 > "$HOME/agsbx/argo.log" 2>&1 &
       ;;
     *) echo "错误：临时 Argo 持久化载体无法识别。"; return 1 ;;
     esac
@@ -8862,7 +9179,7 @@ rep_begin_transaction || exit 1
 cleandel rep || exit 1
 cleanup_mieru_ufw || exit 1
 reset_mita_config || exit 1
-rm -rf "$HOME/agsbx"/{sb.json,xr.json,sbargoym.log,sbargotoken.log,argo.log,argoport.log,cdnym,name,secondary_secp,secondary_meta,mita.json,mieru_user,mieru_pass,port_mieru,mieru_protocol,mieru_traffic_seed,mieru_traffic_pattern,mieru_ufw_rule} \
+rm -rf "$HOME/agsbx"/{sb.json,xr.json,sbargoym.log,sbargotoken.log,argo.log,argoport.log,cdnym,name,secondary_secp,secondary_meta,direct_xh_profile,direct_vl_profile,xray_xh_profile,xray_vl_profile,xray_vx_profile,xray_vw_profile,xray_vm_profile,xray_hy_profile,xray_xvd_profile,xray_xva_profile,mita.json,mieru_user,mieru_pass,port_mieru,mieru_protocol,mieru_traffic_seed,mieru_traffic_pattern,mieru_ufw_rule} \
   || { echo "错误：rep 无法清理旧的可变协议状态。"; exit 1; }
 echo "Airgosbx重置协议完成，开始更新相关协议变量……" && sleep 2
 echo
@@ -8976,9 +9293,8 @@ res_failed=1
 fi
 else
 # res 为全新一次脚本调用，$argo 变量已不在作用域，从持久化的 vlvm 文件还原回源协议
-argoscheme="http"; argoxtls=""
-[ "$(cat "$HOME/agsbx/vlvm" 2>/dev/null)" = "Vlessenc-xhttp-tls-vision-fm" ] && { argoscheme="https"; argoxtls="--no-tls-verify "; }
-nohup $HOME/agsbx/cloudflared tunnel --url ${argoscheme}://localhost:$(cat $HOME/agsbx/argoport.log 2>/dev/null) ${argoxtls}--edge-ip-version auto --no-autoupdate --protocol http2 > $HOME/agsbx/argo.log 2>&1 &
+argo_origin_from_state
+nohup "$HOME/agsbx/cloudflared" tunnel --url "${argoscheme}://${argo_origin_host}:$(cat "$HOME/agsbx/argoport.log" 2>/dev/null)" ${argoxtls}--edge-ip-version auto --no-autoupdate --protocol http2 > "$HOME/agsbx/argo.log" 2>&1 &
 fi
 fi
 ;;
