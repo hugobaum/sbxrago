@@ -10,7 +10,7 @@
     与 airgosbx.sh 配套维护、同版本提交和发布。无外部资源、请求、遥测或自动持久化。
     与 airgosbx.sh 配套维护：修改 showvars、协议归属、secp、warp、rep 或 URL 生成规则时，
     同时核对 PROTOCOLS、XRAY_PROFILES、FIELDS、collect、savedCommandPlan 和 validate。
-    配套版本：V26.09.08.5。XHTTP_DEFAULTS_VERSION 与 BUILD.presetVersion 仅在默认参数变化时更新。
+    配套版本：V26.09.16.1。XHTTP_DEFAULTS_VERSION 与 BUILD.presetVersion 仅在默认参数变化时更新。
     发布前须核对配套脚本是否已同步到 GitHub main；存在未发布接口变更时 remoteAligned 保持 false。
     页面只生成文本，不执行命令。选择“对照脚本”时只读取用户明确选择的文件。
   -->
@@ -70,6 +70,7 @@
     .field{display:flex;flex-direction:column;gap:6px;min-width:0}
     .field-label{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:2px 8px;font-size:12px;font-weight:600}
     .field-label code{font-weight:400;color:var(--muted);font-size:10px}
+    .parameter-side{display:inline-block;margin-left:6px;padding:0 4px;border:1px solid var(--line);border-radius:3px;color:var(--green);font:10px/1.6 var(--mono);vertical-align:baseline;white-space:nowrap}
     .field input:not([type=checkbox]),.field select,.field textarea{display:block;width:100%;min-width:0;background:#fff;border:1px solid #cbd4c9;border-radius:var(--control);padding:10px 12px;color:var(--ink);min-height:44px;box-shadow:0 1px 1px #20352d05}
     .field input[type=password]{font-family:var(--mono)}
     .field small{color:var(--muted);font-size:11px;line-height:1.65}
@@ -236,7 +237,7 @@
 <div class="page">
   <header class="masthead">
     <div class="brand"><div class="brand-mark" aria-hidden="true">A</div><div><div class="eyebrow">AIRGOSBX / WORKBENCH</div><h1>配置工作台</h1><p class="meta">配置连接，生成 VPS 命令。</p></div></div>
-    <div class="tools"><span id="build-version" class="meta">V26.09.08.5 · 离线单文件</span><button id="reset" type="button">重置表单</button></div>
+    <div class="tools"><span id="build-version" class="meta">V26.09.16.1 · 离线单文件</span><button id="reset" type="button">重置表单</button></div>
   </header>
   <noscript><p class="notice warning">此页面需要浏览器 JavaScript 才能生成命令。所有逻辑都在当前 HTML 内，不加载外部资源。</p></noscript>
 
@@ -264,6 +265,7 @@
         <details><summary>这三个接入入口有什么区别</summary><p class="intro">直连直接访问 VPS 的协议监听端口。CDN 在前面代理 HTTP 流量，多个受支持协议共用 cdnym。Argo 由 cloudflared 主动建立隧道，本脚本一次绑定 vmpt、vwpt 或 xvargopt 中的一种。CDN 与 Argo 可以和其他直连节点并存。</p></details>
         <div class="search-row" style="margin-top:20px"><input id="search" type="search" aria-label="搜索协议、核心或变量" placeholder="搜索协议、核心或变量"><div class="filters" role="group" aria-label="按接入能力筛选"><button type="button" data-filter="all" aria-pressed="true">全部</button><button type="button" data-filter="direct" aria-pressed="false">直连</button><button type="button" data-filter="cdn" aria-pressed="false">CDN</button><button type="button" data-filter="argo" aria-pressed="false">Argo</button></div></div>
         <div class="list-toolbar"><span id="filter-summary" class="meta"></span><div class="tools"><button type="button" class="text-button" data-core-action="expand">全部展开</button><button type="button" class="text-button" data-core-action="collapse">全部收起</button></div></div>
+        <p class="note">参数标记：<span class="parameter-side">client</span> 仅作用于客户端（用户本地端）；<span class="parameter-side">server</span> 仅作用于服务端（VPS）。按本页配套配置标注，两端适用的参数不标记。客户端参数由 VPS 脚本写入配套链接或 JSON。两端适用不代表数值必须相同，具体匹配关系见字段说明。</p>
         <div id="protocol-list"></div><p id="no-results" class="empty" hidden>没有匹配的协议。试试名称、核心名或端口变量。</p>
         <p class="note">Extra 与 FinalMask 默认关闭。开启后载入对应协议的默认方案；展开“自定义”可调整子模块和参数，各协议独立保存。</p>
         <p id="argo-origin-hint" class="notice" hidden></p>
@@ -274,7 +276,7 @@
       <section class="panel" id="certificates"><div class="panel-heading"><div><h2 class="step"><span class="section-index">03</span>证书与订阅</h2><p class="section-description">证书、地址与订阅</p><p class="intro">统一配置节点证书、系统 IP 策略与 HTTPS 订阅。</p></div></div><div class="policy-summary" aria-label="证书使用规则"><p><strong>REALITY</strong><span>无需申请 CA 证书。</span></p><p><strong>HTTPS 订阅</strong><span>必须使用 CA，优先复用；没有则申请。</span></p><p><strong>NaiveProxy</strong><span>Caddy 自动申请并管理域名证书。</span></p></div><div id="common-fields" class="form-grid"></div><div id="certificate-fields" class="form-grid" style="margin-top:16px"></div><div id="certificate-specific" class="form-grid" style="margin-top:16px"></div><p class="note">自签证书只用于未开启订阅的普通 TLS 节点，需要客户端建立信任或固定指纹；HTTPS 订阅不接受自签证书。VLESS Encryption 节点请使用完整 URL 或聚合订阅，脚本不会生成缺失加密参数的 Clash 节点。</p><div id="subscription-fields" class="form-grid" style="margin-top:16px"></div><div id="subscription-specific" class="form-grid" style="margin-top:16px" hidden></div><details><summary>更多变量：证书账户、跳跃端口与源地址</summary><div id="advanced-fields" class="form-grid"></div></details></section>
       </div>
 
-      <section class="panel" id="reference"><div class="panel-heading"><div><h2 class="step">维护对照</h2><p class="section-description">脚本与 GUI 的维护对照</p><p class="intro">页面以当前工作区脚本为依据；HTML 不会自动读取磁盘或远端代码。</p></div></div><div class="table-wrap"><table class="help-table"><thead><tr><th>功能位置</th><th>脚本入口</th><th>GUI 同步点</th></tr></thead><tbody><tr><td>协议及所属核心</td><td><code>showvars / ins</code></td><td>协议清单、能力标记、核心推导</td></tr><tr><td>Xray 扩展</td><td><code>各入口的 extra / mode / fm 变量</code></td><td>按协议默认方案、FM 组合与独立调参</td></tr><tr><td>CDN / Argo</td><td><code>cdnym / argo / agn / agk</code></td><td>接入条件、端口、隧道绑定</td></tr><tr><td>出站</td><td><code>warp / secp / securl</code></td><td>WARP 规则、二级代理目标及范围</td></tr><tr><td>命令生成与还原</td><td><code>环境变量与管理命令</code></td><td>字段映射、引用转义、旧版通用参数继承</td></tr><tr><td>生命周期</td><td><code>rep / del / upx / ups …</code></td><td>操作清单、参数过滤、影响说明</td></tr></tbody></table></div><p class="note">覆盖范围：常用部署、证书、订阅、出站和管理入口。XDNS / XICMP 仍未开放；目录中标为不可配置的核心字段未接入脚本，内部证书续期和跳跃规则恢复命令由脚本管理。端口占用、服务归属、证书和真实连通性须在 VPS 检查。</p><p class="note">对照功能只提取你选择的脚本中的变量声明与帮助条目，不执行、不上传。它能提示变量清单差异，不能代替调用逻辑审查。</p><div class="tools" style="margin-top:14px"><label class="file-label">选择 airgosbx.sh 对照<input id="source-file" class="visually-hidden" type="file" accept=".sh,text/plain"></label><button id="clear-compare" type="button" class="text-button">清除对照</button></div><p id="sync-result" class="sync-result" role="status">配套版本：V26.09.08.5；XHTTP 默认参数版本：V26.09.08.1。尚未读取其他文件。</p></section>
+      <section class="panel" id="reference"><div class="panel-heading"><div><h2 class="step">维护对照</h2><p class="section-description">脚本与 GUI 的维护对照</p><p class="intro">页面以当前工作区脚本为依据；HTML 不会自动读取磁盘或远端代码。</p></div></div><div class="table-wrap"><table class="help-table"><thead><tr><th>功能位置</th><th>脚本入口</th><th>GUI 同步点</th></tr></thead><tbody><tr><td>协议及所属核心</td><td><code>showvars / ins</code></td><td>协议清单、能力标记、核心推导</td></tr><tr><td>Xray 扩展</td><td><code>各入口的 extra / mode / fm 变量</code></td><td>按协议默认方案、FM 组合与独立调参</td></tr><tr><td>CDN / Argo</td><td><code>cdnym / argo / agn / agk</code></td><td>接入条件、端口、隧道绑定</td></tr><tr><td>出站</td><td><code>warp / secp / securl</code></td><td>WARP 规则、二级代理目标及范围</td></tr><tr><td>命令生成与还原</td><td><code>环境变量与管理命令</code></td><td>字段映射、引用转义、旧版通用参数继承</td></tr><tr><td>生命周期</td><td><code>rep / del / upx / ups …</code></td><td>操作清单、参数过滤、影响说明</td></tr></tbody></table></div><p class="note">覆盖范围：常用部署、证书、订阅、出站和管理入口。XDNS / XICMP 使用 Xray ≥26.7.28 的专用配置与完整客户端 JSON，不加入通用链接订阅；目录中标为不可配置的核心字段未接入脚本，内部证书续期和跳跃规则恢复命令由脚本管理。端口占用、服务归属、证书和真实连通性须在 VPS 检查。</p><p class="note">对照功能只提取你选择的脚本中的变量声明与帮助条目，不执行、不上传。它能提示变量清单差异，不能代替调用逻辑审查。</p><div class="tools" style="margin-top:14px"><label class="file-label">选择 airgosbx.sh 对照<input id="source-file" class="visually-hidden" type="file" accept=".sh,text/plain"></label><button id="clear-compare" type="button" class="text-button">清除对照</button></div><p id="sync-result" class="sync-result" role="status">配套版本：V26.09.16.1；XHTTP 默认参数版本：V26.09.08.1。尚未读取其他文件。</p></section>
     </main>
 
     <aside class="output" id="command" aria-labelledby="command-title">
@@ -310,7 +312,7 @@
 <script>
 /* 配置清单集中在这里，避免表单、架构图与命令生成各自维护一套名称。 */
 'use strict';
-const BUILD = {version:'V26.09.08.5',presetVersion:'V26.09.08.1',remoteAligned:true, source:'https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/main/airgosbx.sh', schema:'字段基线：Xray v26.3.27；主分支新增字段另列为暂不可用'};
+const BUILD = {version:'V26.09.16.1',presetVersion:'V26.09.08.1',remoteAligned:true, source:'https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/main/airgosbx.sh', schema:'通用字段基线：Xray v26.3.27；XDNS/XICMP：v26.7.28'};
 const OPERATIONS = [
   ['install','安装 / 创建节点'],['rep','重建协议配置（rep）'],['restore-ip','恢复原 IP 策略'],['list','显示节点（list）'],['status','资源与流量（status）'],['update','更新脚本（update）'],['res','重启代理与隧道（res）'],['start','启动核心（start）'],['stop','停止核心（stop）'],['restart','重启核心（restart）'],['reload','重载配置（reload）'],['upx','升级 Xray（upx）'],['ups','升级 Sing-box（ups）'],['downx','降级 Xray（downx）'],['downs','降级 Sing-box（downs）'],['del','卸载（del）'],['vars','查看变量（vars）'],['cmds','查看命令（cmds）'],['help','完整帮助（help）']
 ];
@@ -323,8 +325,8 @@ const PROTOCOLS = [
   {id:'vxpt',name:'VLESS Encryption + XHTTP + Vision',core:'xray',access:['direct','cdn'],sockets:['tcp'],description:'无外层 TLS；extra 适用，CDN 接入禁用私有 FM。',fields:['vxextra','vxmode','vxfm']},
   {id:'vwpt',name:'VLESS Encryption + WebSocket + Vision',core:'xray',access:['direct','cdn','argo'],sockets:['tcp'],description:'WebSocket 兼容入口；仅直连可选私有 TCP FM。',fields:['vwfm']},
   {id:'xhypt',name:'Hysteria2',core:'xray',access:['direct'],sockets:['udp'],description:'UDP FM 与 QUIC 参数分开配置；增强 URL 需客户端使用 Xray。',fields:['xhyjpt','xhycc','xhyup','xhydown','xhyfm']},
-  {id:'xdns',name:'VLESS + mKCP + XDNS FinalMask',core:'xray',access:['direct'],sockets:['udp'],fixed:53,description:'DNS 承载，需域名；当前旧 mKCP 字段待整理。',fields:['xdnsym'],blocked:'当前 XDNS 模板保留旧 kcpSettings.header，与已核对的新 Xray 配置不兼容，先修脚本后启用。'},
-  {id:'xicmp',name:'VLESS + mKCP + XICMP FinalMask',core:'xray',access:['direct'],sockets:[],fixed:'ICMP',description:'独占 ICMP，需 CAP_NET_RAW；当前模板待整理。',blocked:'当前 XICMP 模板保留旧 kcpSettings.header，暂不生成部署命令；此项同时会改变系统 ICMP 响应。'},
+  {id:'xdns',name:'VLESS Encryption + mKCP + XDNS FinalMask',core:'xray',access:['direct'],sockets:['udp'],fixed:53,description:'两端需 Xray ≥26.7.28；NS 委派与 UDP/53，固定 TXT、MTU=80。使用完整客户端 JSON，不加入链接订阅。',fields:['xdnsym','xdnsres']},
+  {id:'xicmp',name:'VLESS Encryption + mKCP + XICMP FinalMask',core:'xray',access:['direct'],sockets:[],fixed:'ICMP',description:'两端需 Xray ≥26.7.28、原始套接字权限与 IPv4/IPv6 套接字支持；不关闭系统 Ping。使用完整客户端 JSON。'},
   {id:'xvcdnpt',name:'VLESS Encryption + XHTTP + TLS + Vision',core:'xray',access:['cdn'],sockets:['tcp'],defaultPort:'2087',description:'Cloudflare 公网 HTTPS 回源；可选 extra 与客户端 TLS 分片。',fields:['xvcdnextra','xvcdnmode','xvcdnfm']},
   {id:'xvargopt',name:'VLESS Encryption + XHTTP + Vision',core:'xray',access:['argo'],sockets:['tcp'],description:'Tunnel 回环 HTTP 回源，固定 packet-up；客户端经 HTTPS 接入 Cloudflare。',fields:['xvargoextra','xvargofm']},
   {id:'shypt',name:'Hysteria2',core:'singbox',access:['direct'],sockets:['udp'],description:'Sing-box 驱动；支持 Salamander 与跳跃端口。',fields:['obfs_pass','shyjpt']},
@@ -356,6 +358,7 @@ const MASK_SUBFIELDS={
   "header-custom": [
     "TCP: clients / servers / errors",
     "UDP: client / server",
+    "clients / servers、client / server 描述收发方向，配套模板会出现在两端配置中，不能仅按名称判断作用端",
     "packet / type / rand / randRange / delay",
     "当前仅开放配套十六进制 packet；其他编排未接入",
     "capture / reuse / transform.op / transform.args（主分支，未接入）",
@@ -364,7 +367,8 @@ const MASK_SUBFIELDS={
   "noise": [
     "reset / noise[]",
     "rand / randRange / delay / type / packet",
-    "当前开放随机噪声；固定 packet 未接入"
+    "当前开放随机噪声；固定 packet 未接入",
+    "两端分别控制自己发出的噪声，不要求发送长度与间隔相同；本页为两端生成同一组参数"
   ],
   "salamander": [
     "password",
@@ -401,12 +405,15 @@ const MASK_SUBFIELDS={
     "header / value（新主分支统一格式）"
   ],
   "xdns": [
-    "domain（v26.3.27）",
-    "domains / resolvers（新主分支）"
+    {text:"domains：接受查询的委派域名及查询类型",side:"server"},
+    {text:"resolvers：委派域名、查询类型与递归解析器",side:"client"},
+    "resolvers 中的域名与查询类型必须被 domains 接受；专用入口基线 v26.7.28",
+    "专用入口固定 TXT、MTU=80，完整 JSON 导出"
   ],
   "xicmp": [
-    "listenIp / id（v26.3.27）",
-    "dgram / ips（新主分支）"
+    {text:"dgram：客户端是否使用权限要求较低的数据报套接字",side:"client"},
+    "ips：客户端为候选目标地址，服务端为允许的来源地址；两端含义不同，不应直接复制相同列表",
+    "专用入口使用原始套接字，不再配置 listenIp / id"
   ],
   "xmc": [
     "hostname / password / profiles[]",
@@ -417,7 +424,7 @@ const MASK_SUBFIELDS={
   ]
 };
 const MASKS = [
-  {id:'fragment',label:'TLS 握手分片',type:'tcp',hint:'仅客户端 TLS/REALITY，不写入服务端。'},
+  {id:'fragment',label:'TLS 握手分片',type:'tcp',side:'client',hint:'本页仅用于客户端 TLS/REALITY，不写入服务端；接收端无需配置同样的分片长度。'},
   {id:'sudoku',label:'Sudoku 外观转换',type:'both',hint:'双端使用配套参数。'},
   {id:'header-custom',label:'自定义配套包头',type:'both',hint:'双端前缀由脚本生成或填写 fmheader。'},
   {id:'noise',label:'发送 UDP 噪声',type:'udp',hint:'可与一个 UDP 格式掩码同时选择。'},
@@ -445,7 +452,7 @@ const XRAY_PROFILES = {
   xvargopt:{prefix:'xva',fm:'xvargofm',extra:'xvargoextra',kind:'tunnel',keys:['xpadding','xmuxcon','xmuxmax','fmfraglen','fmfragdelay','fmfragsplit']}
 };
 const XHTTP_EXTRA_FIELDS = [
-  ["xpadding","xPaddingBytes","range:1:4096","100-1000","both","padding","填充长度","单位字节；必须大于 0，双端一致。"],
+  ["xpadding","xPaddingBytes","range:1:4096","100-1000","both","padding","填充长度","单位字节；客户端生成的填充须落在服务端允许范围内。本页向两端写入同一范围。"],
   ["xpadobfs","xPaddingObfsMode","enum:true,false","true","both","padding","自定义填充布局","关闭时沿用传统 Referer 查询参数填充。"],
   ["xpadkey","xPaddingKey","token","x_padding","both","padding","填充字段名","查询参数或 Cookie 的字段名。"],
   ["xpadheader","xPaddingHeader","token","Referer","both","padding","填充请求头名","header 或 queryInHeader 的请求头名。"],
@@ -454,7 +461,7 @@ const XHTTP_EXTRA_FIELDS = [
   ["xheaders64","headers","headers","","client","request","自定义请求头","每行“名称: 值”，命令采用 Base64；不允许 Host。"],
   ["xnogrpc","noGRPCHeader","enum:true,false","false","client","request","关闭 gRPC 内容类型","stream-up/stream-one 的请求头选项。"],
   ["xnosse","noSSEHeader","enum:true,false","false","server","request","关闭 SSE 响应头","Tunnel 固定开启，其他入口可配置。"],
-  ["xupmethod","uplinkHTTPMethod","enum:POST,PUT,PATCH,GET","POST","both","request","上传 HTTP 方法","GET 要求显式 packet-up，数据放在请求头或 Cookie。"],
+  ["xupmethod","uplinkHTTPMethod","enum:POST,PUT,PATCH,GET","POST","both","request","上传 HTTP 方法","控制客户端请求方法；服务端按收到的请求处理。GET 要求显式 packet-up，数据放在请求头或 Cookie。"],
   ["xsessionplacement","sessionPlacement","enum:path,query,header,cookie","path","both","layout","会话标识位置","stream-one 不使用会话标识；兼容输出新旧字段名。"],
   ["xsessionkey","sessionKey","opt-token","","both","layout","会话字段名","位置不是 path 时生效。"],
   ["xseqplacement","seqPlacement","enum:path,query,header,cookie","path","both","layout","包序号位置","packet-up 专用，双端一致。"],
@@ -462,7 +469,7 @@ const XHTTP_EXTRA_FIELDS = [
   ["xdataplacement","uplinkDataPlacement","enum:body,auto,header,cookie","body","both","upload","上传数据位置","header/cookie 要求显式 packet-up。"],
   ["xdatakey","uplinkDataKey","opt-token","","both","upload","上传字段名前缀","header/cookie 模式自动追加分块编号。"],
   ["xchunksize","uplinkChunkSize","range:0:16777216","0","client","upload","上传分块大小","字节范围；0 使用核心按数据位置确定的默认值。"],
-  ["xpostbytes","scMaxEachPostBytes","range:1:16777216","1000000","both","upload","单次 POST 大小上限","packet-up，客户端发送值与服务端限制配套。"],
+  ["xpostbytes","scMaxEachPostBytes","range:1:16777216","1000000","both","upload","单次 POST 大小上限","packet-up，客户端单次发送量不能超过服务端接收上限；不要求两端数值完全相同。"],
   ["xpostinterval","scMinPostsIntervalMs","range:0:60000","30","client","upload","POST 最小发送间隔","packet-up，单位毫秒。"],
   ["xbufferposts","scMaxBufferedPosts","int:1:4096","30","server","upload","服务端缓冲 POST 数","packet-up 乱序上传队列限制。"],
   ["xstreamsecs","scStreamUpServerSecs","range:0:86400","20-80","server","upload","流式上传响应间隔","stream-up，单位秒；0 使用核心默认。"],
@@ -517,12 +524,12 @@ const FIELDS = {
   vxextra:{label:'XHTTP Extra',type:'extra',value:'n'},
   xvcdnextra:{label:'XHTTP Extra',type:'extra',value:'n'},
   xvargoextra:{label:'XHTTP Extra',type:'extra',value:'n'},
-  xhmode:{label:'XHTTP 模式',help:'默认 auto；此选择用于客户端，服务端保持 auto 接受多种模式。',options:[['auto','自动'],['stream-one','stream-one'],['stream-up','stream-up'],['packet-up','packet-up']],value:'auto'},
-  vxmode:{label:'XHTTP 模式',options:[['auto','自动（CDN 时为 packet-up）'],['packet-up','packet-up'],['stream-up','stream-up'],['stream-one','stream-one（仅直接接入）']],value:'auto'},
-  xvcdnmode:{label:'CDN XHTTP 模式',options:[['packet-up','packet-up'],['stream-up','stream-up（需支持流式上传）']],value:'packet-up'},
+  xhmode:{label:'XHTTP 模式',side:'client',help:'默认 auto；此选择用于客户端，服务端保持 auto 接受多种模式。',options:[['auto','自动'],['stream-one','stream-one'],['stream-up','stream-up'],['packet-up','packet-up']],value:'auto'},
+  vxmode:{label:'XHTTP 模式',side:'client',help:'本页只改变客户端模式；服务端保持 auto。',options:[['auto','自动（CDN 时为 packet-up）'],['packet-up','packet-up'],['stream-up','stream-up'],['stream-one','stream-one（仅直接接入）']],value:'auto'},
+  xvcdnmode:{label:'CDN XHTTP 模式',side:'client',help:'本页只改变客户端模式；服务端保持 auto，CDN 需支持所选上传方式。',options:[['packet-up','packet-up'],['stream-up','stream-up（需支持流式上传）']],value:'packet-up'},
   xhycc:{label:'QUIC 拥塞控制',options:[['auto','核心默认'],['bbr','BBR'],['reno','Reno'],['brutal','Brutal（协商）'],['force-brutal','Force Brutal（明确带宽）']],value:'auto'},
-  xhyup:{label:'客户端上行 Mbps',value:'0',help:'0 为不指定；强制 Brutal 必须大于 0。'},
-  xhydown:{label:'客户端下行 Mbps',value:'0'},
+  xhyup:{label:'客户端上行 Mbps',value:'0',help:'以客户端方向命名：写入客户端 brutalUp 和服务端 brutalDown。0 为不指定；强制 Brutal 必须大于 0。'},
+  xhydown:{label:'客户端下行 Mbps',value:'0',help:'以客户端方向命名：写入客户端 brutalDown 和服务端 brutalUp。'},
   xpadding:{label:'HTTP 填充长度',value:'100-1000',help:'在 HTTP 请求中加入随机长度填充。单位字节，可填 1-4096 的整数或范围。'},
   xmuxcon:{label:'按并发请求分配连接',value:'0',help:'0 表示不按此项限制；设置正数时，连接数需设为 0。范围 0-1024。'},
   xmuxmax:{label:'底层连接数',value:'3',help:'默认使用 3 条底层连接。设置正数时，并发请求项需为 0。范围 0-128。'},
@@ -534,10 +541,11 @@ const FIELDS = {
   fmnoise:{label:'UDP 噪声长度',value:'32-128',help:'1-1200 字节。'},
   fmreset:{label:'噪声重置间隔',value:'30-60',help:'0-3600 秒；0 表示不重置。'},
   fmdelay:{label:'噪声发送延迟',value:'0',help:'0-1000 毫秒。'},
-  fmfraglen:{label:'TLS 握手分片长度',value:'100-200',help:'每片期望长度，默认 100-200 字节。仅改客户端 TLS 记录写法，范围 1-16384。'},
-  fmfragdelay:{label:'分片发送间隔',value:'0',help:'默认 0 毫秒，不额外等待；TLS 记录可能合并进同一个 TCP 包。范围 0-1000。'},
-  fmfragsplit:{label:'最大分片数',value:'3-6',help:'限制每个握手包的切分次数，默认 3-6，避免无限细分。范围 1-64。'},
-  xdnsym:{label:'XDNS 域名',placeholder:'dns.example.com'},
+  fmfraglen:{label:'TLS 握手分片长度',side:'client',value:'100-200',help:'每片期望长度，默认 100-200 字节。仅改客户端 TLS 记录写法，范围 1-16384。'},
+  fmfragdelay:{label:'分片发送间隔',side:'client',value:'0',help:'默认 0 毫秒，不额外等待；TLS 记录可能合并进同一个 TCP 包。范围 0-1000。'},
+  fmfragsplit:{label:'最大分片数',side:'client',value:'3-6',help:'限制每个握手包的切分次数，默认 3-6，避免无限细分。范围 1-64。'},
+  xdnsym:{label:'XDNS 委派域名',placeholder:'t.example.com',help:'同时用于服务端 domains 与客户端 resolvers，域名须对应。最长100字符。例：a.example.com 的 A/AAAA 指向 VPS，t.example.com 的 NS 指向 a.example.com；此处填写 t.example.com。DNS 主机名不能放在被委派域名之下。'},
+  xdnsres:{label:'XDNS 客户端解析器',side:'client',value:'8.8.8.8:53',placeholder:'8.8.8.8:53',help:'填写客户端可访问的递归 DNS：IP:端口或[IPv6]:端口。脚本会保存并用于客户端 JSON；不是 VPS 的监听地址。'},
   obfs_pass:{label:'Hysteria2 混淆密码',type:'password',help:'可选，针对 Sing-box Hysteria2。'},
   shyjpt:{label:'Sing-box 跳跃端口',placeholder:'20000-30000',help:'支持单端口或连续范围；命令统一使用短横线，脚本再转换为防火墙格式。'},
   xhyjpt:{label:'Xray 跳跃端口',placeholder:'30001-40000',help:'支持单端口或连续范围，例如 30001 或 30001-40000。'},
@@ -580,8 +588,12 @@ const FIELDS = {
   agsbxurl:{label:'脚本更新 / 快捷命令来源',placeholder:'留空采用脚本默认 GitHub main',help:'安装时优先复制当前本地脚本作为快捷命令；此 URL 用于后续更新或无法复制时的下载来源。'}
 };
 // GUI 与 Shell 共用相同字段、默认值和覆盖顺序；不把默认值展开进命令。
+// 作用端按脚本 render_xhttp_extra/prepare_xray_profile 和 Xray 对应版本的读取路径标注。
+// uplinkHTTPMethod 虽被脚本写入两端，实际只由客户端读取；noise 两端均会发送，不能标为单端。
 for(const spec of XHTTP_EXTRA_FIELDS){
-  const field={label:spec.label,value:spec.value,help:spec.help,xray:spec.xray,extra:spec};
+  // side 表示界面中的作用端；保留 extra.side 的既有配置分组，不改变命令生成规则。
+  const side=spec.key==='xupmethod'||['control','download'].includes(spec.side)?'client':spec.side;
+  const field={label:spec.label,side,value:spec.value,help:spec.help,xray:spec.xray,extra:spec};
   if(spec.kind.startsWith('enum:'))field.options=spec.kind.slice(5).split(',').map(v=>[v,v==='true'?'是':v==='false'?'否':v]);
   if(spec.kind==='headers')field.type='headers';
   if(spec.kind==='opt-token')field.placeholder='自动（按所选位置确定）';
@@ -857,18 +869,28 @@ const FM_MODULE_FIELDS = {"fragment":["fmfraglen","fmfragdelay","fmfragsplit"],"
 const QUIC_FIELD_KEYS=['xhycc','xhyup','xhydown','xhyjpt'];
 
 // 原生 details/summary 支持键盘折叠，不在 summary 内放入其他交互控件。
-function treeSection(title,code='',level='group',open=false){
+function parameterLabel(label,side=''){
+  const caption=node('span','',label);
+  if(['client','server'].includes(side)){
+    const badge=node('span','parameter-side',side);
+    badge.title=side==='client'?'本页配套配置中，仅作用于客户端（用户本地端）':'仅作用于服务端（VPS）';
+    caption.append(badge);
+  }
+  return caption;
+}
+function treeSection(title,code='',level='group',open=false,side=''){
   const section=node('details','config-tree tree-'+level);section.open=open;section.dataset.initialOpen=String(open);
   const summary=node('summary','tree-heading'),arrow=node('span','tree-chevron');arrow.setAttribute('aria-hidden','true');
-  const label=node('span','tree-label');label.append(node('strong','',title));if(code)label.append(node('code','',code));
+  const label=node('span','tree-label'),name=node('strong');name.append(parameterLabel(title,side));label.append(name);if(code)label.append(node('code','',code));
   const status=node('span','tree-state');status.dataset.treeState='';
   summary.append(arrow,label,status);const body=node('div','tree-body');section.append(summary,body);
   return {section,body,status};
 }
-function referenceField(label,code,value,reason){
+function referenceField(label,code,value,reason,side=''){
   const wrap=node('label','field is-disabled'),input=node('input');input.disabled=true;input.value=value||'未设置';
-  input.setAttribute('aria-label',label+'，不可配置');
-  wrap.append(node('span','field-label',label),input,node('code','',code),node('small','disabled-reason',reason));return wrap;
+  input.setAttribute('aria-label',label+(['client','server'].includes(side)?'，'+side:'')+'，不可配置');
+  const title=node('span','field-label');title.append(parameterLabel(label,side));
+  wrap.append(title,input,node('code','',code),node('small','disabled-reason',reason));return wrap;
 }
 function appendExtraTree(parent,profile=null){
   for(const [group,title] of Object.entries(EXTRA_GROUPS)){
@@ -880,13 +902,13 @@ function appendExtraTree(parent,profile=null){
       const grid=node('div','form-grid');
       for(const key of keys){
         const spec=XHTTP_EXTRA_FIELDS.find(field=>field.key===key);
-        grid.append(profile?makeField(profile.prefix+'_'+key):referenceField(spec.label,spec.xray,spec.value,'当前节点不是 XHTTP 传输，此字段不参与配置。'));
+        grid.append(profile?makeField(profile.prefix+'_'+key):referenceField(spec.label,spec.xray,spec.value,'当前节点不是 XHTTP 传输，此字段不参与配置。',FIELDS[key].side));
       }
       child.body.append(grid);
       if(keys.includes('xsessionplacement')){
         const newer=treeSection('新版会话编码','sessionIDTable / sessionIDLength','leaf');newer.status.textContent='版本限制';
         const fields=node('div','form-grid');
-        fields.append(referenceField('会话字符表','sessionIDTable','核心默认','当前字段集未接入此主分支字段。'),referenceField('会话标识长度','sessionIDLength','16-32（客户端占位）','当前字段集未接入此主分支字段。'));
+        fields.append(referenceField('会话字符表','sessionIDTable','核心默认','用于生成会话标识；当前字段集未接入此主分支字段。','client'),referenceField('会话标识长度','sessionIDLength','16-32','用于生成会话标识；当前字段集未接入此主分支字段。','client'));
         newer.body.append(fields);child.body.append(newer.section);
       }
       root.body.append(child.section);
@@ -895,10 +917,18 @@ function appendExtraTree(parent,profile=null){
     parent.append(root.section);
   }
 }
+function maskReferenceList(mask){
+  const list=node('ul','tree-reference');
+  for(const item of MASK_SUBFIELDS[mask.id]||[]){
+    const spec=typeof item==='string'?{text:item}:item,row=node('li');
+    row.append(parameterLabel(spec.text,spec.side||mask.side));list.append(row);
+  }
+  return list;
+}
 function appendMaskModule(parent,mask,network,key,profile){
   const activeNetwork=profile?.kind==='udp'?'udp':'tcp';
   const bind=Boolean(key)&&(mask.type!=='both'||network===activeNetwork);
-  const module=treeSection(mask.label,mask.id,'module');module.section.dataset.maskModule=mask.id;
+  const module=treeSection(mask.label,mask.id,'module',false,mask.side);module.section.dataset.maskModule=mask.id;
   const choice=node('label','mask-choice'+(bind?'':' is-disabled')),input=node('input');input.type='checkbox';input.value=mask.id;
   if(bind){input.dataset.maskGroup=key;input.dataset.mask=mask.id;}else input.disabled=true;
   const caption=node('span','mask-caption'),name=node('span','mask-name',bind?'启用此模块':'当前不可配置');
@@ -916,9 +946,7 @@ function appendMaskModule(parent,mask,network,key,profile){
     const link=node('a','','定位密钥');link.href='#'+profile.prefix+'_fmpass';link.dataset.issueTarget=profile.prefix+'_fmpass';note.append(' ',link);module.body.append(note);
   }
   const reference=treeSection('字段说明与扩展项','','leaf');
-  const list=node('ul','tree-reference');
-  for(const item of MASK_SUBFIELDS[mask.id]||[])list.append(node('li','',item));
-  reference.body.append(list);module.body.append(reference.section);
+  reference.body.append(maskReferenceList(mask));module.body.append(reference.section);
   if(mask.id==='salamander')appendMaskModule(module.body,MASKS.find(item=>item.id==='gecko'),network,key,profile);
   parent.append(module.section);
 }
@@ -992,7 +1020,7 @@ function makeExtension(key){
   const {id,profile,fm}=extensionInfo(key),group=node('section','extension');
   group.id='extension-'+key;group.dataset.field=key;group.dataset.extension=key;
   const heading=node('div','extension-heading'),title=node('div','extension-title');
-  const name=node('strong','',fm?'FinalMask':'XHTTP Extra');name.id='title-'+key;
+  const name=node('strong');name.append(parameterLabel(fm?'FinalMask':'XHTTP Extra',fm&&['cdn','tunnel'].includes(profile.kind)?'client':''));name.id='title-'+key;
   title.append(name,node('p','extension-subtitle',fm?'TCP / UDP 掩码与 QUIC 参数分层配置':'按功能分层配置请求、上传、连接复用与下载'));
   const toggle=node('label','toggle'),input=node('input');
   input.type='checkbox';input.id=fm?'enable-'+key:key;input.dataset.extensionToggle=key;input.setAttribute('role','switch');
@@ -1024,7 +1052,7 @@ function makeField(key){
   const spec=FIELDS[key];
   if(['masks','extra'].includes(spec.type))return makeExtension(key);
   const wrap=node('label',spec.type==='checkbox'?'field check-field':'field');wrap.dataset.field=key;
-  const title=node('span','field-label');title.append(node('span','',spec.label));if(!UI_ONLY.has(key))title.append(node('code','',key));
+  const title=node('span','field-label');title.append(parameterLabel(spec.label,spec.side));if(!UI_ONLY.has(key))title.append(node('code','',key));
   let input;
   if(spec.options){input=node('select');for(const [v,label] of spec.options){const option=node('option','',label);option.value=v;input.append(option);}}
   else{
@@ -1035,7 +1063,7 @@ function makeField(key){
   if(spec.type==='checkbox'){input.checked=Boolean(spec.value);wrap.append(input,title);}else{input.value=spec.value??'';wrap.append(title,input);}
   if(spec.help){const help=node('small','',spec.help);help.id='help-'+key;input.setAttribute('aria-describedby',help.id);wrap.append(help);}
   if(spec.extra){
-    const code=node('small','official-field',spec.xray+' · '+({both:'双端',client:'客户端',server:'服务端',control:'扩展开关',download:'客户端下载'})[spec.extra.side]);wrap.append(code);
+    const code=node('small','official-field',spec.xray);wrap.append(code);
     const reason=node('small','disabled-reason');reason.id='reason-'+key;reason.hidden=true;wrap.append(reason);
   }else if(spec.base){const reason=node('small','disabled-reason');reason.id='reason-'+key;reason.hidden=true;wrap.append(reason);}
   return wrap;
@@ -1080,8 +1108,13 @@ function initialize(){
         const settings=node('div','protocol-settings');settings.id='settings-'+p.id;settings.hidden=true;const grid=node('div','form-grid');
         const basic=(p.fields||[]).filter(key=>!['masks','extra'].includes(FIELDS[key].type)&&(p.id!=='xhypt'||!QUIC_FIELD_KEYS.includes(key))),extensions=(p.fields||[]).filter(key=>['masks','extra'].includes(FIELDS[key].type));
         for(const key of [...basic,...extensions])grid.append(makeField(key));settings.append(grid);
+        if(['xdns','xicmp'].includes(p.id)){
+          const details=node('details','extension-catalog');details.append(node('summary','','参数作用端与对应关系'),maskReferenceList(MASKS.find(mask=>mask.id===p.id)));
+          details.append(node('p','note',p.id==='xdns'?'委派域名同时用于两端，因此该输入不标单端。MTU 是两端各自发送时的限制，本页固定两端为 80。':'本页客户端固定 dgram=false，服务端不读取此开关；ips 保持未设置，不启用目标覆盖或来源筛选。'));
+          settings.append(details);
+        }
         if(catalogCore&&!XRAY_PROFILES[p.id]?.extra)settings.append(readOnlyExtensionCatalog(p,'extra'));
-        if(catalogCore&&!XRAY_PROFILES[p.id]?.fm)settings.append(readOnlyExtensionCatalog(p,'fm'));
+        if(catalogCore&&!XRAY_PROFILES[p.id]?.fm&&!['xdns','xicmp'].includes(p.id))settings.append(readOnlyExtensionCatalog(p,'fm'));
         row.append(settings);
       }
       body.append(row);
@@ -1416,6 +1449,11 @@ function parseSavedCommand(raw){
 function savedCommandPlan(parsed){
   const {pairs}=parsed,fields=Object.fromEntries(Object.entries(FIELDS).map(([key,spec])=>[key,spec.type==='checkbox'?Boolean(spec.value):(spec.value??'')]));
   const selected=new Set(),ports=new Map(),masks=new Map(),notes=[];
+  for(const [legacy,current] of [['xdnspt','xdns'],['xicmppt','xicmp']]){
+    if(!pairs.has(legacy))continue;
+    pairs.set(current,'y');pairs.delete(legacy);
+    notes.push(legacy+' 已按脚本的启用语义还原为 '+current+'；此值不是可调监听端口。');
+  }
   const allowed=new Set([...Object.keys(FIELDS).filter(key=>!UI_ONLY.has(key)),...PROTOCOLS.flatMap(p=>[p.id,p.portKey].filter(Boolean)),'secp','alns','acmemode','cfgver']);
   if(pairs.has('cfgver')&&![BUILD.presetVersion,'V26.09.07'].includes(pairs.get('cfgver')))throw new Error('这条命令使用其他版本的默认参数，请用配套 GUI 还原，避免猜测省略的值。');
   for(const key of pairs.keys())if(!allowed.has(key))throw new Error('当前 GUI 无法还原变量 '+key+'；未改动表单。');
@@ -1553,6 +1591,10 @@ function renderCommandPanel(){
   $('import-status').hidden=!importMessage;$('import-status').classList.toggle('is-error',importError);text('import-status',importMessage);
 }
 function validDomain(input){return input.length<=253&&/^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,63}$/.test(input);}
+function validXdnsResolver(input){
+  const v6=input.match(/^\[([0-9a-fA-F:]+)\]:([0-9]{1,5})$/),v4=input.match(/^([0-9.]+):([0-9]{1,5})$/),match=v6||v4;
+  return Boolean(match&&(v6?isIPv6(match[1]):isIPv4(match[1]))&&Number(match[2])>=1&&Number(match[2])<=65535);
+}
 function isIPv4(input){const parts=input.split('.');return parts.length===4&&parts.every(p=>/^(0|[1-9]\d{0,2})$/.test(p)&&Number(p)<=255);}
 function isIPv6(input){if(!input.includes(':')||!/^[0-9a-fA-F:.]+$/.test(input))return false;try{return new URL('http://['+input+']/').hostname.startsWith('[');}catch{return false;}}
 function validURL(input){try{const u=new URL(input);return u.protocol==='https:'&&!u.username&&!u.password&&!u.hash;}catch{return false;}}
@@ -1669,7 +1711,13 @@ function validate(deploy,protocols,pairs){
   if(hops.length===2&&hops[0].a<=hops[1].b&&hops[1].a<=hops[0].b)error('两个 Hysteria2 的跳跃范围重叠，请填写不同的 shyjpt 与 xhyjpt。','hyjpt');
   for(const hop of hops)for(const [socket,owner] of ports){const [kind,p]=socket.split(':');if(kind==='udp'&&owner!==hop.id&&Number(p)>=hop.a&&Number(p)<=hop.b)error(hop.key+' 的范围覆盖了 '+owner+' 的 UDP 端口。',hop.key);}
   if(value('hyjpt')&&!ids.has('shypt')&&!ids.has('xhypt'))error('hyjpt 需要选择 Hysteria2 协议。','hyjpt');
-  if(ids.has('xdns')&&!validDomain(value('xdnsym')))error('XDNS 需要填写有效域名。','xdnsym');
+  if(ids.has('xdns')){
+    if(!validDomain(value('xdnsym'))||value('xdnsym').length>100)error('XDNS 需要最长100字符的有效委派域名。','xdnsym');
+    if(!validXdnsResolver(value('xdnsres')))error('XDNS 解析器使用 IP:端口或[IPv6]:端口。','xdnsres');
+    warn('XDNS 须先完成 NS 委派并开放 UDP/53；两端使用 Xray ≥26.7.28，完整导入脚本输出的客户端 JSON。','select-xdns');
+  }
+  if(ids.has('xicmp'))warn('XICMP 须具备原始套接字权限、IPv4/IPv6 套接字支持及 ICMP 放行；完整导入客户端 JSON，不加入通用订阅。','select-xicmp');
+  if(value('sub')&&protocols.length&&protocols.every(p=>['xdns','xicmp'].includes(p.id)))error('仅选择 XDNS/XICMP 时请关闭链接订阅，使用脚本输出的完整客户端 JSON。','sub');
   if(value('reym')&&!validDomain(value('reym')))error('REALITY 目标应为域名，不包含协议头、路径或端口。','reym');
   if(ids.has('naive')&&value('naive')&&!validDomain(value('naive')))error('Naive 需要有效域名，留空可在 VPS 输入。','naive');
   if(ids.has('naive')&&!value('naive'))warn('Naive 域名留空，将在 VPS 上交互输入。','naive');
@@ -1741,7 +1789,6 @@ function validate(deploy,protocols,pairs){
   }
   if(value('operation')==='rep'&&ids.has('naive'))error('rep 保留现有 Naive/Caddy，不能选择重新配置 Naive。请取消这一项。','select-naive');
   if(value('operation')==='rep'&&!value('sub')&&value('certMode')!=='auto')warn('未开启订阅的 rep 保留证书，不会传入此表单的证书申请参数。','operation');
-  if(value('ipv')==='6'&&ids.has('xicmp'))error('脚本不支持 ipv=6 与 XICMP 同时使用。','ipv');
   if(!['keep','restore'].includes(value('ipv')))warn('ipv 会修改 VPS 系统网络策略；所需平台条件由脚本在 VPS 检查。','ipv');
   if(value('sub')&&value('subpt')){const p=value('subpt').trim();if(!/^\d{1,5}$/.test(p)||Number(p)<1||Number(p)>65535)error('订阅端口应为 1 至 65535。','subpt');else if(ports.has('tcp:'+Number(p)))error('订阅端口与 '+ports.get('tcp:'+Number(p))+' 的 TCP 端口重复。','subpt');}
   if(value('sub')&&value('cdnEnabled')&&!CDN_HTTPS_PORTS.has(String(Number(value('subpt').trim()))))error('CDN 订阅须显式填写受支持的 HTTPS 端口。','subpt');

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-AIRGOSBX_VERSION='V26.09.08.5'
+AIRGOSBX_VERSION='V26.09.16.1'
 # 仅在内置 XHTTP 默认参数改变时更新此标记，普通脚本版本更新不使旧命令失效。
 XHTTP_DEFAULTS_VERSION='V26.09.08.1'
 agsbxurl="${agsbxurl:-https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/main/airgosbx.sh}"
@@ -858,8 +858,10 @@ vrow "vwpt"     "Vlessenc-ws-vision（裸ENC，配 cdnym 走CDN）"
 vrow "xhypt"    "Xray-Hysteria2（QUIC，需TLS证书）"
 vrow "xhyfm"    "UDP FM：noise，可叠加一个 salamander/sudoku/header-*/mkcp-* 格式掩码"
 vrow "xdns"     "Vless-kcp-xdns-fm（备用DNS隧道，需配 xdnsym=域名）"
-vrow "xdnsym"   "XDNS 专用域名；该旧模板仍待独立适配，GUI 暂不生成其命令"
-vrow "xicmp"    "Vless-kcp-xicmp-fm（特种L3 Ping隧道，独占ICMP）"
+vrow "xdnsym"   "XDNS 专用域名（最长100字符）；须配置 NS 委派到 VPS，开放 UDP/53"
+vrow "xdnsres"  "XDNS 客户端递归解析器，IP:端口或[IPv6]:端口；默认 8.8.8.8:53"
+vrow "xicmp"    "Vless-kcp-xicmp-fm（ICMP隧道；root/CAP_NET_RAW，不关闭系统 Ping）"
+echo "             XDNS/XICMP 两端需 Xray >=26.7.28；输出完整客户端 JSON，不加入通用链接订阅。"
 
 vg "② Sing-box 内核协议（端口留空＝自动分配）"
 vrow "shypt"    "Hysteria2（QUIC暴力传输，需TLS证书）"
@@ -1664,7 +1666,7 @@ deployment_port_specs(){
 }
 
 validate_deployment_inputs(){
-  local flag variable file network value key
+  local flag variable file network value key has_link_protocol=no
   while IFS=: read -r flag variable file network; do
     [ "${!flag}" = yes ] || continue
     value=${!variable}
@@ -1677,7 +1679,19 @@ validate_deployment_inputs(){
   [ -z "$subid" ] || [[ "$subid" =~ ^[A-Za-z0-9_-]{16,128}$ ]] \
     || { echo "错误：subid 仅支持 16-128 位字母、数字、短横线和下划线。"; return 1; }
   [ "$mierup" != yes ] || [ -z "$port_mieru" ] || validate_mita_port_value "$port_mieru" || return 1
-  [ "$xdns" != yes ] || valid_domain "$xdnsym" || { echo "错误：XDNS 必须提供有效的 xdnsym。"; return 1; }
+  if [ "$xdns" = yes ]; then
+    valid_domain "$xdnsym" && [ "${#xdnsym}" -le 100 ] || { echo "错误：XDNS 必须提供最长100字符的有效 xdnsym，为 DNS 查询载荷保留空间。"; return 1; }
+    parse_xdns_resolver "$xdnsres" || { echo "错误：xdnsres 必须为有效 IP:端口或[IPv6]:端口。"; return 1; }
+  fi
+  [ "$xicp" != yes ] || require_xicmp_capability || return 1
+  if [ "$sub" = yes ] && { [ "$xdns" = yes ] || [ "$xicp" = yes ]; }; then
+    for flag in xhp vlp vxp vwp xhyp xvcdn xvargo hyp tup anp arp ssp vmp sop mierup; do
+      [ "${!flag}" != yes ] || has_link_protocol=yes
+    done
+    if [ -z "$naive" ] && [ "$has_link_protocol" = no ]; then
+      echo "错误：仅部署 XDNS/XICMP 时不提供链接订阅，请取消 sub，使用完整客户端 JSON。"; return 1
+    fi
+  fi
   [ -z "$ym_vl_re" ] || valid_domain "$ym_vl_re" || { echo "错误：reym 域名格式无效。"; return 1; }
   [ -z "$cdnym" ] || valid_domain "$cdnym" || { echo "错误：cdnym 域名格式无效。"; return 1; }
   case "$warp" in ''|s|x|sx|xs|s4|s6|x4|x6|s4x4|x4s4|s4x6|x6s4|s6x4|x4s6|s6x6|x6s6|sx4|x4s|sx6|x6s|xs4|s4x|xs6|s6x) ;; *) echo "错误：warp 值无效，拒绝退回直连。"; return 1 ;; esac
@@ -2123,8 +2137,8 @@ export port_ar=${arpt:-''}
 export port_ss=${sspt:-''}
 export port_so=${sopt:-''}
 export port_xdns=53
-export flag_xicmp=${xicmppt:-''}
 export xdnsym=${xdnsym:-''}
+export xdnsres=${xdnsres:-'8.8.8.8:53'}
 export port_xvcdn=${xvcdnpt:-''}
 export port_xvargo=${xvargopt:-''}
 export port_mieru=${mierupt:-''}
@@ -2594,7 +2608,7 @@ activate_core_candidate(){
   chmod 700 "$candidate" && "$candidate" version >/dev/null 2>&1 || return 1
   if [ -s "$HOME/agsbx/$config" ]; then
     case "$core" in
-      xray) "$candidate" run -test -c "$HOME/agsbx/$config" >/dev/null 2>&1 || return 1 ;;
+      xray) validate_xray_special_version "$candidate" "$HOME/agsbx/$config" && "$candidate" run -test -c "$HOME/agsbx/$config" >/dev/null 2>&1 || return 1 ;;
       sing-box) "$candidate" check -c "$HOME/agsbx/$config" >/dev/null 2>&1 || return 1 ;;
       caddy) "$candidate" validate --config "$HOME/agsbx/$config" >/dev/null 2>&1 || return 1 ;;
     esac
@@ -3783,10 +3797,6 @@ apply_requested_ip_policy(){
   # 完全不传 ipv 只加载当前受管模式；显式 ipv="" 才取消并恢复原状态。
   [ "$ipv_request_set" = yes ] || return 0
   [ -n "$target_mode" ] || { ip_policy_cancel_and_restore; return $?; }
-  if [ "$target_mode" = 6 ] && [ "$xicp" = yes ]; then
-    echo "错误：ipv=6 不支持 XICMP；当前 XICMP FinalMask 必须监听 IPv4 地址 0.0.0.0。"
-    return 1
-  fi
   if [ "$old_mode" = "$target_mode" ] && ip_policy_mode_configuration_matches "$target_mode"; then
     ip_policy_configure_runtime "$target_mode"
     echo "ipv=$target_mode 已处于目标状态，无需重复切换。"
@@ -5484,22 +5494,110 @@ cleanup_port_hopping(){
   unset HOPPING_INITED
   rm -f "$HOME/agsbx/hopping_managed"
 }
-save_xicmp_state(){
-  [ -e "$HOME/agsbx/xicmp_enabled" ] && return
-  if [ -r /proc/sys/net/ipv4/icmp_echo_ignore_all ]; then
-    cat /proc/sys/net/ipv4/icmp_echo_ignore_all > "$HOME/agsbx/xicmp_echo_ignore_all.prev" 2>/dev/null
+# XDNS 固定 TXT、MTU=80；8字节会话标识和填充经 base32 编码后仍须容纳域名。
+parse_xdns_resolver(){
+  local endpoint="$1" part compact
+  local -a octets
+  xdns_resolver_host='' xdns_resolver_port=''
+  if [[ "$endpoint" =~ ^\[([0-9A-Fa-f:]+)\]:([0-9]{1,5})$ ]]; then
+    xdns_resolver_host=${BASH_REMATCH[1]}; xdns_resolver_port=${BASH_REMATCH[2]}
+    compact="$xdns_resolver_host"
+    case "$compact" in *:::*|*::*::*) return 1 ;; esac
+    case "$compact" in :*) [[ "$compact" = ::* ]] || return 1 ;; esac
+    case "$compact" in *:) [[ "$compact" = *:: ]] || return 1 ;; esac
+    if [[ "$compact" = *::* ]]; then
+      compact=${compact/::/:}; compact=${compact#:}; compact=${compact%:}
+      IFS=: read -r -a octets <<< "$compact"
+      [ "${#octets[@]}" -le 7 ] || return 1
+    else
+      case "$compact" in :*|*:) return 1 ;; esac
+      IFS=: read -r -a octets <<< "$compact"
+      [ "${#octets[@]}" -eq 8 ] || return 1
+    fi
+    for part in "${octets[@]}"; do [[ "$part" =~ ^[0-9A-Fa-f]{1,4}$ ]] || return 1; done
+  elif [[ "$endpoint" =~ ^([0-9.]+):([0-9]{1,5})$ ]]; then
+    xdns_resolver_host=${BASH_REMATCH[1]}; xdns_resolver_port=${BASH_REMATCH[2]}
+    valid_ipv4 "$xdns_resolver_host" || return 1
+    IFS=. read -r -a octets <<< "$xdns_resolver_host"
+    for part in "${octets[@]}"; do [[ "$part" =~ ^(0|[1-9][0-9]{0,2})$ ]] || return 1; done
+    [[ "$xdns_resolver_host" != *. ]] || return 1
+  else return 1
   fi
-  echo "yes" > "$HOME/agsbx/xicmp_enabled"
+  valid_port "$xdns_resolver_port" || return 1
+  xdns_resolver_port=$((10#$xdns_resolver_port))
 }
+
+require_xray_special_version(){
+  local version
+  version=$("$1" version 2>/dev/null | awk '/^Xray/{print $2; exit}')
+  [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && [ "$(vercmp "$version" 26.7.28)" != lt ] \
+    || { echo "错误：XDNS/XICMP 配套配置要求 Xray >=26.7.28，请先更新核心。"; return 1; }
+}
+
+validate_xray_special_version(){
+  # 仅限制新版配套配置，旧部署仍可按原版本回滚。
+  if grep -Eq 'agsbx-profile-x(dns|icmp)-v1' "$2"; then require_xray_special_version "$1"; fi
+}
+
+require_xicmp_capability(){
+  local key cap rest
+  # 服务沿用 root 身份，不给二进制附加文件能力；容器缺少原始套接字能力时提前拒绝。
+  while read -r key cap rest; do
+    if [ "$key" = CapEff: ]; then
+      [[ "$cap" =~ ^[0-9A-Fa-f]{8,16}$ ]] && (( (16#${cap: -8} & 8192) != 0 )) && return 0
+      break
+    fi
+  done < /proc/self/status
+  echo "错误：XICMP 需要当前运行环境提供 CAP_NET_RAW；未修改系统 Ping 设置。"
+  return 1
+}
+
 restore_xicmp_state(){
   [ -e "$HOME/agsbx/xicmp_enabled" ] || return 0
-  prev_xicmp=$(cat "$HOME/agsbx/xicmp_echo_ignore_all.prev" 2>/dev/null)
+  local prev_xicmp
+  [ -f "$HOME/agsbx/xicmp_echo_ignore_all.prev" ] && [ ! -L "$HOME/agsbx/xicmp_echo_ignore_all.prev" ] \
+    || { echo "错误：旧 XICMP 原状态记录缺失或不安全，已保留。"; return 1; }
+  prev_xicmp=$(cat "$HOME/agsbx/xicmp_echo_ignore_all.prev") || return 1
   case "$prev_xicmp" in
     0|1) sysctl -w net.ipv4.icmp_echo_ignore_all="$prev_xicmp" >/dev/null 2>&1 || return 1 ;;
     *) echo "错误：XICMP 原状态记录无效，已保留。"; return 1 ;;
   esac
   rm -f "$HOME/agsbx/xicmp_enabled" "$HOME/agsbx/xicmp_echo_ignore_all.prev"
 }
+
+render_xray_special_client(){
+  local kind="$1" address="$2" port=1 mtu=1350 mask domain resolver
+  case "$kind" in xdns|xicmp) ;; *) return 1 ;; esac
+  grep -Fq "agsbx-profile-${kind}-v1" "$HOME/agsbx/xr.json" || {
+    echo "错误：旧 $kind 配置须先通过 rep 重建，不能套用新版客户端模板。" >&2; return 1;
+  }
+  case "$enkey" in mlkem768x25519plus.*) ;; *) echo "错误：缺少配套 VLESS Encryption 公钥。" >&2; return 1 ;; esac
+  if [ "$kind" = xdns ]; then
+    domain=$(cat "$HOME/agsbx/xdns_domain") && resolver=$(cat "$HOME/agsbx/xdns_resolver") || return 1
+    valid_domain "$domain" && [ "${#domain}" -le 100 ] && parse_xdns_resolver "$resolver" || return 1
+    address="$xdns_resolver_host"; port="$xdns_resolver_port"; mtu=80
+    mask="{\"type\":\"xdns\",\"settings\":{\"resolvers\":[\"${domain}:txt+udp://${resolver}\"]}}"
+  else
+    valid_ip "$address" || return 1
+    mask='{"type":"xicmp","settings":{"dgram":false}}'
+  fi
+  cat <<EOF
+{
+  "log": {"loglevel": "warning"},
+  "inbounds": [{"listen": "127.0.0.1", "port": 10808, "protocol": "socks", "settings": {"auth": "noauth", "udp": true}}],
+  "outbounds": [{
+    "tag": "$kind", "protocol": "vless",
+    "settings": {"address": "$(json_escape "$address")", "port": $port, "id": "$(json_escape "$uuid")", "encryption": "$(json_escape "$enkey")"},
+    "streamSettings": {
+      "network": "kcp", "security": "none",
+      "kcpSettings": {"mtu": $mtu, "tti": 50, "uplinkCapacity": 5, "downlinkCapacity": 20, "congestion": true},
+      "finalmask": {"udp": [$mask]}
+    }
+  }]
+}
+EOF
+}
+
 installxray(){
 echo
 printf '%s\n' "${C_CYAN}=========启用xray内核=========${C_RESET}"
@@ -5512,6 +5610,9 @@ local xray_version
 xray_version=$("$HOME/agsbx/xray" version 2>/dev/null | awk '/^Xray/{print $2}')
 [[ "$xray_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && [ "$(vercmp "$xray_version" 26.3.27)" != lt ] \
   || { echo "错误：当前配置需要 Xray 26.3.27 或更新版本；请先更新核心。"; return 1; }
+if [ "$xdns" = yes ] || [ "$xicp" = yes ]; then require_xray_special_version "$HOME/agsbx/xray" || return 1; fi
+# 兼容旧脚本遗留状态；新版 XICMP 会识别系统 Echo，无需关闭全局 Ping。
+restore_xicmp_state || return 1
 cat > "$HOME/agsbx/xr.json" <<EOF
 {
   "log": {
@@ -5547,7 +5648,7 @@ private_key_x=$(cat "$HOME/agsbx/xrk/private_key")
 public_key_x=$(cat "$HOME/agsbx/xrk/public_key")
 short_id_x=$(cat "$HOME/agsbx/xrk/short_id")
 fi
-if [ -n "$xhp" ] || [ -n "$vxp" ] || [ -n "$vwp" ] || [ "$xvcdn" = yes ] || [ "$xvargo" = yes ]; then
+if [ -n "$xhp" ] || [ -n "$vxp" ] || [ -n "$vwp" ] || [ "$xvcdn" = yes ] || [ "$xvargo" = yes ] || [ "$xdns" = yes ] || [ "$xicp" = yes ]; then
 [ ! -L "$HOME/agsbx/xrk/dekey" ] && [ ! -L "$HOME/agsbx/xrk/enkey" ] || { echo "错误：ENC 密钥文件不能是符号链接。"; return 1; }
 if [ ! -e "$HOME/agsbx/xrk/dekey" ] && [ ! -e "$HOME/agsbx/xrk/enkey" ]; then
 vlkey=$("$HOME/agsbx/xray" vlessenc) || { echo "错误：无法生成 VLESS Encryption 密钥。"; return 1; }
@@ -5768,11 +5869,12 @@ else
 xhyp=xhyptargo
 fi
 if [ "$xdns" = yes ]; then
-if valid_domain "$xdnsym"; then
+valid_domain "$xdnsym" && [ "${#xdnsym}" -le 100 ] && parse_xdns_resolver "$xdnsres" || return 1
 atomic_text_file "$HOME/agsbx/xdns_domain" "$xdnsym" || return 1
-echo "$port_xdns" > "$HOME/agsbx/port_xdns"
+atomic_text_file "$HOME/agsbx/xdns_resolver" "$xdnsres" || return 1
+printf '%s\n' "$port_xdns" > "$HOME/agsbx/port_xdns" || return 1
 echo "Vless-kcp-xdns-fm端口：$port_xdns"
-cat >> "$HOME/agsbx/xr.json" <<EOF
+cat >> "$HOME/agsbx/xr.json" <<EOF || return 1
     {
       "tag": "vless-kcp-xdns",
       "listen": "${public_listen_address}",
@@ -5781,27 +5883,27 @@ cat >> "$HOME/agsbx/xr.json" <<EOF
       "settings": {
         "clients": [
           {
-            "id": "$(json_escape "$uuid")"
+            "id": "$(json_escape "$uuid")",
+            "email": "agsbx-profile-xdns-v1"
           }
         ],
-        "decryption": "none"
+        "decryption": "${dekey}"
       },
       "streamSettings": {
         "network": "kcp",
         "kcpSettings": {
+          "mtu": 80,
+          "tti": 50,
           "uplinkCapacity": 5,
           "downlinkCapacity": 20,
-          "congestion": true,
-          "header": {
-            "type": "none"
-          }
+          "congestion": true
         },
         "finalmask": {
           "udp": [
             {
               "type": "xdns",
               "settings": {
-                "domains": ["${xdnsym}"]
+                "domains": ["${xdnsym}:txt"]
               }
             }
           ]
@@ -5809,50 +5911,41 @@ cat >> "$HOME/agsbx/xr.json" <<EOF
       }
     },
 EOF
-else
-echo "警告：启用了 XDNS，但 xdnsym=$xdnsym 不是有效域名，已跳过 XDNS 配置。"
-fi
 fi
 if [ "$xicp" = yes ]; then
-save_xicmp_state
-if command -v setcap >/dev/null 2>&1; then
-setcap cap_net_raw+ep "$HOME/agsbx/xray" 2>/dev/null || echo "警告：XICMP 需要 CAP_NET_RAW，但 setcap 执行失败。"
-else
-echo "警告：系统未安装 setcap，XICMP 可能无法获得 CAP_NET_RAW 权限。"
-fi
-sysctl -w net.ipv4.icmp_echo_ignore_all=1 >/dev/null 2>&1
-echo "Vless-kcp-xicmp-fm 特种L3协议已激活✓"
-cat >> "$HOME/agsbx/xr.json" <<EOF
+require_xicmp_capability || return 1
+echo "正在生成 XICMP 配置（不修改系统 Ping；启动结果随后检查）。"
+# 字符串 "0" 在 Xray PortList 中保留一个随机端口；数值 0 会生成空列表。
+# mKCP 的底层 UDP 只绑定回环，实际公网承载由 XICMP 原始套接字负责。
+cat >> "$HOME/agsbx/xr.json" <<EOF || return 1
     {
       "tag": "vless-kcp-xicmp",
-      "listen": "${public_listen_address}",
+      "listen": "127.0.0.1",
+      "port": "0",
       "protocol": "vless",
       "settings": {
         "clients": [
           {
-            "id": "$(json_escape "$uuid")"
+            "id": "$(json_escape "$uuid")",
+            "email": "agsbx-profile-xicmp-v1"
           }
         ],
-        "decryption": "none"
+        "decryption": "${dekey}"
       },
       "streamSettings": {
         "network": "kcp",
         "kcpSettings": {
+          "mtu": 1350,
+          "tti": 50,
           "uplinkCapacity": 5,
           "downlinkCapacity": 20,
-          "congestion": true,
-          "header": {
-            "type": "none"
-          }
+          "congestion": true
         },
         "finalmask": {
           "udp": [
             {
               "type": "xicmp",
-              "settings": {
-                "listenIp": "0.0.0.0",
-                "id": 0
-              }
+              "settings": {}
             }
           ]
         }
@@ -7452,6 +7545,8 @@ validate_generated_core_config(){
       binary="$HOME/agsbx/xray"
       config="$HOME/agsbx/xr.json"
       [ -x "$binary" ] && [ -s "$config" ] || { echo "错误：Xray 内核或配置文件不存在。"; return 1; }
+      validate_xray_special_version "$binary" "$config" || return 1
+      if grep -Fq 'agsbx-profile-xicmp-v1' "$config"; then require_xicmp_capability || return 1; fi
       output=$("$binary" run -test -c "$config" 2>&1) || {
         echo "错误：Xray 配置检查失败，未注册服务。"
         printf '%s\n' "$output" | tail -n 5
@@ -8360,7 +8455,7 @@ if secondary_saved_protocol_is_selected naive; then
 fi
 }
 cip(){
-local cip_mode="${1:-show}" node_links='' clash_config='' subtoken='' server_host render_cert_hash
+local cip_mode="${1:-show}" node_links='' clash_config='' subtoken='' server_host render_cert_hash special_protocol special_client
 if [ "$cip_mode" = publish ]; then
   [ "$sub" != yes ] || setup_tls_certificate || return 1
 else
@@ -8597,28 +8692,27 @@ elif [ "$sub" = yes ]; then
 echo "提示：带 FM 的 vlpt 请使用完整 VLESS URL 或聚合订阅；当前 Clash 模板不输出缺少掩码的节点。"
 fi
 fi
-if grep -q vless-kcp-xdns "$HOME/agsbx/xr.json" 2>/dev/null; then
-node_title "💣【 Vless-kcp-xdns-fm 】备用DNS隧道，节点信息如下："
-port_xdns=$(cat "$HOME/agsbx/port_xdns")
-xdnsym=$(cat "$HOME/agsbx/xdns_domain" 2>/dev/null)
-[ -n "$xdnsym" ] || xdnsym=$(sed -n 's/.*"domains": \["\([^"]*\)"\].*/\1/p' "$HOME/agsbx/xr.json" | head -1)
-valid_domain "$xdnsym" || { echo "错误：XDNS 域名状态无效。"; return 1; }
-xdns_fm="{\"udp\":[{\"type\":\"xdns\",\"settings\":{\"domains\":[\"$xdnsym\"]}}]}"
-xdns_fm_encoded=$(printf '%s' "$xdns_fm" | sed 's/{/%7B/g;s/}/%7D/g;s/"/%22/g;s/:/%3A/g;s/,/%2C/g;s/ //g;s/\[/%5B/g;s/\]/%5D/g')
-vl_xdns_link="vless://$(uri_percent_encode "$uuid")@$server_ip:$port_xdns?encryption=none&flow=&type=kcp&headerType=none&fm=$xdns_fm_encoded#$(uri_percent_encode "${sxname}vless-kcp-xdns-fm-$hostname")"
-append_node_link "$vl_xdns_link" || return 1
-echo "$vl_xdns_link"
-echo
-fi
-if grep -q vless-kcp-xicmp "$HOME/agsbx/xr.json" 2>/dev/null; then
-node_title "💣【 Vless-kcp-xicmp-fm 】特种L3 Ping隧道，节点信息如下："
-xicmp_fm="{\"udp\":[{\"type\":\"xicmp\",\"settings\":{\"listenIp\":\"0.0.0.0\",\"id\":0}}]}"
-xicmp_fm_encoded=$(printf '%s' "$xicmp_fm" | sed 's/{/%7B/g;s/}/%7D/g;s/"/%22/g;s/:/%3A/g;s/,/%2C/g;s/ //g;s/\[/%5B/g;s/\]/%5D/g')
-vl_xicmp_link="vless://$(uri_percent_encode "$uuid")@$server_ip:0?encryption=none&flow=&type=kcp&headerType=none&fm=$xicmp_fm_encoded#$(uri_percent_encode "${sxname}vless-kcp-xicmp-fm-$hostname")"
-append_node_link "$vl_xicmp_link" || return 1
-echo "$vl_xicmp_link"
-echo
-fi
+for special_protocol in xdns xicmp; do
+  grep -Fq "vless-kcp-$special_protocol" "$HOME/agsbx/xr.json" 2>/dev/null || continue
+  node_title "💣【 VLESS Encryption + mKCP + $special_protocol 】"
+  if ! grep -Fq "agsbx-profile-${special_protocol}-v1" "$HOME/agsbx/xr.json"; then
+    echo "旧版 $special_protocol 尚未迁移，请使用同版本脚本和 GUI 通过 rep 重建；不再输出不完整的分享链接。"
+    continue
+  fi
+  special_client=$(render_xray_special_client "$special_protocol" "$server_host") || return 1
+  if [ "$cip_mode" = publish ]; then
+    atomic_text_file "$HOME/agsbx/${special_protocol}-client.json" "$special_client" || return 1
+    echo "客户端完整配置已保存：$HOME/agsbx/${special_protocol}-client.json（含节点凭据）。"
+  fi
+  echo "两端使用 Xray >=26.7.28；以下 JSON 在客户端使用，SOCKS 入口为 127.0.0.1:10808。"
+  echo "此节点不加入通用 URL/Clash 订阅，请完整导入 JSON，保留 mKCP 和 FinalMask 参数。"
+  if [ "$special_protocol" = xdns ]; then
+    echo "XDNS：先将专用域名 NS 委派到 VPS，开放 UDP/53；解析器须可从客户端访问。两端固定 TXT、MTU=80。"
+  else
+    echo "XICMP：两端须具备原始套接字权限及 IPv4/IPv6 套接字支持，防火墙须放行对应 ICMP；不关闭系统 Ping。"
+  fi
+  printf '%s\n\n' "$special_client"
+done
 if grep -q ss-2022 "$HOME/agsbx/sb.json" 2>/dev/null; then
 node_title "💣【 Shadowsocks-2022 】节点信息如下："
 port_ss=$(cat "$HOME/agsbx/port_ss")
@@ -9695,7 +9789,7 @@ rep_restore_runtime(){
   restored_hops=$(cat "$HOME/agsbx/xhyjpt" 2>/dev/null); restored_port=$(cat "$HOME/agsbx/port_xhy2" 2>/dev/null)
   if [ -n "$restored_hops" ] && [ -n "$restored_port" ]; then setup_port_hopping "$restored_hops" "$restored_port" || failed=yes; fi
   if [ -e "$HOME/agsbx/xicmp_enabled" ]; then
-    command -v setcap >/dev/null 2>&1 && setcap cap_net_raw+ep "$HOME/agsbx/xray" 2>/dev/null
+    # 仅恢复旧版事务快照；新版配置不创建此标记，也不修改全局 Ping。
     sysctl -w net.ipv4.icmp_echo_ignore_all=1 >/dev/null 2>&1 || failed=yes
   fi
 
@@ -10097,12 +10191,6 @@ case "$1" in
   *) ip_policy_load_runtime >/dev/null 2>&1 || ip_policy_configure_runtime '' ;;
 esac
 case "$1" in
-  rep)
-    if [ "${ipv_request_mode:-$effective_ipv_mode}" = 6 ] && [ "$xicp" = yes ]; then
-      echo "错误：ipv=6 不支持 XICMP；请删除 xicmp/xicmppt 后再重置配置。"
-      exit 1
-    fi
-    ;;
   '')
     if agsbx_installed || agsbx_running; then
       if [ "$ipv_request_set" = yes ] && [ -z "$ipv_request_mode" ]; then
@@ -10174,6 +10262,8 @@ cleanup_mieru_ufw || exit 1
 reset_mita_config || exit 1
 rm -rf "$HOME/agsbx"/{sb.json,xr.json,sbargoym.log,sbargotoken.log,argo.log,argoport.log,cdnym,name,secondary_secp,secondary_meta,direct_xh_profile,direct_vl_profile,xray_xh_profile,xray_vl_profile,xray_vx_profile,xray_vw_profile,xray_vm_profile,xray_hy_profile,xray_xvd_profile,xray_xva_profile,mita.json,mieru_user,mieru_pass,port_mieru,mieru_protocol,mieru_traffic_seed,mieru_traffic_pattern,mieru_ufw_rule,shyjpt,xhyjpt,socks_user,socks_pass,transport_vm,transport_vw,transport_vx,transport_xh,transport_xvd,transport_xva} \
   || { echo "错误：rep 无法清理旧的可变协议状态。"; exit 1; }
+rm -f -- "$HOME/agsbx/xdns-client.json" "$HOME/agsbx/xicmp-client.json" "$HOME/agsbx/xdns_domain" "$HOME/agsbx/xdns_resolver" \
+  || { echo "错误：rep 无法清理旧 XDNS/XICMP 客户端状态。"; exit 1; }
 echo "Airgosbx重置协议完成，开始更新相关协议变量……" && sleep 2
 echo
 elif [ "$1" = "list" ]; then
