@@ -10,7 +10,7 @@
     与 airgosbx.sh 配套维护、同版本提交和发布。无外部资源、请求、遥测或自动持久化。
     与 airgosbx.sh 配套维护：修改 showvars、协议归属、secp、warp、rep 或 URL 生成规则时，
     同时核对 PROTOCOLS、XRAY_PROFILES、FIELDS、collect、savedCommandPlan 和 validate。
-    配套版本：V26.09.16.1。XHTTP_DEFAULTS_VERSION 与 BUILD.presetVersion 仅在默认参数变化时更新。
+    配套版本：V26.09.19.3。XHTTP_DEFAULTS_VERSION 与 BUILD.presetVersion 仅在默认参数变化时更新。
     发布前须核对配套脚本是否已同步到 GitHub main；存在未发布接口变更时 remoteAligned 保持 false。
     页面只生成文本，不执行命令。选择“对照脚本”时只读取用户明确选择的文件。
   -->
@@ -237,7 +237,7 @@
 <div class="page">
   <header class="masthead">
     <div class="brand"><div class="brand-mark" aria-hidden="true">A</div><div><div class="eyebrow">AIRGOSBX / WORKBENCH</div><h1>配置工作台</h1><p class="meta">配置连接，生成 VPS 命令。</p></div></div>
-    <div class="tools"><span id="build-version" class="meta">V26.09.16.1 · 离线单文件</span><button id="reset" type="button">重置表单</button></div>
+    <div class="tools"><span id="build-version" class="meta">V26.09.19.3 · 离线单文件</span><button id="reset" type="button">重置表单</button></div>
   </header>
   <noscript><p class="notice warning">此页面需要浏览器 JavaScript 才能生成命令。所有逻辑都在当前 HTML 内，不加载外部资源。</p></noscript>
 
@@ -271,12 +271,12 @@
         <p id="argo-origin-hint" class="notice" hidden></p>
       </section>
 
-      <section class="panel" id="outbound"><div class="panel-heading"><div><h2 class="step"><span class="section-index">02</span>出站</h2><p class="section-description">选择出站路径</p><p class="intro">默认直连。WARP 可与二级代理并用，选入 secp 的协议优先走 B 服务器。</p></div></div><div id="outbound-fields" class="form-grid"></div><div id="warp-fields" class="form-grid" style="margin-top:14px" hidden></div><div id="secondary-panel" hidden><div id="secondary-fields" class="form-grid" style="margin-top:14px"></div><div class="routing-choice"><span class="meta">哪些协议走 B</span><button type="button" class="small-button" data-secp="all">全部可用</button><button type="button" class="small-button" data-secp="xray">Xray</button><button type="button" class="small-button" data-secp="singbox">Sing-box</button><button type="button" class="small-button" data-secp="none">清空</button></div><div id="secondary-list" class="secondary-list"></div><p class="note">Mieru/Mita 不支持当前 secp 路径。Naive 需单独选中，并通过本地 Sing-box 转交；选择 Naive 或 Sing-box 协议时，B 地址必须是 IP。</p></div></section>
+      <section class="panel" id="outbound"><div class="panel-heading"><div><h2 class="step"><span class="section-index">02</span>出站</h2><p class="section-description">选择出站路径</p><p class="intro">默认直连。WARP 可与二级代理并用，选入 secp 的协议优先走 B 服务器。</p></div></div><div id="outbound-fields" class="form-grid"></div><div id="warp-fields" class="form-grid" style="margin-top:14px" hidden></div><div id="secondary-panel" hidden><div id="secondary-fields" class="form-grid" style="margin-top:14px"></div><div class="routing-choice"><span class="meta">A 的哪些入站走 B</span><button type="button" class="small-button" data-secp="all">全部可用</button><button type="button" class="small-button" data-secp="xray">Xray</button><button type="button" class="small-button" data-secp="singbox">Sing-box</button><button type="button" class="small-button" data-secp="none">清空</button></div><div id="secondary-list" class="secondary-list"></div><p class="note">SS/SOCKS5 是 B 的入口，不属于 secp；其完整 URL 填入 A 的 securl。Mieru/Mita 不支持当前 secp 路径。Naive 需单独选中，经 A 本地 Sing-box 转交目标 TCP 和域名，A 不解析这些目标域名。B 的配套 SS/SOCKS5 配置按 Cloudflare DoH → Google DoH → B 系统 DNS 顺序解析，并检查实际连接 IP 是否属于私网。两端须加载配套新配置，单独更新脚本不会迁移旧配置。选择 Naive 或 Sing-box 协议时，B 地址必须是 IP；通常保持 UoT 关闭。</p></div></section>
 
-      <section class="panel" id="certificates"><div class="panel-heading"><div><h2 class="step"><span class="section-index">03</span>证书与订阅</h2><p class="section-description">证书、地址与订阅</p><p class="intro">统一配置节点证书、系统 IP 策略与 HTTPS 订阅。</p></div></div><div class="policy-summary" aria-label="证书使用规则"><p><strong>REALITY</strong><span>无需申请 CA 证书。</span></p><p><strong>HTTPS 订阅</strong><span>必须使用 CA，优先复用；没有则申请。</span></p><p><strong>NaiveProxy</strong><span>Caddy 自动申请并管理域名证书。</span></p></div><div id="common-fields" class="form-grid"></div><div id="certificate-fields" class="form-grid" style="margin-top:16px"></div><div id="certificate-specific" class="form-grid" style="margin-top:16px"></div><p class="note">自签证书只用于未开启订阅的普通 TLS 节点，需要客户端建立信任或固定指纹；HTTPS 订阅不接受自签证书。VLESS Encryption 节点请使用完整 URL 或聚合订阅，脚本不会生成缺失加密参数的 Clash 节点。</p><div id="subscription-fields" class="form-grid" style="margin-top:16px"></div><div id="subscription-specific" class="form-grid" style="margin-top:16px" hidden></div><details><summary>更多变量：证书账户、跳跃端口与源地址</summary><div id="advanced-fields" class="form-grid"></div></details></section>
+      <section class="panel" id="certificates"><div class="panel-heading"><div><h2 class="step"><span class="section-index">03</span>证书与订阅</h2><p class="section-description">证书、地址与订阅</p><p class="intro">统一配置节点证书、系统 IP 策略与 HTTPS 订阅。</p></div></div><div class="policy-summary" aria-label="证书使用规则"><p><strong>REALITY</strong><span>无需申请 CA 证书。</span></p><p><strong>HTTPS 订阅</strong><span>必须使用 CA，优先复用；没有则申请。</span></p><p><strong>NaiveProxy</strong><span>Caddy 自动申请并管理域名证书。</span></p></div><div id="common-fields" class="form-grid"></div><div id="certificate-fields" class="form-grid" style="margin-top:16px"></div><div id="certificate-specific" class="form-grid" style="margin-top:16px"></div><p class="note">自签证书只用于未开启订阅的普通 TLS 节点，需要客户端建立信任或固定指纹；HTTPS 订阅不接受自签证书。SS / SOCKS5 作为 B 端入口，仅终端输出完整 URL，不加入订阅。VLESS Encryption 节点请使用完整 URL 或聚合订阅，脚本不会生成缺失加密参数的 Clash 节点。</p><div id="subscription-fields" class="form-grid" style="margin-top:16px"></div><div id="subscription-specific" class="form-grid" style="margin-top:16px" hidden></div><details><summary>更多变量：证书账户、跳跃端口与源地址</summary><div id="advanced-fields" class="form-grid"></div></details></section>
       </div>
 
-      <section class="panel" id="reference"><div class="panel-heading"><div><h2 class="step">维护对照</h2><p class="section-description">脚本与 GUI 的维护对照</p><p class="intro">页面以当前工作区脚本为依据；HTML 不会自动读取磁盘或远端代码。</p></div></div><div class="table-wrap"><table class="help-table"><thead><tr><th>功能位置</th><th>脚本入口</th><th>GUI 同步点</th></tr></thead><tbody><tr><td>协议及所属核心</td><td><code>showvars / ins</code></td><td>协议清单、能力标记、核心推导</td></tr><tr><td>Xray 扩展</td><td><code>各入口的 extra / mode / fm 变量</code></td><td>按协议默认方案、FM 组合与独立调参</td></tr><tr><td>CDN / Argo</td><td><code>cdnym / argo / agn / agk</code></td><td>接入条件、端口、隧道绑定</td></tr><tr><td>出站</td><td><code>warp / secp / securl</code></td><td>WARP 规则、二级代理目标及范围</td></tr><tr><td>命令生成与还原</td><td><code>环境变量与管理命令</code></td><td>字段映射、引用转义、旧版通用参数继承</td></tr><tr><td>生命周期</td><td><code>rep / del / upx / ups …</code></td><td>操作清单、参数过滤、影响说明</td></tr></tbody></table></div><p class="note">覆盖范围：常用部署、证书、订阅、出站和管理入口。XDNS / XICMP 使用 Xray ≥26.7.28 的专用配置与完整客户端 JSON，不加入通用链接订阅；目录中标为不可配置的核心字段未接入脚本，内部证书续期和跳跃规则恢复命令由脚本管理。端口占用、服务归属、证书和真实连通性须在 VPS 检查。</p><p class="note">对照功能只提取你选择的脚本中的变量声明与帮助条目，不执行、不上传。它能提示变量清单差异，不能代替调用逻辑审查。</p><div class="tools" style="margin-top:14px"><label class="file-label">选择 airgosbx.sh 对照<input id="source-file" class="visually-hidden" type="file" accept=".sh,text/plain"></label><button id="clear-compare" type="button" class="text-button">清除对照</button></div><p id="sync-result" class="sync-result" role="status">配套版本：V26.09.16.1；XHTTP 默认参数版本：V26.09.08.1。尚未读取其他文件。</p></section>
+      <section class="panel" id="reference"><div class="panel-heading"><div><h2 class="step">维护对照</h2><p class="section-description">脚本与 GUI 的维护对照</p><p class="intro">页面以当前工作区脚本为依据；HTML 不会自动读取磁盘或远端代码。</p></div></div><div class="table-wrap"><table class="help-table"><thead><tr><th>功能位置</th><th>脚本入口</th><th>GUI 同步点</th></tr></thead><tbody><tr><td>协议及所属核心</td><td><code>showvars / ins</code></td><td>协议清单、能力标记、核心推导</td></tr><tr><td>Xray 扩展</td><td><code>各入口的 extra / mode / fm 变量</code></td><td>按协议默认方案、FM 组合与独立调参</td></tr><tr><td>CDN / Argo</td><td><code>cdnym / argo / agn / agk</code></td><td>接入条件、端口、隧道绑定</td></tr><tr><td>出站</td><td><code>warp / secp / securl / secuot</code></td><td>WARP 规则、二级代理目标及范围</td></tr><tr><td>命令生成与还原</td><td><code>环境变量与管理命令</code></td><td>字段映射、引用转义、旧版通用参数继承</td></tr><tr><td>生命周期</td><td><code>rep / del / upx / ups …</code></td><td>操作清单、参数过滤、影响说明</td></tr></tbody></table></div><p class="note">覆盖范围：常用部署、证书、订阅、出站和管理入口。XDNS / XICMP 使用 Xray ≥26.7.28 的专用配置与完整客户端 JSON，不加入通用链接订阅；目录中标为不可配置的核心字段未接入脚本，内部证书续期和跳跃规则恢复命令由脚本管理。端口占用、服务归属、证书和真实连通性须在 VPS 检查。</p><p class="note">对照功能只提取你选择的脚本中的变量声明与帮助条目，不执行、不上传。它能提示变量清单差异，不能代替调用逻辑审查。</p><div class="tools" style="margin-top:14px"><label class="file-label">选择 airgosbx.sh 对照<input id="source-file" class="visually-hidden" type="file" accept=".sh,text/plain"></label><button id="clear-compare" type="button" class="text-button">清除对照</button></div><p id="sync-result" class="sync-result" role="status">配套版本：V26.09.19.3；XHTTP 默认参数版本：V26.09.08.1。尚未读取其他文件。</p></section>
     </main>
 
     <aside class="output" id="command" aria-labelledby="command-title">
@@ -312,7 +312,7 @@
 <script>
 /* 配置清单集中在这里，避免表单、架构图与命令生成各自维护一套名称。 */
 'use strict';
-const BUILD = {version:'V26.09.16.1',presetVersion:'V26.09.08.1',remoteAligned:true, source:'https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/main/airgosbx.sh', schema:'通用字段基线：Xray v26.3.27；XDNS/XICMP：v26.7.28'};
+const BUILD = {version:'V26.09.19.3',presetVersion:'V26.09.08.1',remoteAligned:false, source:'https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/main/airgosbx.sh', schema:'通用字段基线：Xray v26.3.27；XDNS/XICMP：v26.7.28'};
 const OPERATIONS = [
   ['install','安装 / 创建节点'],['rep','重建协议配置（rep）'],['restore-ip','恢复原 IP 策略'],['list','显示节点（list）'],['status','资源与流量（status）'],['update','更新脚本（update）'],['res','重启代理与隧道（res）'],['start','启动核心（start）'],['stop','停止核心（stop）'],['restart','重启核心（restart）'],['reload','重载配置（reload）'],['upx','升级 Xray（upx）'],['ups','升级 Sing-box（ups）'],['downx','降级 Xray（downx）'],['downs','降级 Sing-box（downs）'],['del','卸载（del）'],['vars','查看变量（vars）'],['cmds','查看命令（cmds）'],['help','完整帮助（help）']
 ];
@@ -333,12 +333,15 @@ const PROTOCOLS = [
   {id:'tupt',name:'TUIC v5',core:'singbox',access:['direct'],sockets:['udp'],description:'QUIC / TLS，多路复用传输。'},
   {id:'anpt',name:'AnyTLS',core:'singbox',access:['direct'],sockets:['tcp'],description:'使用自签、ACME 或复用的证书。'},
   {id:'arpt',name:'AnyTLS + REALITY',core:'singbox',access:['direct'],sockets:['tcp'],description:'脚本中的 Any-Reality，使用 Reality 密钥。'},
-  {id:'sspt',name:'Shadowsocks 2022',core:'singbox',access:['direct'],sockets:['tcp','udp'],description:'2022-blake3-aes-128-gcm。'},
+  {id:'sspt',name:'Shadowsocks 2022',core:'singbox',access:['direct'],sockets:['tcp','udp'],description:'B 端二级代理入口，2022-blake3-aes-128-gcm。最终出口负责目标解析和私网拦截；仅终端输出完整 URL，复制到 A 的 securl，不加入订阅。'},
   {id:'vmpt',name:'VMess + WebSocket',core:'auto',access:['direct','cdn','argo'],sockets:['tcp'],description:'保留迁移兼容；仅归属 Xray 且直接接入时可选 FM。',fields:['vmfm']},
-  {id:'sopt',name:'SOCKS5',core:'auto',access:['direct'],sockets:['tcp','udp'],description:'标准入口；现有 SOCKS URL 导入不传递 FM，因此不开放私有掩码。'},
+  {id:'sopt',name:'SOCKS5',core:'auto',access:['direct'],sockets:['tcp','udp'],description:'B 端二级代理入口，本身不加密。最终出口负责目标解析和私网拦截；仅终端输出完整 URL，不加入订阅或私有掩码。落在 Xray 时，该实例共用落地 DNS 策略。'},
   {id:'naive',name:'NaiveProxy (HTTPS;HTTP2;HTTP3)',core:'caddy',access:['direct'],sockets:['tcp','udp'],fixed:443,description:'Caddy 独立服务，需真实域名；secp 使用 Sing-box 转交。使用聚合链接订阅，含 Shadowrocket 的 http2/http3 格式；不写入 Mihomo YAML。',fields:['naive','naiveuser','naivepass','naivebuild','naivesite']},
   {id:'mieru',name:'Mieru',core:'mita',access:['direct'],sockets:['tcp'],portKey:'mierupt',description:'独立 Mita 服务，仅适用脚本支持的 systemd + deb/rpm 平台。导出 Mihomo YAML 与原生链接，均保留 Traffic Pattern。',fields:['mierutrans','mieruuser','mierupass']}
 ];
+// SS/SOCKS5 是 B 的入口；Mieru 尚未接入 A 的二级出站选择器。
+const B_ENTRY_PROTOCOLS = new Set(['sspt','sopt']);
+const SECONDARY_EXCLUDED = new Set([...B_ENTRY_PROTOCOLS,'mieru']);
 const WARP_RULES = [
   ['sx','Xray 与 Sing-box 全部流量'],['x','仅 Xray 全部流量'],['s','仅 Sing-box 全部流量'],['x4','Xray 的 IPv4 目标'],['x6','Xray 的 IPv6 目标'],['s4','Sing-box 的 IPv4 目标'],['s6','Sing-box 的 IPv6 目标'],['s4x4','两核心的 IPv4 目标'],['s4x6','Sing-box IPv4 + Xray IPv6'],['s6x4','Sing-box IPv6 + Xray IPv4'],['s6x6','两核心的 IPv6 目标'],['sx4','Sing-box 全部 + Xray IPv4'],['sx6','Sing-box 全部 + Xray IPv6'],['xs4','Xray 全部 + Sing-box IPv4'],['xs6','Xray 全部 + Sing-box IPv6']
 ];
@@ -499,7 +502,7 @@ const EXTRA_GROUPS={padding:'填充与外观',request:'HTTP 请求与响应',lay
 const XRAY_RANGES={xpadding:[1,4096],xmuxcon:[0,1024],xmuxmax:[0,128],fmpadding:[0,100],fmnoise:[1,1200],fmreset:[0,3600],fmdelay:[0,1000],fmfraglen:[1,16384],fmfragdelay:[0,1000],fmfragsplit:[1,64]};
 const FIELDS = {
   operation:{label:'操作',options:OPERATIONS,value:'install'},
-  scriptSource:{label:'执行入口',options:[['local','VPS 本地 airgosbx.sh'],['repo','GitHub main 分支'],['custom','指定脚本 URL'],['shortcut','已安装的 agsbx 命令']],value:'repo'},
+  scriptSource:{label:'执行入口',options:[['local','VPS 本地 airgosbx.sh'],['repo','GitHub main 分支'],['custom','指定脚本 URL'],['shortcut','已安装的 agsbx 命令']],value:'local'},
   scriptPath:{label:'VPS 上的脚本路径',value:'./airgosbx.sh',help:'这是 VPS 上的路径，不是 Mac 路径；请先把对应脚本放到 VPS。'},
   scriptURL:{label:'脚本 URL',placeholder:'https://example.com/airgosbx.sh',help:'生成下载并执行的 Bash 命令；页面本身不访问该地址。'},
   target:{label:'目标核心',options:[['all','全部（不含 Mita）'],['xray','Xray'],['sb','Sing-box'],['caddy','Caddy'],['mita','Mita / Mieru']],value:'all'},
@@ -550,8 +553,8 @@ const FIELDS = {
   shyjpt:{label:'Sing-box 跳跃端口',placeholder:'20000-30000',help:'支持单端口或连续范围；命令统一使用短横线，脚本再转换为防火墙格式。'},
   xhyjpt:{label:'Xray 跳跃端口',placeholder:'30001-40000',help:'支持单端口或连续范围，例如 30001 或 30001-40000。'},
   naive:{label:'Naive 域名',placeholder:'naive.example.com',help:'留空传 naive=y，在 VPS 交互输入；二级代理必须预先填写域名。'},
-  naiveuser:{label:'Naive 用户名',placeholder:'留空自动生成'},
-  naivepass:{label:'Naive 密码',type:'password',placeholder:'留空自动生成'},
+  naiveuser:{label:'Naive 用户名',placeholder:'留空自动生成',help:'客户端连接 A 的账号；不能包含冒号或连续的 {$。'},
+  naivepass:{label:'Naive 密码',type:'password',placeholder:'留空自动生成',help:'客户端连接 A 的密码；不能包含连续的 {$，以免 Caddy 解释为环境变量。'},
   naivebuild:{label:'Caddy 获取方式',options:[['','由脚本判断'],['dl','下载预编译，仅 amd64'],['build','在 VPS 编译']],help:'编译和依赖安装发生在 VPS；页面不执行这些操作。'},
   naivesite:{label:'伪装站域名',placeholder:'mirror.us.leaseweb.net'},
   mierutrans:{label:'Mieru 传输',options:[['tcp','TCP'],['udp','UDP']],value:'tcp'},
@@ -559,8 +562,9 @@ const FIELDS = {
   mierupass:{label:'Mieru 密码',type:'password',placeholder:'留空由 VPS 询问或生成'},
   warpEnabled:{label:'经 Cloudflare WARP 出站',type:'checkbox'},
   warp:{label:'WARP 作用范围',options:WARP_RULES,value:'sx',help:'s 表示 Sing-box，x 表示 Xray；4/6 在这些规则中选择目标 IP 族。'},
-  secondaryEnabled:{label:'经 B 服务器二级代理',type:'checkbox'},
-  securl:{label:'B 服务器节点 URL',type:'password',placeholder:'socks5://用户名:密码@地址:端口',help:'支持 Shadowsocks-2022 / socks5 / http / https；SS 密钥须符合方法规定的 Base64 长度，留空时在 VPS 隐藏输入。'},
+  secondaryEnabled:{label:'配置 A：经 B 服务器二级代理',type:'checkbox',help:'只选择 A 接受客户端连接的协议。配置 B 的 SS/SOCKS5 时保持关闭，将 B 输出的完整 URL 粘贴到 A 的 securl。'},
+  securl:{label:'B 服务器完整 URL',type:'password',placeholder:'粘贴 B 终端输出的 ss://… 完整链接',help:'此页配置 A；B 的 SS/SOCKS5 也须生成并加载配套新配置，负责目标 DNS 与私网拦截。粘贴包含认证的完整 URL，最多 4096 字符；留空在 VPS 隐藏输入。外部 HTTP/HTTPS 上游的 DNS 和访问限制须在 B 软件配置，链接本身不能证明策略已生效。'},
+  secuot:{label:'SS 的 UDP over TCP',options:[['off','关闭（默认，使用原生 UDP）'],['on','开启 UoT v2']],value:'off',help:'通常无需开启。仅 SS 上游且选中的 A 出站全部由 Sing-box 承载时可用，B 须支持 UoT v2；Naive 仅转交目标 TCP，不受此开关影响。'},
   name:{label:'节点名称前缀',placeholder:'例如：东京-',help:'只影响生成的节点名称。'},
   uuid:{label:'UUID / 通用密码',type:'password',placeholder:'留空自动生成',help:'VLESS / VMess 请用有效 UUID；部分协议仍复用它作密码。SOCKS 凭据、传输路径和订阅 Token 独立生成。'},
   reym:{label:'REALITY 目标域名',placeholder:'留空由脚本按地区选择'},
@@ -581,7 +585,7 @@ const FIELDS = {
   sslcom_eab_kid:{label:'SSL.com EAB Key ID',type:'password',help:'可选，仅 SSL.com 备用签发使用。'},
   sslcom_eab_hmac:{label:'SSL.com EAB HMAC',type:'password',help:'与 EAB Key ID 配对。'},
   certdns:{label:'旧证书变量兼容',options:[['','不额外设置'],['cf','certdns=cf']],help:'仅用于对照旧命令，选择 DNS-01 时不必重复设置。'},
-  sub:{label:'启用 HTTPS 订阅分享（必须使用 CA 证书）',type:'checkbox',help:'clmi.yaml 导出可完整表示的 Mihomo 节点（含 Mieru，不含 Naive）；jhsub.txt 包含 Mieru 与 Naive 链接，Naive 另附 Shadowrocket 的 http2/http3 格式。导入仍取决于客户端对协议和格式的支持。域名证书输出域名链接，IP 证书输出 IP 链接；CDN 域名仅在证书覆盖时使用。发布前校验 CA 并经本机 HTTPS 完整下载核对正文，失败时不显示链接；旧订阅需用 rep 重新生成。'},
+  sub:{label:'启用 HTTPS 订阅分享（必须使用 CA 证书）',type:'checkbox',help:'SS/SOCKS5 仅在终端输出 B 端完整 URL，不加入聚合或 Clash/Mihomo 订阅。clmi.yaml 导出可完整表示的 Mihomo 节点（含 Mieru，不含 Naive）；jhsub.txt 包含 Naive 原生及 Shadowrocket 链接。域名证书输出域名链接，IP 证书输出 IP 链接；CDN 域名仅在证书覆盖时使用。已有订阅不会因更新脚本自动改变，须在 VPS 重新发布；已有 Naive 二级链路不支持 rep，不能用它原地迁移。'},
   subpt:{label:'订阅 HTTPS 端口',placeholder:'无 CDN 时可留空随机',help:'启用 CDN 时须填写 443、2053、2083、2087、2096 或 8443，并避开其他 TCP 入口。'},
   subid:{label:'订阅访问 Token',type:'password',placeholder:'留空生成独立随机 Token',help:'自定义值须为 16–128 位字母、数字、下划线或短横线。已有 Token 可复用；换 Token 后旧订阅地址失效。'},
   hyjpt:{label:'通用 Hysteria2 跳跃范围',placeholder:'20000-30000',help:'支持单端口或连续范围；shyjpt / xhyjpt 已填写时优先，两核心的有效跳跃范围不能重叠。'},
@@ -1080,7 +1084,7 @@ function readOnlyExtensionCatalog(protocol,kind){
 function initialize(){
   mount('task-fields',['operation','scriptSource']);mount('source-fields',['scriptPath','scriptURL']);mount('management-fields',['target','version','ippz']);
   mount('access-fields',['cdnEnabled','argoEnabled']);mount('cdn-fields',['cdnym']);mount('argo-fields',['argo','argoKind','agn','agk']);
-  mount('outbound-fields',['warpEnabled','secondaryEnabled']);mount('warp-fields',['warp']);mount('secondary-fields',['securl']);
+  mount('outbound-fields',['warpEnabled','secondaryEnabled']);mount('warp-fields',['warp']);mount('secondary-fields',['securl','secuot']);
   mount('common-fields',['name','uuid','reym','ipv']);mount('certificate-fields',['certMode']);
   const certOperationLink=node('a','note','查看顶部操作选择');certOperationLink.id='cert-operation-link';certOperationLink.href='#operation';certOperationLink.dataset.issueTarget='operation';certOperationLink.hidden=true;
   $('certMode').closest('[data-field]').append(certOperationLink);
@@ -1271,8 +1275,8 @@ function updateVisibility(deploy,protocols){
   const hiddenSelected=protocols.filter(p=>document.querySelector('.protocol[data-id="'+p.id+'"]').hidden).length;
   text('filter-summary','显示 '+visibleCount+' / '+PROTOCOLS.length+' 个协议'+(hiddenSelected?' · 筛选外另有 '+hiddenSelected+' 个已选':''));
   text('selected-count',protocols.length+' 个已选');
-  const ids=new Set(protocols.map(p=>p.id));secondarySelection=new Set([...secondarySelection].filter(id=>ids.has(id)&&id!=='mieru'));
-  const container=$('secondary-list'),eligible=protocols.filter(p=>p.id!=='mieru');
+  const ids=new Set(protocols.map(p=>p.id));secondarySelection=new Set([...secondarySelection].filter(id=>ids.has(id)&&!SECONDARY_EXCLUDED.has(id)));
+  const container=$('secondary-list'),eligible=protocols.filter(p=>!SECONDARY_EXCLUDED.has(p.id));
   const signature=eligible.map(p=>p.id+':'+coreOf(p,protocols)).join(',');
   if(container.dataset.signature!==signature){
     container.dataset.signature=signature;container.replaceChildren();
@@ -1302,7 +1306,7 @@ function collect(deploy,protocols){
     if(value('cdnEnabled'))add('cdnym',value('cdnym').trim());
     if(value('argoEnabled')){add('argo',value('argo'));if(value('argoKind')==='fixed'){add('agn',value('agn').trim());add('agk',value('agk'));}}
     if(value('warpEnabled'))add('warp',value('warp'));
-    if(value('secondaryEnabled')){add('secp',[...secondarySelection].join(','));add('securl',value('securl').trim());}
+    if(value('secondaryEnabled')){add('secp',[...secondarySelection].filter(id=>!SECONDARY_EXCLUDED.has(id)).join(','));add('securl',value('securl').trim());if(value('secuot')==='on')add('secuot','on');}
     for(const key of ['name','uuid','reym','hyjpt','agsbxurl'])add(key,value(key));
     if(value('ipv')!=='keep')add('ipv',value('ipv')==='restore'?'':value('ipv'),true);
     if(value('sub')){add('sub','y');add('subpt',value('subpt').trim());add('subid',value('subid'));}
@@ -1523,14 +1527,16 @@ function savedCommandPlan(parsed){
   }
   if(legacy)notes.push('旧命令的通用 Extra/FM 参数已按脚本继承规则还原到各协议。');
   const protocols=PROTOCOLS.filter(p=>selected.has(p.id)),secondary=new Set();
+  if(pairs.get('securl')&&!fields.secondaryEnabled)throw new Error('securl 是 A 的上游地址，必须同时设置 A 的 secp。');
   if(fields.secondaryEnabled){
+    if(protocols.some(p=>B_ENTRY_PROTOCOLS.has(p.id)))throw new Error('SS/SOCKS5 是 B 的入口，不能与 A 的 secp 混在同一份部署命令中。请分开配置两台 VPS。');
     for(const raw of pairs.get('secp').replace(/\s/g,'').toLowerCase().split(',')){
       const token=({xdnspt:'xdns',xicmppt:'xicmp'})[raw]||raw;
       if(['xr','sb'].includes(token)){
-        const matches=protocols.filter(p=>p.id!=='naive'&&coreOf(p,protocols)===(token==='xr'?'xray':'singbox'));
+        const matches=protocols.filter(p=>!SECONDARY_EXCLUDED.has(p.id)&&p.id!=='naive'&&coreOf(p,protocols)===(token==='xr'?'xray':'singbox'));
         if(!matches.length)throw new Error('secp 的核心分组没有匹配到已选协议。');
         matches.forEach(p=>secondary.add(p.id));
-      }else if(selected.has(token)&&token!=='mieru')secondary.add(token);
+      }else if(selected.has(token)&&!SECONDARY_EXCLUDED.has(token))secondary.add(token);
       else throw new Error('secp 包含未启用或不支持二级出站的协议。');
     }
   }
@@ -1600,26 +1606,33 @@ function isIPv6(input){if(!input.includes(':')||!/^[0-9a-fA-F:.]+$/.test(input))
 function validURL(input){try{const u=new URL(input);return u.protocol==='https:'&&!u.username&&!u.password&&!u.hash;}catch{return false;}}
 function decode64(input){const normalized=input.replace(/-/g,'+').replace(/_/g,'/');return atob(normalized.padEnd(Math.ceil(normalized.length/4)*4,'='));}
 function secondaryEndpoint(raw){
+  if(!raw||raw.length>4096||/[\u0000-\u001F\u007F]/.test(raw))throw new Error('B URL 不能为空、超过 4096 字符或包含控制字符。');
   const match=raw.match(/^(ss|socks5|http|https):\/\/(.+)$/i);if(!match)throw new Error('B URL 仅支持 ss://、socks5://、http://、https://。');
   if(raw.split('#').length>2)throw new Error('B URL 名称中的额外 # 需要进行百分号编码。');
+  const label=decodeURIComponent(raw.includes('#')?raw.slice(raw.indexOf('#')+1):'');
+  if(/[\u0000-\u001F\u007F]/.test(label))throw new Error('B URL 名称不能包含控制字符。');
   let body=match[2].split('#')[0];if(body.includes('?'))throw new Error('当前脚本的 B URL 不支持 query 或插件参数。');
-  const scheme=match[1].toLowerCase();
-  if(scheme==='ss'&&!body.includes('@'))body=decode64(body);
+  const scheme=match[1].toLowerCase(),legacy=scheme==='ss'&&!body.includes('@');
+  if(legacy){body=decode64(body);if(/[\u0000-\u001F\u007F]/.test(body))throw new Error('旧式 SS URL 解码结果包含控制字符。');}
   if(scheme!=='ss'&&body.replace(/\/$/,'').includes('/'))throw new Error('SOCKS / HTTP 上游只允许空路径或结尾的 /。');
   const at=body.lastIndexOf('@');
   if(at>=0){
     let auth=body.slice(0,at);if(auth.includes('@'))throw new Error('认证信息中的 @ 需要百分号编码。');
-    if(scheme==='ss'&&!auth.includes(':'))auth=decode64(auth);
+    const encodedUserinfo=scheme==='ss'&&!legacy&&!auth.includes(':');
+    if(encodedUserinfo)auth=decode64(auth);
     const split=auth.indexOf(':');if(split<1||split===auth.length-1)throw new Error('代理认证信息需要非空的用户名/方法和密码。');
-    const user=decodeURIComponent(auth.slice(0,split)),password=decodeURIComponent(auth.slice(split+1));
+    const user=legacy||encodedUserinfo?auth.slice(0,split):decodeURIComponent(auth.slice(0,split)),password=legacy||encodedUserinfo?auth.slice(split+1):decodeURIComponent(auth.slice(split+1));
     if(!user||!password||/[\u0000-\u001F\u007F]/.test(user+password))throw new Error('代理认证信息为空或含控制字符。');
     if(scheme!=='ss'&&(/[^\x20-\x7E]/.test(user+password)||user.length>255||password.length>1024))throw new Error('SOCKS / HTTP 上游认证仅支持可打印 ASCII；用户名最多 255 字符，密码最多 1024 字符。');
+    if(scheme==='socks5'&&password.length>255)throw new Error('SOCKS5 密码不能超过 255 字符。');
     if(scheme==='ss'){
       const lengths={'2022-blake3-aes-128-gcm':16,'2022-blake3-aes-256-gcm':32,'2022-blake3-chacha20-poly1305':32};
       if(!Object.prototype.hasOwnProperty.call(lengths,user))throw new Error('SS 二级出站仅支持三种 Shadowsocks-2022 方法。');
+      if(encodedUserinfo)throw new Error('SS-2022 的 SIP002 方法和密钥不能整体使用 Base64URL，请使用百分号编码的完整 URL。');
       if(!/^[A-Za-z0-9+/]+={0,2}$/.test(password))throw new Error('Shadowsocks-2022 密钥必须为标准 Base64。');
       let decoded;try{decoded=atob(password);}catch{throw new Error('Shadowsocks-2022 密钥不是有效 Base64。');}
       if(decoded.length!==lengths[user])throw new Error(user+' 密钥解码后应为 '+lengths[user]+' 字节。');
+      if(btoa(decoded)!==password)throw new Error('Shadowsocks-2022 密钥须为规范的标准 Base64，保留末尾的 =。');
     }
     if(['http','https'].includes(scheme)&&user.includes(':'))throw new Error('HTTP Basic 用户名不能包含冒号。');
   }else if(scheme==='ss')throw new Error('SS URL 缺少方法、密钥或服务器地址。');
@@ -1627,6 +1640,7 @@ function secondaryEndpoint(raw){
   const endpoint=authority.match(/^(?:\[([^\]]+)\]|([^:/]+)):(\d{1,5})$/);
   if(!endpoint||Number(endpoint[3])<1||Number(endpoint[3])>65535)throw new Error('B URL 需要明确的地址和 1 至 65535 端口；IPv6 使用 [地址]:端口。');
   const host=endpoint[1]||endpoint[2];if(!isIPv4(host)&&!isIPv6(host)&&!validDomain(host))throw new Error('B 服务器地址应为有效 IP 或域名。');
+  if(host==='0.0.0.0'||isIPv6(host)&&new URL('http://['+host+']/').hostname==='[::]')throw new Error('B 服务器地址不能是未指定地址。');
   return {host,scheme};
 }
 
@@ -1679,6 +1693,7 @@ function validate(deploy,protocols,pairs){
     if(['uuid','obfs_pass','name','naiveuser','naivepass','mieruuser','mierupass','acmem','naivesite'].includes(key)&&v.length>1024)error(key+' 不能超过 1024 字符。',key);
   }
   const source=value('scriptSource');
+  if(source==='repo'&&!BUILD.remoteAligned)error('这次脚本与 GUI 的配套改动尚未发布到 main。请使用同版本的 VPS 本地脚本或已发布的指定来源。','scriptSource');
   if(source==='local'&&!value('scriptPath').trim())error('填写 VPS 上的脚本路径。','scriptPath');
   if(source==='custom'&&!validURL(value('scriptURL').trim()))error('脚本来源需为不含账号密码和片段的完整 HTTPS URL。','scriptURL');
   if(/[\u0000-\u001F\u007F]/.test(value('scriptPath')+value('scriptURL')))error('脚本来源不能包含换行或控制字符。','scriptPath');
@@ -1717,12 +1732,13 @@ function validate(deploy,protocols,pairs){
     warn('XDNS 须先完成 NS 委派并开放 UDP/53；两端使用 Xray ≥26.7.28，完整导入脚本输出的客户端 JSON。','select-xdns');
   }
   if(ids.has('xicmp'))warn('XICMP 须具备原始套接字权限、IPv4/IPv6 套接字支持及 ICMP 放行；完整导入客户端 JSON，不加入通用订阅。','select-xicmp');
-  if(value('sub')&&protocols.length&&protocols.every(p=>['xdns','xicmp'].includes(p.id)))error('仅选择 XDNS/XICMP 时请关闭链接订阅，使用脚本输出的完整客户端 JSON。','sub');
+  if(value('sub')&&protocols.length&&protocols.every(p=>['xdns','xicmp','sspt','sopt'].includes(p.id)))error('当前没有可订阅协议，请关闭订阅。SS/SOCKS5 使用终端完整 URL；XDNS/XICMP 使用客户端 JSON。','sub');
   if(value('reym')&&!validDomain(value('reym')))error('REALITY 目标应为域名，不包含协议头、路径或端口。','reym');
   if(ids.has('naive')&&value('naive')&&!validDomain(value('naive')))error('Naive 需要有效域名，留空可在 VPS 输入。','naive');
   if(ids.has('naive')&&!value('naive'))warn('Naive 域名留空，将在 VPS 上交互输入。','naive');
   if(ids.has('naive')){
     if(value('naiveuser').includes(':')||value('naiveuser').length>255)error('Naive 用户名不能含冒号，且不能超过 255 字符。','naiveuser');
+    for(const key of ['naiveuser','naivepass'])if(value(key).includes('{$'))error('Naive 用户名和密码不能包含连续的 {$，以免被 Caddy 当作环境变量替换。',key);
     if(value('naivesite')&&!validDomain(value('naivesite').replace(/^https?:\/\//,'')))error('伪装站须为支持 HTTPS 的域名，不包含端口或路径。','naivesite');
     if(value('operation')!=='rep'&&value('acmem')&&!/^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$/.test(value('acmem')))error('Naive 的 ACME 邮箱格式无效。','acmem');
   }
@@ -1772,10 +1788,14 @@ function validate(deploy,protocols,pairs){
     if(!cores.includes('xray')&&!cores.includes('singbox'))error('当前所选协议不能直接使用脚本的 Xray / Sing-box WARP 出站规则。','warpEnabled');
   }
   if(value('secondaryEnabled')){
+    if(protocols.some(p=>B_ENTRY_PROTOCOLS.has(p.id)))error('SS/SOCKS5 部署在 B，不能与 A 的二级出站配置混用。请分开配置 A、B；B 保持此开关关闭。','secondaryEnabled');
+    if([...secondarySelection].some(id=>SECONDARY_EXCLUDED.has(id)))error('secp 只接受 A 的入站协议，不能选择 SS/SOCKS5 或 Mieru。','secondary-list');
     if(!secondarySelection.size)error('至少选择一种经 B 服务器出站的协议。','secondary-list');
+    if(value('secuot')==='on'&&protocols.some(p=>secondarySelection.has(p.id)&&p.id!=='naive'&&coreOf(p,protocols)!=='singbox'))error('UoT 仅支持 Sing-box 的 SS 出站；当前选中的 Xray 入口不支持，请关闭 UoT 或调整出站范围。','secuot');
     if(!value('securl').trim())warn('B URL 留空，将由脚本在 VPS 隐藏输入；无人值守调用应预先填写。','securl');
     else{
       try{const end=secondaryEndpoint(value('securl').trim());const needIP=protocols.some(p=>secondarySelection.has(p.id)&&(coreOf(p,protocols)==='singbox'||p.id==='naive'));
+        if(value('secuot')==='on'&&end.scheme!=='ss')error('UoT 仅适用于 SS 上游，B 须支持 UoT v2。','secuot');
         if(needIP&&!isIPv4(end.host)&&!isIPv6(end.host))error('选择 Sing-box 或 Naive 二级出站时，B 地址必须是 IPv4 或 [IPv6]。','securl');
         if(secondarySelection.has('naive')&&isIPv4(end.host)){
           const [first,second]=end.host.split('.').map(Number);
@@ -1787,6 +1807,7 @@ function validate(deploy,protocols,pairs){
     if(secondarySelection.has('naive')&&!validDomain(value('naive')))error('Naive 二级代理必须预先填写有效域名，不能留到 VPS 交互输入。','naive');
     if(secondarySelection.has('naive')&&value('ipv')==='6')warn('请确认 B 的地址与 VPS 的实际可用 IP 栈相容。','securl');
   }
+  if(!value('secondaryEnabled')&&value('secuot')==='on')error('UoT 需要启用二级代理；如不使用二级代理，请将 UoT 设为关闭。','secuot');
   if(value('operation')==='rep'&&ids.has('naive'))error('rep 保留现有 Naive/Caddy，不能选择重新配置 Naive。请取消这一项。','select-naive');
   if(value('operation')==='rep'&&!value('sub')&&value('certMode')!=='auto')warn('未开启订阅的 rep 保留证书，不会传入此表单的证书申请参数。','operation');
   if(!['keep','restore'].includes(value('ipv')))warn('ipv 会修改 VPS 系统网络策略；所需平台条件由脚本在 VPS 检查。','ipv');
@@ -1814,7 +1835,6 @@ function validate(deploy,protocols,pairs){
     }
   }
   if(value('agsbxurl')&&!validURL(value('agsbxurl')))error('脚本更新来源需要完整 HTTPS URL。','agsbxurl');
-  if(source==='repo'&&!BUILD.remoteAligned)error('这次脚本与 GUI 的配套改动尚未发布到 main。请使用同版本的 VPS 本地脚本或已发布的指定来源。','scriptSource');
   if(sourceNames){for(const [key] of pairs)if(!sourceNames.has(key))error('刚读取的脚本未识别到 '+key+'，请确认脚本与 GUI 使用同一版本。',key);}
   if(sourcePreset&&sourcePreset!==BUILD.presetVersion&&pairs.some(([key])=>key==='cfgver'))error('所选脚本的默认配置版本与 GUI 不一致，请选择配套文件。','source-file');
   return issues;
@@ -1829,6 +1849,10 @@ function updateArchitecture(deploy,protocols,cores){
   text('access-detail',deploy?(value('argoEnabled')?'Argo → '+value('argo')+'；其他已选协议按各自入口接入。':value('cdnEnabled')?'HTTP 协议经 CDN 接入；其他协议保留各自监听。':'客户端直接访问 A VPS 的协议监听端口。'):'当前为管理操作，不创建新的接入配置。');
   text('core-detail',deploy?(protocols.some(p=>p.core==='auto')?'VMess / SOCKS 本次归属 '+(commonCore(protocols)==='xray'?'Xray':'Sing-box')+'。':secondarySelection.has('naive')&&value('secondaryEnabled')?'Naive 由 Caddy 接入，再由 Sing-box 转交到 B。':'核心随协议自动选择，无需重复勾选安装。'):'目标核心由管理操作决定。');
   text('egress-detail',deploy?(value('secondaryEnabled')?'secp：'+([...secondarySelection].join(', ')||'尚未选择')+'；其他协议按直接出站或 WARP 规则处理。':value('warpEnabled')?'WARP 只覆盖所选规则对应的 Xray / Sing-box 流量。':'A VPS → 目标服务器'):'管理操作不重新配置出站。');
+  if(deploy&&protocols.some(p=>B_ENTRY_PROTOCOLS.has(p.id))){
+    text('access-detail','当前配置 B 的 SS/SOCKS5 入口，供 A 通过 securl 连接；B 不启用 secp。');
+    text('egress-detail',value('secondaryEnabled')?'A/B 角色混配，请分开配置两台 VPS。':value('warpEnabled')?'B 按所选 WARP 规则访问目标；SS/SOCKS5 的目标解析由 B 承担。':'B VPS → 目标服务器；SS/SOCKS5 的目标解析与私网检查在 B。');
+  }
 }
 function update(){
   const op=value('operation'),deploy=['install','rep'].includes(op),protocols=selectedProtocols();
@@ -1857,7 +1881,7 @@ function update(){
   if(!issues.length)$('issues').append(node('p','valid-note',idle?'尚未选择协议，可直接开始选择。':'配置项匹配，可以复制命令。'));
   $('parameter-list').replaceChildren();for(const [key,v] of pairs){const row=node('div','parameter-row');row.append(node('code','',key),node('span','',!value('show-secrets')&&PRIVATE_KEYS.has(key)?'已隐藏':v===''?'空值（保留）':v));$('parameter-list').append(row);}if(!pairs.length)$('parameter-list').append(node('p','note','当前没有需要传入的变量。'));
   const source=value('scriptSource');text('source-hint',source==='local'?'使用 VPS 上与此 GUI 配套的脚本文件。安装时优先复制它作为 agsbx 快捷命令；agsbxurl 控制后续更新与下载回退来源。':source==='repo'?(BUILD.remoteAligned?'默认使用 GitHub main 的配套脚本。下载和执行发生在 VPS，页面只生成命令文本。':'当前工作区接口尚未发布，请使用配套的 VPS 本地脚本或指定来源。'):source==='custom'?'此 URL 同时传入 agsbxurl，保持本次执行与后续快捷命令来源一致。页面不访问这个地址。':'执行 VPS 上已有的 agsbx。请确认已安装脚本包含本页所使用的变量。');
-  text('operation-hint',op==='rep'?'rep 会停止并重建所选非 Caddy 协议，保留已有 Naive/Caddy；未开订阅时保留证书，无证书时可首次自签。开启订阅必须复用 CA 或申请 IP / 域名证书，相关文件纳入回滚。未选协议可能移除。路径和 SOCKS 凭据会重新生成，请重新导入节点。已有 Naive 二级链路不支持此重建方式。':op==='restore-ip'?'仅用于已有部署：生成 ipv=空值 的恢复命令。按 VPS 保存的快照恢复网络策略；快照不完整时脚本会停止并提示人工处理。':op==='install'?'用于首次安装；开始部署前会准备 agsbx 管理入口，安装中途失败也可进入卸载。已有部署变更协议请选 rep。执行时可能安装依赖、下载核心、修改 VPS 服务与系统网络设置，页面只生成文本。':op==='res'?'res 重启已配置的 Xray / Sing-box / Caddy、Argo 与订阅服务；不包含 Mita。':op==='reload'?'Xray 的 reload 会转为 restart；all 处理已配置的 Xray / Sing-box / Caddy，Mita 需显式选择。':op==='del'?'卸载操作的影响发生在执行命令的 VPS 上。':'管理已有部署；协议表单中的选择不会附加到这条命令。');
+  text('operation-hint',op==='rep'?'rep 会停止并重建所选非 Caddy 协议，保留已有 Naive/Caddy；未开订阅时保留证书，无证书时可首次自签。开启订阅必须复用 CA 或申请 IP / 域名证书，相关文件纳入回滚。未选协议可能移除。路径和 SOCKS 凭据会重新生成，请重新导入节点。已有 Naive 二级链路不支持此重建方式。':op==='restore-ip'?'仅用于已有部署：生成 ipv=空值 的恢复命令。按 VPS 保存的快照恢复网络策略；快照不完整时脚本会停止并提示人工处理。':op==='install'?'用于首次安装；开始部署前会准备 agsbx 管理入口，安装中途失败也可进入卸载。已有部署变更协议请选 rep。执行时可能安装依赖、下载核心、修改 VPS 服务与系统网络设置，页面只生成文本。':op==='res'?'res 重启已配置的 Xray / Sing-box / Caddy、Argo 与订阅服务；不包含 Mita。':op==='reload'?'Xray 与 Sing-box 的 reload 都会执行配置预检后的重启，并检查监听；连接会短暂中断。Caddy 保留原生重载；all 不包含 Mita，Mita 需显式选择。':op==='del'?'卸载操作的影响发生在执行命令的 VPS 上。':'管理已有部署；协议表单中的选择不会附加到这条命令。');
   updateArchitecture(deploy,protocols,cores);
 }
 async function copyCommand(){
@@ -1893,7 +1917,7 @@ function onFormEdit(event){
   if(['command-text','source-file'].includes(target.id))return;
   if(!importError)importMessage='';
   if(event.type==='input'&&(target.type==='checkbox'||target.tagName==='SELECT'))return;
-  if(target.dataset.secondary){if(target.checked)secondarySelection.add(target.dataset.secondary);else secondarySelection.delete(target.dataset.secondary);}
+  if(target.dataset.secondary){if(target.checked&&!SECONDARY_EXCLUDED.has(target.dataset.secondary))secondarySelection.add(target.dataset.secondary);else secondarySelection.delete(target.dataset.secondary);}
   if(['argo','argoEnabled'].includes(target.id)&&value('argoEnabled')){
     const selected=$('select-'+value('argo'));selected.checked=true;selected.closest('.core-group').open=true;
   }
@@ -1915,7 +1939,7 @@ document.addEventListener('click',event=>{
   const coreButton=event.target.closest('[data-core-action]');if(coreButton)for(const group of document.querySelectorAll('.core-group'))if(!group.hidden)group.open=coreButton.dataset.coreAction==='expand';
   const resetButton=event.target.closest('[data-reset-extension]');if(resetButton){applyExtensionPreset(resetButton.dataset.resetExtension,true);update();}
   const issueLink=event.target.closest('[data-issue-target]');if(issueLink){event.preventDefault();focusIssue(issueLink.dataset.issueTarget);}
-  const secButton=event.target.closest('[data-secp]');if(secButton){const protocols=selectedProtocols();secondarySelection=new Set(protocols.filter(p=>p.id!=='mieru'&&(secButton.dataset.secp==='all'||coreOf(p,protocols)===secButton.dataset.secp&&p.id!=='naive')).map(p=>p.id));if(secButton.dataset.secp==='none')secondarySelection.clear();update();}
+  const secButton=event.target.closest('[data-secp]');if(secButton){const protocols=selectedProtocols();secondarySelection=new Set(protocols.filter(p=>!SECONDARY_EXCLUDED.has(p.id)&&(secButton.dataset.secp==='all'||coreOf(p,protocols)===secButton.dataset.secp&&p.id!=='naive')).map(p=>p.id));if(secButton.dataset.secp==='none')secondarySelection.clear();update();}
 });
 $('copy-command').addEventListener('click',copyCommand);
 $('command-text').addEventListener('input',()=>{commandDraft=$('command-text').value;commandMode='import';importMessage='';importError=false;renderCommandPanel();});

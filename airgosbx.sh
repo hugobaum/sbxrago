@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-AIRGOSBX_VERSION='V26.09.16.1'
+AIRGOSBX_VERSION='V26.09.19.3'
 # 仅在内置 XHTTP 默认参数改变时更新此标记，普通脚本版本更新不使旧命令失效。
 XHTTP_DEFAULTS_VERSION='V26.09.08.1'
 agsbxurl="${agsbxurl:-https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/main/airgosbx.sh}"
@@ -868,18 +868,21 @@ vrow "shypt"    "Hysteria2（QUIC暴力传输，需TLS证书）"
 vrow "tupt"     "Tuic v5（QUIC，需TLS证书）"
 vrow "anpt"     "AnyTLS（需TLS证书）"
 vrow "arpt"     "Any-Reality（AnyTLS over Reality）"
-vrow "sspt"     "Shadowsocks-2022（blake3-aes-128-gcm）"
+vrow "sspt"     "Shadowsocks-2022 二级代理入口；仅终端输出完整 URL，不加入订阅"
 
 vg "③ 通用协议（落在当前激活的内核上）"
 vrow "vmpt"     "Vmess-ws（Xray或Sing-box，可走 Argo/CDN）"
-vrow "sopt"     "Socks5（无加密；可作应用代理或二级代理上游）"
+vrow "sopt"     "Socks5 二级代理入口（无加密）；仅终端输出完整 URL，不加入订阅"
 
 vg "④ 出站方式（默认直连；可选 WARP 或二级代理）"
 vrow "warp"     "出站经WARP，值选：s/x/sx 或 s4x4/s6x6 等"
 echo "             s=sing-box核走WARP  x=xray核走WARP  4/6=锁IPv4/IPv6"
-vrow "secp"     "二级代理出站选择器：协议名逗号分隔，或 xr / sb；Naive 显式用 naive"
+vrow "secp"     "仅选择 A 的入站协议，或 xr / sb；Naive 显式用 naive；不包含 B 的 SS/SOCKS5/HTTP"
 vrow "securl"   "B节点URL：ss:// / socks5:// / http:// / https://（留空隐藏输入；socks5/http无加密）"
+vrow "secuot"   "off（默认）或 on；仅 Sing-box 的 SS 二级出站可开启 UoT v2，B 须支持"
 echo "             secp 命中 Sing-box 或 naive 时，B 地址须使用 IPv4 或 [IPv6]；Xray 可使用域名"
+echo "             客户端仍连接 A；将 B 终端输出的完整 URL 填入 A 的 securl。Naive 仅转交目标 TCP。"
+echo "             A/B 均需加载配套配置；最终 SS/SOCKS5 入口在 B 按 Cloudflare DoH → Google DoH → 系统 DNS 解析并拦截私网目标。"
 
 vg "⑤ Cloudflare Argo 隧道（纯出站，VPS无需开放端口）"
 vrow "argo"     "指定哪个协议走隧道：vmpt / vwpt / xvargopt"
@@ -1057,7 +1060,7 @@ echo "             内核 = xray ｜ sb ｜ caddy ｜ mita ｜ all(省略即全�
 vrow "start"    "启动内核"
 vrow "stop"     "停止内核（释放其占用的端口）"
 vrow "restart"  "重启内核"
-vrow "reload"   "热重载配置（sb/caddy/mita 支持；xray 自动 restart）"
+vrow "reload"   "重载配置（Caddy/Mita 原生重载；Xray/Sing-box 经检查重启，会短暂断连）"
 vrow "res"      "重启 Xray/Sing-box/Argo，并在已配置 Naive 时重启 Caddy（不含 Mita）"
 
 vg "④ 内核版本"
@@ -1667,6 +1670,11 @@ deployment_port_specs(){
 
 validate_deployment_inputs(){
   local flag variable file network value key has_link_protocol=no
+  if { [ "$ssp" = yes ] || [ "$sop" = yes ]; } && { [ -n "$secp" ] || [ -n "$securl" ]; }; then
+    echo "错误：SS/SOCKS5 是 B VPS 的入口，不能与 A 的 secp/securl 混在同一次部署。"
+    echo "请在 B 部署入口，将其完整 URL 填入 A 的 securl；secp 只选择 A 的接入协议。"
+    return 1
+  fi
   while IFS=: read -r flag variable file network; do
     [ "${!flag}" = yes ] || continue
     value=${!variable}
@@ -1684,12 +1692,12 @@ validate_deployment_inputs(){
     parse_xdns_resolver "$xdnsres" || { echo "错误：xdnsres 必须为有效 IP:端口或[IPv6]:端口。"; return 1; }
   fi
   [ "$xicp" != yes ] || require_xicmp_capability || return 1
-  if [ "$sub" = yes ] && { [ "$xdns" = yes ] || [ "$xicp" = yes ]; }; then
-    for flag in xhp vlp vxp vwp xhyp xvcdn xvargo hyp tup anp arp ssp vmp sop mierup; do
+  if [ "$sub" = yes ]; then
+    for flag in xhp vlp vxp vwp xhyp xvcdn xvargo hyp tup anp arp vmp mierup; do
       [ "${!flag}" != yes ] || has_link_protocol=yes
     done
     if [ -z "$naive" ] && [ "$has_link_protocol" = no ]; then
-      echo "错误：仅部署 XDNS/XICMP 时不提供链接订阅，请取消 sub，使用完整客户端 JSON。"; return 1
+      echo "错误：当前没有可订阅的协议，请取消 sub；SS/SOCKS5 仅输出二级代理 URL，XDNS/XICMP 使用完整客户端 JSON。"; return 1
     fi
   fi
   [ -z "$ym_vl_re" ] || valid_domain "$ym_vl_re" || { echo "错误：reym 域名格式无效。"; return 1; }
@@ -2155,6 +2163,7 @@ export ippz=${ippz:-''}
 export warp=${warp:-''}
 secp=${secp:-''}
 securl=${securl:-''}
+secuot=${secuot:-off}
 export name=${name:-''}
 export alns=${alns:-''}
 export acmemode=${acmemode:-''}
@@ -2959,6 +2968,45 @@ atomic_text_file(){
   fi
 }
 
+# SS-2022 使用固定长度、规范的标准 Base64 密钥；生成、复用、导出与二级导入共用校验。
+ss2022_key_valid(){
+  local method="$1" key="$2" expected actual canonical
+  case "$method" in
+    2022-blake3-aes-128-gcm) expected=16 ;;
+    2022-blake3-aes-256-gcm|2022-blake3-chacha20-poly1305) expected=32 ;;
+    *) return 1 ;;
+  esac
+  case "$key" in ''|*[!A-Za-z0-9+/=]*) return 1 ;; esac
+  [ "${#key}" -eq "$(( (expected + 2) / 3 * 4 ))" ] || return 1
+  printf '%s' "$key" | base64 -d >/dev/null 2>&1 || return 1
+  actual=$(printf '%s' "$key" | base64 -d 2>/dev/null | wc -c | tr -d '[:space:]')
+  [ "$actual" = "$expected" ] || return 1
+  canonical=$(printf '%s' "$key" | base64 -d 2>/dev/null | base64 | tr -d '\r\n') || return 1
+  [ "$canonical" = "$key" ]
+}
+
+load_ss_key(){
+  ss_method='2022-blake3-aes-128-gcm'
+  [ -f "$HOME/agsbx/sskey" ] && [ ! -L "$HOME/agsbx/sskey" ] && \
+    sskey=$(cat "$HOME/agsbx/sskey") && ss2022_key_valid "$ss_method" "$sskey" || {
+    echo "错误：已有 Shadowsocks-2022 密钥缺失或无效，未重置密钥、未生成配置或链接。"
+    return 1
+  }
+}
+
+# B 端分享链接与 A 的 securl 使用同一长度上限；可省略备注，但不截断认证或地址。
+secondary_share_link(){
+  local endpoint="$1" label
+  [ "${#endpoint}" -le 4096 ] || { echo "错误：代理连接信息超过 4096 字符，未生成截断链接。" >&2; return 1; }
+  label=$(uri_percent_encode "$2") || return 1
+  if [ "$((${#endpoint} + ${#label} + 1))" -le 4096 ]; then
+    printf '%s#%s' "$endpoint" "$label"
+  else
+    echo "提示：节点备注编码后过长，已省略备注，连接所需信息完整保留。" >&2
+    printf '%s' "$endpoint"
+  fi
+}
+
 prepare_transport_paths(){
   local profile flag value prepared=no
   for profile in xh vx vw vm xvd xva; do
@@ -3073,33 +3121,31 @@ insnaivecred(){
 local can_prompt=0
 if [ -t 1 ] || [ -t 2 ]; then can_prompt=1; fi
 
-if [ -n "$naiveuser" ]; then
-  echo "$naiveuser" > "$HOME/agsbx/naive_user"
-elif [ ! -e "$HOME/agsbx/naive_user" ]; then
-  if [ "$can_prompt" = 1 ]; then
-    printf "请输入 NaiveProxy 用户名（直接回车=自动随机生成）："; read -r naiveuser
+if [ -z "$naiveuser" ]; then
+  if [ -e "$HOME/agsbx/naive_user" ]; then
+    naiveuser=$(cat "$HOME/agsbx/naive_user") || return 1
+  else
+    if [ "$can_prompt" = 1 ]; then
+      printf "请输入 NaiveProxy 用户名（直接回车=自动随机生成）："; IFS= read -r naiveuser
+    fi
+    [ -n "$naiveuser" ] || naiveuser=$(tr -dc 'a-zA-Z0-9' </dev/urandom | head -c 20)
   fi
-  if [ -z "$naiveuser" ]; then
-    # 自动生成 20 位随机规范用户名
-    naiveuser=$(tr -dc 'a-zA-Z0-9' </dev/urandom | head -c 20)
-  fi
-  echo "$naiveuser" > "$HOME/agsbx/naive_user"
 fi
-naiveuser=$(cat "$HOME/agsbx/naive_user")
 
-if [ -n "$naivepass" ]; then
-  echo "$naivepass" > "$HOME/agsbx/naive_pass"
-elif [ ! -e "$HOME/agsbx/naive_pass" ]; then
-  if [ "$can_prompt" = 1 ]; then
-    printf "请输入 NaiveProxy 密码（直接回车=自动随机生成）："; read -r naivepass
+if [ -z "$naivepass" ]; then
+  if [ -e "$HOME/agsbx/naive_pass" ]; then
+    naivepass=$(cat "$HOME/agsbx/naive_pass") || return 1
+  else
+    if [ "$can_prompt" = 1 ]; then
+      printf "请输入 NaiveProxy 密码（直接回车=自动随机生成，输入隐藏）："; IFS= read -r -s naivepass; echo
+    fi
+    [ -n "$naivepass" ] || naivepass=$(tr -dc 'a-zA-Z0-9' </dev/urandom | head -c 20)
   fi
-  if [ -z "$naivepass" ]; then
-    # 自动生成 20 位随机规范密码，兼顾防爆破强度与 URL 分享链接兼容性
-    naivepass=$(tr -dc 'a-zA-Z0-9' </dev/urandom | head -c 20)
-  fi
-  echo "$naivepass" > "$HOME/agsbx/naive_pass"
 fi
-naivepass=$(cat "$HOME/agsbx/naive_pass")
+# 先验证再持久化；保留字面密码（包括空格、-n 等），不让 echo 再解释内容。
+validate_naive_credentials || return 1
+atomic_text_file "$HOME/agsbx/naive_user" "$naiveuser" && \
+  atomic_text_file "$HOME/agsbx/naive_pass" "$naivepass" || return 1
 echo "NaiveProxy 账号：$naiveuser"
 echo "NaiveProxy 密码：$naivepass"
 }
@@ -5618,14 +5664,6 @@ cat > "$HOME/agsbx/xr.json" <<EOF
   "log": {
   "loglevel": "none"
   },
-  "dns": {
-    "servers": [
-      "https+local://dns.google/dns-query",
-      "https+local://cloudflare-dns.com/dns-query",
-      "8.8.8.8",
-      "1.1.1.1"
-    ]
-  },
   "inbounds": [
 EOF
 insuuid || return 1
@@ -6089,6 +6127,13 @@ if ! printf '%s' "$local_sb_ver" | grep -Eq '^[0-9]+(\.[0-9]+){2}$' || [ "$(verc
   echo "错误：当前 Sing-box 版本 v${local_sb_ver:-未知} 未达到最低合格版本 v$min_sb_ver，已停止生成配置。"
   return 1
 fi
+# 1.12/1.13 需显式隔离 DNS 缓存；1.14 起内核始终按服务器隔离，旧字段已弃用，新配置不再输出。
+singbox_dns_cache_fields=''
+singbox_dns_response_rules=yes
+if [ "$(vercmp "$local_sb_ver" 1.14.0)" = lt ]; then
+  singbox_dns_cache_fields=', "independent_cache": true'
+  singbox_dns_response_rules=no
+fi
 if secondary_protocol_is_selected naive && [ ! -s "$HOME/agsbx/sing-box" ]; then
   secondary_error "Naive 二级出站依赖 Sing-box sidecar，但内核未成功下载或不可用。"
   return 1
@@ -6289,12 +6334,15 @@ arp=arptargo
 fi
 if [ -n "$ssp" ]; then
 ssp=sspt
-if [ ! -e "$HOME/agsbx/sskey" ]; then
-sskey=$("$HOME/agsbx/sing-box" generate rand 16 --base64)
-echo "$sskey" > "$HOME/agsbx/sskey"
+if [ ! -e "$HOME/agsbx/sskey" ] && [ ! -L "$HOME/agsbx/sskey" ]; then
+sskey=$("$HOME/agsbx/sing-box" generate rand 16 --base64) && \
+  ss2022_key_valid 2022-blake3-aes-128-gcm "$sskey" || {
+  echo "错误：Shadowsocks-2022 密钥生成失败，未写入密钥文件。"; return 1
+}
+atomic_text_file "$HOME/agsbx/sskey" "$sskey" || return 1
 fi
-port_ss=$(init_port "$port_ss" port_ss)
-sskey=$(cat "$HOME/agsbx/sskey")
+load_ss_key || return 1
+port_ss=$(init_port "$port_ss" port_ss) || return 1
 echo "Shadowsocks-2022端口：$port_ss"
 cat >> "$HOME/agsbx/sb.json" <<EOF
         {
@@ -6302,7 +6350,7 @@ cat >> "$HOME/agsbx/sb.json" <<EOF
             "tag":"ss-2022",
             "listen": "${public_listen_address}",
             "listen_port": $port_ss,
-            "method": "2022-blake3-aes-128-gcm",
+            "method": "$ss_method",
             "password": "$sskey"
     },
 EOF
@@ -6312,7 +6360,7 @@ fi
 
 # Caddy 解密 Naive 后仅通过独立凭据认证的回环 HTTP 代理转交；不开放任何新的公网监听。
 if secondary_protocol_is_selected naive; then
-secondary_validate_naive_credentials || return 1
+validate_naive_credentials || return 1
 naive_sidecar_user_json=$(json_escape "$naive_secondary_user")
 naive_sidecar_pass_json=$(json_escape "$naive_secondary_pass")
 cat >> "$HOME/agsbx/sb.json" <<EOF
@@ -6392,12 +6440,15 @@ if [ -s "$HOME/agsbx/caddy" ]; then
 else
   upcaddy || { echo "NaiveProxy 内核未就位，已跳过 Caddy 配置。"; return 1; }
 fi
-insnaivecred
-secondary_validate_naive_credentials || return 1
+insnaivecred || return 1
+validate_naive_credentials || return 1
 local naiveuser_caddy naivepass_caddy naive_upstream_user naive_upstream_pass
+local naive_forward_matcher='' naive_connect_rule=''
 naiveuser_caddy=$(caddyfile_quote "$naiveuser")
 naivepass_caddy=$(caddyfile_quote "$naivepass")
 if secondary_protocol_is_selected naive; then
+  naive_forward_matcher=' @naive_connect'
+  naive_connect_rule='@naive_connect method CONNECT'
   naive_upstream_user=$(uri_percent_encode "$naive_secondary_user")
   naive_upstream_pass=$(uri_percent_encode "$naive_secondary_pass")
 fi
@@ -6459,7 +6510,9 @@ Disallow: /"
   }
 
   # 4. NaiveProxy 代理核心组件
-  forward_proxy {
+  # 二级模式仅允许 CONNECT 进入代理，普通网站请求继续进入下面的伪装站。
+  $naive_connect_rule
+  forward_proxy${naive_forward_matcher} {
     basic_auth $naiveuser_caddy $naivepass_caddy
     hide_ip
     hide_via
@@ -6475,7 +6528,7 @@ EOF
 else
 cat >> "$caddyfile_tmp" <<'EOF'
 
-    # 未启用二级出站时保留 Caddy 本地 ACL；upstream 模式与 acl 不兼容，二级模式由 Sing-box 等价拒绝。
+    # 未启用二级出站时保留 Caddy 本地 ACL；二级模式的目标解析与私网拦截由配套 B 入口承担。
     acl {
       deny 10.0.0.0/8
       deny 100.64.0.0/10
@@ -6873,9 +6926,7 @@ secondary_protocol_is_active(){
     tupt)     [ "$tup" = yes ] ;;
     anpt)     [ "$anp" = yes ] ;;
     arpt)     [ "$arp" = yes ] ;;
-    sspt)     [ "$ssp" = yes ] ;;
     vmpt)     [ "$vmp" = yes ] ;;
-    sopt)     [ "$sop" = yes ] ;;
     naive)    [ -n "$naive" ] ;;
     *) return 1 ;;
   esac
@@ -6902,17 +6953,17 @@ determine_secondary_common_core(){
 secondary_protocol_core(){
   case "$1" in
     xhpt|vlpt|vxpt|vwpt|xhypt|xdns|xicmp|xvcdnpt|xvargopt) printf 'xr' ;;
-    shypt|tupt|anpt|arpt|sspt) printf 'sb' ;;
+    shypt|tupt|anpt|arpt) printf 'sb' ;;
     # Naive 入站仍由 Caddy 驱动；这里的 sb 仅表示本地转交和二级出站由 Sing-box 承载。
     naive) printf 'sb' ;;
-    vmpt|sopt) printf '%s' "$secondary_common_core" ;;
+    vmpt) printf '%s' "$secondary_common_core" ;;
     *) return 1 ;;
   esac
 }
 
 secondary_expand_group(){
   local group="$1" protocol matched=no
-  for protocol in xhpt vlpt vxpt vwpt xhypt xdns xicmp xvcdnpt xvargopt shypt tupt anpt arpt sspt vmpt sopt; do
+  for protocol in xhpt vlpt vxpt vwpt xhypt xdns xicmp xvcdnpt xvargopt shypt tupt anpt arpt vmpt; do
     secondary_protocol_is_active "$protocol" || continue
     [ "$(secondary_protocol_core "$protocol")" = "$group" ] || continue
     matched=yes
@@ -6949,7 +7000,11 @@ normalize_secondary_selectors(){
         secondary_error "不支持 secp=$normalized；NaiveProxy 二级出站请显式使用 secp=naive。"
         return 1
         ;;
-      xhpt|vlpt|vxpt|vwpt|xhypt|xdns|xicmp|xvcdnpt|xvargopt|shypt|tupt|anpt|arpt|sspt|vmpt|sopt)
+      sspt|sopt|ss|shadowsocks|socks5|http|https)
+        secondary_error "SS/SOCKS5/HTTP 是 B 的入口，不属于 secp；请把 B 的完整 URL 填入 A 的 securl。"
+        return 1
+        ;;
+      xhpt|vlpt|vxpt|vwpt|xhypt|xdns|xicmp|xvcdnpt|xvargopt|shypt|tupt|anpt|arpt|vmpt)
         secondary_protocol_is_active "$normalized" || {
           secondary_error "secp=$normalized 已被选择，但本次没有启用对应协议变量。"
           return 1
@@ -7143,18 +7198,24 @@ secondary_init_naive_sidecar(){
   chmod 600 "$port_file" "$pass_file" 2>/dev/null
 }
 
-secondary_validate_naive_credentials(){
+validate_naive_credentials(){
   [ -n "$naiveuser" ] && [ -n "$naivepass" ] || {
-    secondary_error "Naive 公网认证的用户名和密码不能为空。"
+    echo "错误：Naive 公网认证的用户名和密码不能为空。"
     return 1
   }
   secondary_valid_text "$naiveuser" 255 && secondary_valid_text "$naivepass" 1024 || {
-    secondary_error "Naive 凭据过长或包含控制字符，不能安全写入 Caddyfile/JSON。"
+    echo "错误：Naive 凭据过长或包含控制字符，不能安全写入 Caddyfile/JSON。"
     return 1
   }
   case "$naiveuser" in
-    *:*) secondary_error "Naive 用户名不能包含冒号，否则 HTTP Basic 认证无法无歧义转交。"; return 1 ;;
+    *:*) echo "错误：Naive 用户名不能包含冒号，否则 HTTP Basic 认证无法无歧义转交。"; return 1 ;;
   esac
+  # Caddy 在分词前替换环境变量；引号不能保护 {$，未闭合的表达式也可能跨行替换。
+  if [[ "$naiveuser" == *'{$'* || "$naivepass" == *'{$'* ]]; then
+    echo '错误：Naive 用户名和密码不能包含连续的 {$，以免被 Caddy 当作环境变量替换。'
+    return 1
+  fi
+  return 0
 }
 
 secondary_parse_userinfo(){
@@ -7182,18 +7243,8 @@ secondary_validate_ss_method(){
 }
 
 secondary_validate_ss_key(){
-  local expected actual
-  case "$sec_method" in
-    2022-blake3-aes-128-gcm) expected=16 ;;
-    *) expected=32 ;;
-  esac
-  printf '%s' "$sec_password" | base64 -d >/dev/null 2>&1 || {
-    secondary_error "Shadowsocks-2022 密钥不是有效 Base64。"
-    return 1
-  }
-  actual=$(printf '%s' "$sec_password" | base64 -d 2>/dev/null | wc -c | tr -d '[:space:]')
-  [ "$actual" = "$expected" ] || {
-    secondary_error "$sec_method 密钥解码后应为 ${expected} 字节，当前为 ${actual:-0} 字节。"
+  ss2022_key_valid "$sec_method" "$sec_password" || {
+    secondary_error "SS 密钥须为规范的标准 Base64；aes-128 方法解码后为 16 字节，其余两种 2022 方法为 32 字节。"
     return 1
   }
 }
@@ -7291,7 +7342,7 @@ parse_secondary_url(){
     case "$label_raw" in *'#'*) secondary_error "URL fragment 中的 # 必须进行百分号编码。"; return 1 ;; esac
   fi
   sec_label=$(uri_percent_decode "$label_raw") || { secondary_error "URL 节点名称包含无效百分号编码。"; return 1; }
-  secondary_valid_text "$sec_label" 256 || { secondary_error "URL 节点名称过长或包含控制字符。"; return 1; }
+  secondary_valid_text "$sec_label" 4096 || { secondary_error "URL 节点名称包含控制字符。"; return 1; }
   case "$body" in *://*) ;; *) secondary_error "B 节点 URL 缺少协议头。"; return 1 ;; esac
   scheme=$(printf '%s' "${body%%://*}" | tr 'A-Z' 'a-z')
   rest=${body#*://}
@@ -7313,9 +7364,13 @@ secondary_has_singbox_selection(){
 }
 
 prepare_secondary_proxy(){
+  local protocol
+  local -a selected_protocols
   [ "$secondary_prepared" = yes ] && return 0
+  case "$secuot" in off|on) ;; *) secondary_error "secuot 仅支持 off 或 on，默认 off。"; return 1 ;; esac
   [ -n "$secp" ] || {
     [ -z "$securl" ] || { secondary_error "设置 securl 时必须同时设置 secp。"; return 1; }
+    [ "$secuot" = off ] || { secondary_error "设置 secuot=on 时必须同时设置 secp 和 SS 上游。"; return 1; }
     return 0
   }
   normalize_secondary_selectors || return 1
@@ -7341,6 +7396,16 @@ prepare_secondary_proxy(){
   fi
   parse_secondary_url "$securl" || return 1
   unset securl
+  if [ "$secuot" = on ]; then
+    [ "$sec_scheme" = ss ] || { secondary_error "secuot=on 仅适用于 SS 上游，B 须支持 UoT v2。"; return 1; }
+    IFS=',' read -r -a selected_protocols <<< "$secondary_protocols"
+    for protocol in "${selected_protocols[@]}"; do
+      [ "$(secondary_protocol_core "$protocol")" = sb ] || {
+        secondary_error "secuot=on 不支持 Xray 二级出站，请关闭 UoT 或只选择 Sing-box 出站的入口。"
+        return 1
+      }
+    done
+  fi
   if secondary_has_singbox_selection && ! valid_ipv4 "$sec_server" && ! valid_ipv6 "$sec_server"; then
     secondary_error "当前脚本要求 Sing-box 1.12+；为避免新版域名解析字段不兼容，Sing-box 二级出站的 B 地址必须使用 IP。"
     return 1
@@ -7351,12 +7416,14 @@ prepare_secondary_proxy(){
   valid_ipv6 "$sec_server" && secondary_display_host="[$sec_server]"
   echo "二级代理出站已解析：$sec_scheme://$secondary_display_host:$sec_port（认证信息已隐藏）"
   echo "应用二级出站的 A VPS 入站协议：$secp"
+  if [ "$sec_scheme" = ss ]; then echo "SS UDP over TCP：$secuot（off 使用原生 UDP；on 要求 B 支持 UoT v2）"; fi
+  if secondary_protocol_is_selected naive; then echo "Naive 经本机 Sing-box 将目标 TCP 和域名交给 B；请在 B 加载配套 SS/SOCKS5 配置以执行 DNS 回退和私网拦截。"; fi
 }
 
 persist_secondary_proxy_state(){
   if [ "$secondary_prepared" = yes ]; then
     printf '%s\n' "$secp" > "$HOME/agsbx/secondary_secp"
-    printf '%s\n%s\n%s\n' "$sec_scheme" "$sec_server" "$sec_port" > "$HOME/agsbx/secondary_meta"
+    printf '%s\n%s\n%s\n%s\n' "$sec_scheme" "$sec_server" "$sec_port" "$secuot" > "$HOME/agsbx/secondary_meta"
     chmod 600 "$HOME/agsbx/secondary_secp" "$HOME/agsbx/secondary_meta" 2>/dev/null
   fi
 }
@@ -7374,14 +7441,11 @@ secondary_tag_for_protocol(){
     xr:xvcdnpt) printf 'vlessenc-xhttp-cdn' ;;
     xr:xvargopt) printf 'vlessenc-xhttp-argo' ;;
     xr:vmpt) printf 'vmess-xr' ;;
-    xr:sopt) printf 'socks5-xr' ;;
     sb:shypt) printf 'hy2-sb' ;;
     sb:tupt) printf 'tuic5-sb' ;;
     sb:anpt) printf 'anytls-sb' ;;
     sb:arpt) printf 'anyreality-sb' ;;
-    sb:sspt) printf 'ss-2022' ;;
     sb:vmpt) printf 'vmess-sb' ;;
-    sb:sopt) printf 'socks5-sb' ;;
     sb:naive) printf 'naive-secondary-in' ;;
     *) return 1 ;;
   esac
@@ -7418,8 +7482,7 @@ secondary_build_runtime_tags(){
       return 1
     }
     secondary_append_runtime_tag "$core" "$tag"
-    # 普通 Sing-box 入站应在 A 本地解析前直接送往 B，由 B 解析目标域名。
-    # Naive 仍需先解析并执行私网 IP 拦截，留在后面的专用规则中处理。
+    # 普通入站在 A 本地解析前直接送往 B；Naive 另用 TCP 专用规则转交同样的目标域名。
     if [ "$core" = sb ] && [ "$protocol" != naive ]; then
       current="$secondary_singbox_remote_dns_tags"
       case ",$current," in
@@ -7482,7 +7545,7 @@ EOF
 }
 
 append_singbox_secondary_outbound(){
-  local server method password username auth_fields tls_fields
+  local server method password username auth_fields tls_fields uot_fields=''
   [ -n "$secondary_singbox_tags" ] || return 0
   server=$(json_escape "$sec_server")
   method=$(json_escape "$sec_method")
@@ -7500,6 +7563,7 @@ append_singbox_secondary_outbound(){
   # 省略 detour 即由系统网络直接连接 B 节点，也不会重新进入入站路由形成递归。
   case "$sec_outbound_type" in
     shadowsocks)
+      if [ "$secuot" = on ]; then uot_fields=', "udp_over_tcp": {"enabled": true, "version": 2}'; fi
       cat >> "$HOME/agsbx/sb.json" <<EOF
     ,
     {
@@ -7508,7 +7572,7 @@ append_singbox_secondary_outbound(){
       "server": "$server",
       "server_port": $sec_port,
       "method": "$method",
-      "password": "$password"
+      "password": "$password"$uot_fields
     }
 EOF
       ;;
@@ -7636,14 +7700,116 @@ EOF
   wait_agsbx_component "$core" || { echo "错误：$core 启动后未检测到对应进程。"; return 1; }
 }
 
+# 仅最终落地的 SS/SOCKS5 入站使用此链；所有服务器均由当前 B VPS 拨号。
+append_singbox_landing_dns(){
+local tags="$1" provider host
+[ -n "$tags" ] || return 0
+cat >> "$HOME/agsbx/sb.json" <<EOF
+  ,"dns": {
+    "servers": [
+      {"type": "local", "tag": "local-dns"}
+EOF
+for provider in cloudflare google; do
+  case "$provider" in cloudflare) host=cloudflare-dns.com ;; google) host=dns.google ;; esac
+  cat >> "$HOME/agsbx/sb.json" <<EOF
+      ,{
+        "type": "https",
+        "tag": "landing-$provider",
+        "server": "$host",
+        "server_port": 443,
+        "path": "/dns-query",
+        "domain_resolver": "local-dns",
+        "tls": {"enabled": true, "server_name": "$host"}
+      }
+EOF
+done
+cat >> "$HOME/agsbx/sb.json" <<EOF
+    ],
+    "rules": [
+EOF
+for provider in cloudflare google; do
+  if [ "$singbox_dns_response_rules" = yes ]; then
+    cat >> "$HOME/agsbx/sb.json" <<EOF
+      {
+        "inbound": [$tags],
+        "action": "evaluate",
+        "server": "landing-$provider",
+        "timeout": "5s"
+      },
+      {
+        "inbound": [$tags],
+        "match_response": true,
+        "response_rcode": "NOERROR",
+        "ip_accept_any": true,
+        "action": "respond"
+      },
+EOF
+  else
+    # 1.12/1.13 的内部 Lookup 在此地址过滤规则失败或无地址时继续下一条规则。
+    cat >> "$HOME/agsbx/sb.json" <<EOF
+      {
+        "inbound": [$tags],
+        "ip_accept_any": true,
+        "action": "route",
+        "server": "landing-$provider"
+      },
+EOF
+  fi
+done
+cat >> "$HOME/agsbx/sb.json" <<EOF
+      {
+        "inbound": [$tags],
+        "action": "route",
+        "server": "local-dns"
+      }
+    ],
+    "final": "local-dns"${singbox_dns_cache_fields}
+  }
+EOF
+}
+
 xrsbout(){
-local naive_dns_strategy=prefer_ipv4
-valid_ipv6 "$sec_server" && naive_dns_strategy=prefer_ipv6
+local landing_xray=no landing_singbox_tags='' tag destination strategy
+# 同一份清单用于 B 端两套内核；解析后的实际目标不能访问这些私网范围。
+local landing_private_ips='"10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16", "172.16.0.0/12", "192.168.0.0/16", "::1/128", "fc00::/7", "fe80::/10"'
 secondary_build_runtime_tags || return 1
+if grep -Eq '"tag"[[:space:]]*:[[:space:]]*"socks5-xr"' "$HOME/agsbx/xr.json" 2>/dev/null; then
+  landing_xray=yes
+fi
+for tag in ss-2022 socks5-sb; do
+  if grep -Eq "\"tag\"[[:space:]]*:[[:space:]]*\"$tag\"" "$HOME/agsbx/sb.json" 2>/dev/null; then
+    landing_singbox_tags="${landing_singbox_tags:+$landing_singbox_tags, }\"$tag\""
+  fi
+done
 if [ -e "$HOME/agsbx/xr.json" ]; then
 sed -i '$ s/,[[:space:]]*$//' "$HOME/agsbx/xr.json" 2>/dev/null || sed -i '$s/,$//' "$HOME/agsbx/xr.json"
 cat >> "$HOME/agsbx/xr.json" <<EOF
   ],
+EOF
+if [ "$landing_xray" = yes ]; then
+  # Xray 的 DNS 是内核级配置；同实例的普通入站也使用这份顺序，secp 入站仍优先转交 B。
+  cat >> "$HOME/agsbx/xr.json" <<EOF
+  "dns": {
+    "servers": [
+      "https+local://cloudflare-dns.com/dns-query",
+      "https+local://dns.google/dns-query",
+      "localhost"
+    ]
+  },
+EOF
+else
+  cat >> "$HOME/agsbx/xr.json" <<EOF
+  "dns": {
+    "servers": [
+      "https+local://dns.google/dns-query",
+      "https+local://cloudflare-dns.com/dns-query",
+      "8.8.8.8",
+      "1.1.1.1"
+    ]
+  },
+EOF
+fi
+cat >> "$HOME/agsbx/xr.json" <<EOF
   "outbounds": [
     {
       "protocol": "freedom",
@@ -7654,6 +7820,24 @@ cat >> "$HOME/agsbx/xr.json" <<EOF
     }
 EOF
 append_xray_secondary_outbound
+if [ "$landing_xray" = yes ]; then
+  cat >> "$HOME/agsbx/xr.json" <<EOF
+    ,{"protocol": "blackhole", "tag": "landing-reject"}
+EOF
+  # 先按原有路由选 direct/WARP，再固定最终 IP；内部回流后检查同一 IP，不重新解析域名。
+  for destination in direct warp-out; do
+    [ "$destination" = "$x1outtag" ] || [ "$destination" = "$x2outtag" ] || continue
+    strategy="$xryx"; [ "$destination" != warp-out ] || strategy="$wxryx"
+    cat >> "$HOME/agsbx/xr.json" <<EOF
+    ,{
+      "protocol": "loopback",
+      "tag": "landing-resolve-$destination",
+      "targetStrategy": "$strategy",
+      "settings": {"inboundTag": "landing-resolved-$destination"}
+    }
+EOF
+  done
+fi
 # 普通 HTTPS 由固定 fallback 处理；防护凭据即使被使用，也不开放通用 Trojan 代理。
 if [ "$subscription_core" = xray ]; then
 cat >> "$HOME/agsbx/xr.json" <<EOF
@@ -7727,6 +7911,41 @@ cat >> "$HOME/agsbx/xr.json" <<EOF
       },
 EOF
 fi
+if [ "$landing_xray" = yes ]; then
+  cat >> "$HOME/agsbx/xr.json" <<EOF
+      {
+        "type": "field",
+        "inboundTag": ["landing-resolved-direct", "landing-resolved-warp-out"],
+        "ip": [$landing_private_ips],
+        "outboundTag": "landing-reject"
+      },
+EOF
+  for destination in direct warp-out; do
+    [ "$destination" = "$x1outtag" ] || [ "$destination" = "$x2outtag" ] || continue
+    cat >> "$HOME/agsbx/xr.json" <<EOF
+      {
+        "type": "field",
+        "inboundTag": ["landing-resolved-$destination"],
+        "outboundTag": "$destination"
+      },
+EOF
+  done
+  cat >> "$HOME/agsbx/xr.json" <<EOF
+      {
+        "type": "field",
+        "inboundTag": ["socks5-xr"],
+        "ip": [${xip}],
+        "network": "tcp,udp",
+        "outboundTag": "landing-resolve-$x1outtag"
+      },
+      {
+        "type": "field",
+        "inboundTag": ["socks5-xr"],
+        "network": "tcp,udp",
+        "outboundTag": "landing-resolve-$x2outtag"
+      },
+EOF
+fi
 cat >> "$HOME/agsbx/xr.json" <<EOF
       {
         "type": "field",
@@ -7788,28 +8007,7 @@ cat >> "$HOME/agsbx/sb.json" <<EOF
   ]
 EOF
 fi
-if secondary_protocol_is_selected naive; then
-# Naive 需要在 A 上保留解析结果以执行私网 ACL，但 DNS 查询本身必须经 B 发出。
-# 使用固定 IP 的 DoH 服务器可避免解析 DNS 服务器自身；Naive 模式已强制 B 节点地址为 IP，不会形成拨号循环。
-cat >> "$HOME/agsbx/sb.json" <<EOF
-  ,"dns": {
-    "servers": [
-      {
-        "type": "https",
-        "tag": "secondary-dns",
-        "server": "1.1.1.1",
-        "server_port": 443,
-        "path": "/dns-query",
-        "tls": {
-          "enabled": true,
-          "server_name": "cloudflare-dns.com"
-        },
-        "detour": "secondary-out"
-      }
-    ]
-  }
-EOF
-fi
+append_singbox_landing_dns "$landing_singbox_tags" || return 1
 cat >> "$HOME/agsbx/sb.json" <<EOF
   ,"route": {
     "rules": [
@@ -7828,8 +8026,7 @@ cat >> "$HOME/agsbx/sb.json" <<EOF
         "action": "sniff"
       },
 EOF
-# 普通 Sing-box 二级代理入站先执行最终路由，保留目标域名并交由 B VPS 解析。
-# Naive 不进入此标签组，继续执行后面的本地解析和私网 IP 拦截。
+# 所有二级入站在本地解析前转交目标域名；Naive 另用 TCP 专用规则，B 负责解析与私网检查。
 if [ -n "$secondary_singbox_remote_dns_tags" ]; then
 cat >> "$HOME/agsbx/sb.json" <<EOF
       {
@@ -7841,27 +8038,6 @@ EOF
 fi
 if secondary_protocol_is_selected naive; then
 cat >> "$HOME/agsbx/sb.json" <<EOF
-      {
-        "inbound": ["naive-secondary-in"],
-        "action": "resolve",
-        "server": "secondary-dns",
-        "strategy": "${naive_dns_strategy}"
-      },
-      {
-        "inbound": ["naive-secondary-in"],
-        "ip_cidr": [
-          "10.0.0.0/8",
-          "100.64.0.0/10",
-          "127.0.0.0/8",
-          "169.254.0.0/16",
-          "172.16.0.0/12",
-          "192.168.0.0/16",
-          "::1/128",
-          "fc00::/7",
-          "fe80::/10"
-        ],
-        "action": "reject"
-      },
       {
         "inbound": ["naive-secondary-in"],
         "network": "tcp",
@@ -7879,6 +8055,18 @@ cat >> "$HOME/agsbx/sb.json" <<EOF
         "action": "resolve",
         "strategy": "${sbyx}"
       },
+EOF
+if [ -n "$landing_singbox_tags" ]; then
+  # 这次 resolve 的同一地址集合用于 ACL 和最终拨号；检查后不得再解析一次。
+  cat >> "$HOME/agsbx/sb.json" <<EOF
+      {
+        "inbound": [$landing_singbox_tags],
+        "ip_cidr": [$landing_private_ips],
+        "action": "reject"
+      },
+EOF
+fi
+cat >> "$HOME/agsbx/sb.json" <<EOF
       {
         "ip_cidr": [ ${sip} ],
         "outbound": "${s1outtag}"
@@ -8541,7 +8729,7 @@ ipchange || return 1
 uuid=$(cat "$HOME/agsbx/uuid" 2>/dev/null)
 server_host=${server_ip#[}; server_host=${server_host%]}
 sxname=$(cat "$HOME/agsbx/name" 2>/dev/null)
-valid_plain_text "$uuid" 256 && valid_plain_text "$sxname" 1024 || { echo "错误：节点凭据或名称状态无效。"; return 1; }
+valid_plain_text "$uuid" 256 && valid_plain_text "$sxname" 1025 || { echo "错误：节点凭据或名称状态无效。"; return 1; }
 xvvmcdnym=$(cat "$HOME/agsbx/cdnym" 2>/dev/null)
 section "Airgosbx 脚本输出节点配置如下"
 echo
@@ -8550,11 +8738,13 @@ secondary_saved_secp=$(cat "$HOME/agsbx/secondary_secp" 2>/dev/null)
 secondary_saved_scheme=$(sed -n '1p' "$HOME/agsbx/secondary_meta" 2>/dev/null)
 secondary_saved_server=$(sed -n '2p' "$HOME/agsbx/secondary_meta" 2>/dev/null)
 secondary_saved_port=$(sed -n '3p' "$HOME/agsbx/secondary_meta" 2>/dev/null)
+secondary_saved_uot=$(sed -n '4p' "$HOME/agsbx/secondary_meta" 2>/dev/null)
 secondary_saved_display="$secondary_saved_server"
 valid_ipv6 "$secondary_saved_server" && secondary_saved_display="[$secondary_saved_server]"
 node_title "💣【 二级代理出站 】A VPS 经 B VPS 访问目标服务器："
 echo "生效范围（A VPS 入站协议）：$secondary_saved_secp"
 echo "上游端点（B VPS 入站）：$secondary_saved_scheme://$secondary_saved_display:$secondary_saved_port（认证信息已隐藏）"
+if [ "$secondary_saved_scheme" = ss ]; then echo "SS UDP over TCP：${secondary_saved_uot:-off}（Naive 仅转交目标 TCP）"; fi
 echo
 fi
 case "$server_ip" in
@@ -8572,7 +8762,6 @@ if [ -e "$HOME/agsbx/sing-box" ]; then
 private_key_s=$(cat "$HOME/agsbx/sbk/private_key" 2>/dev/null)
 public_key_s=$(cat "$HOME/agsbx/sbk/public_key" 2>/dev/null)
 short_id_s=$(cat "$HOME/agsbx/sbk/short_id" 2>/dev/null)
-sskey=$(cat "$HOME/agsbx/sskey" 2>/dev/null)
 fi
 # 旧参数仅用于 update 后尚未重建的入站；新直连/CDN/Tunnel 都读取配套 profile。
 xh_extra='{"noGRPCHeader":false,"noSSEHeader":false,"xPaddingObfsMode":true,"xPaddingBytes":"100-1000","xPaddingKey":"cf_clearance","xPaddingHeader":"Referer","xPaddingPlacement":"queryInHeader","xPaddingMethod":"repeat-x","uplinkHTTPMethod":"POST","sessionPlacement":"path","sessionKey":"","seqPlacement":"path","seqKey":"","uplinkDataPlacement":"body","uplinkDataKey":"","uplinkChunkSize":0,"scMaxEachPostBytes":1000000,"scMinPostsIntervalMs":"10-50","scMaxBufferedPosts":30,"scStreamUpServerSecs":"20-80","maxConcurrency":"16-32","maxConnections":"0-0","cMaxReuseTimes":"64-128","hMaxReusableSecs":"1800-3000","hKeepAlivePeriod":45,"downloadTargetHost":"","downloadTargetPort":0,"downloadServerName":"","downloadHTTPHost":""}'
@@ -8714,31 +8903,18 @@ for special_protocol in xdns xicmp; do
   printf '%s\n\n' "$special_client"
 done
 if grep -q ss-2022 "$HOME/agsbx/sb.json" 2>/dev/null; then
-node_title "💣【 Shadowsocks-2022 】节点信息如下："
-port_ss=$(cat "$HOME/agsbx/port_ss")
-ss_method="2022-blake3-aes-128-gcm"
-ss_link="ss://$(uri_percent_encode "$ss_method"):$(uri_percent_encode "$sskey")@$server_ip:$port_ss#$(uri_percent_encode "${sxname}Shadowsocks-2022-$hostname")"
-append_node_link "$ss_link" || return 1
+node_title "💣【 Shadowsocks-2022 】二级代理入口："
+load_ss_key || return 1
+port_ss=$(cat "$HOME/agsbx/port_ss") && valid_port "$port_ss" || { echo "错误：SS 端口状态无效，未生成链接。"; return 1; }
+port_ss=$((10#$port_ss))
+ss_link="ss://$(uri_percent_encode "$ss_method"):$(uri_percent_encode "$sskey")@$server_ip:$port_ss"
+ss_link=$(secondary_share_link "$ss_link" "${sxname}Shadowsocks-2022-$hostname") || return 1
+echo "在 A VPS 配置 secp 时粘贴下一行完整 URL；此入口不加入聚合或 Clash/Mihomo 订阅。"
 echo "$ss_link"
+echo "默认使用原生 TCP/UDP；需要 UoT 时在 A 显式选择 secuot=on，仅支持 Sing-box 出站与兼容的 B。"
+echo "配套新配置中的最终 SS 入口负责 DNS 回退与私网拦截：Cloudflare DoH → Google DoH → 本机系统 DNS。"
+echo "此入口部署在 B，不属于 A 的 secp 选择；更新脚本不会自动迁移已有配置。"
 echo
-if [ "$sub" = yes ]; then
-clsspt(){
-cat <<EOF
-- name: "$(json_escape "${sxname}Shadowsocks-2022-$hostname")"
-  type: ss
-  server: "$(json_escape "$server_host")"
-  port: $port_ss
-  cipher: 2022-blake3-aes-128-gcm
-  password: "$sskey"
-  udp: true
-  udp-over-tcp: true
-  udp-over-tcp-version: 2
-EOF
-}
-clsspt1(){
-printf -- '- "%s"\n' "$(json_escape "${sxname}Shadowsocks-2022-$hostname")"
-}
-fi
 fi
 if grep -q vmess-xr "$HOME/agsbx/xr.json" 2>/dev/null || grep -q vmess-sb "$HOME/agsbx/sb.json" 2>/dev/null; then
 node_title "💣【 Vmess-ws 】节点信息如下："
@@ -8984,16 +9160,20 @@ printf -- '- "%s"\n' "$(json_escape "${sxname}tuic5-$hostname")"
 fi
 fi
 if grep -q socks5-xr "$HOME/agsbx/xr.json" 2>/dev/null || grep -q socks5-sb "$HOME/agsbx/sb.json" 2>/dev/null; then
-node_title "💣【 Socks5 】客户端信息如下："
+node_title "💣【 Socks5 】二级代理入口："
 port_so=$(cat "$HOME/agsbx/port_so")
 load_socks_credentials || return 1
-socks_link="socks5://$(uri_percent_encode "$socks_user"):$(uri_percent_encode "$socks_pass")@$server_ip:$port_so#$(uri_percent_encode "${sxname}Socks5-$hostname")"
+socks_link="socks5://$(uri_percent_encode "$socks_user"):$(uri_percent_encode "$socks_pass")@$server_ip:$port_so"
+socks_link=$(secondary_share_link "$socks_link" "${sxname}Socks5-$hostname") || return 1
 echo "注意：SOCKS5 本身不加密；其独立凭据仍需在受信网络或加密隧道中使用。"
 echo "客户端地址：$server_ip"
 echo "客户端端口：$port_so"
 echo "客户端用户名：$socks_user"
 echo "客户端密码：$socks_pass"
 echo "分享链接：$socks_link"
+echo "在 A VPS 配置 secp 时粘贴完整 URL；此入口不加入聚合或 Clash/Mihomo 订阅。"
+echo "配套新配置中的最终 SOCKS5 入口负责 DNS 回退与私网拦截：Cloudflare DoH → Google DoH → 本机系统 DNS。"
+echo "此入口部署在 B，不属于 A 的 secp 选择；更新脚本不会自动迁移已有配置。"
 echo
 fi
 # NaiveProxy 同时提供原生与 Shadowrocket URI；Mihomo 没有 Naive 类型，不伪装成普通 HTTP 代理。
@@ -9204,8 +9384,8 @@ get_func() {
 }
 # 当前 Mihomo 已有 ENC/XHTTP 能力，但本脚本尚未建立其完整 extra/FM 版本映射。
 # 这类节点暂只导出完整 URL，不能生成遗漏 ENC 或掩码参数的 YAML。
-clxy="$(get_func clvlpt; get_func clsspt; get_func clvmpt; get_func clvmcdnpt; get_func clhypt; get_func clxhypt; get_func cltupt; get_func clvmargopt; get_func clmierupt)"
-clgz="$({ get_func clvlpt1; get_func clsspt1; get_func clvmpt1; get_func clvmcdnpt1; get_func clhypt1; get_func clxhypt1; get_func cltupt1; get_func clvmargopt1; get_func clmierupt1; } | sed '2,$s/^/    /')"
+clxy="$(get_func clvlpt; get_func clvmpt; get_func clvmcdnpt; get_func clhypt; get_func clxhypt; get_func cltupt; get_func clvmargopt; get_func clmierupt)"
+clgz="$({ get_func clvlpt1; get_func clvmpt1; get_func clvmcdnpt1; get_func clhypt1; get_func clxhypt1; get_func cltupt1; get_func clvmargopt1; get_func clmierupt1; } | sed '2,$s/^/    /')"
 if [ -n "$clxy" ] && [ -n "$clgz" ]; then
 clash_config=$(cat <<EOF
 port: 7890
@@ -9926,7 +10106,7 @@ kctl restart sb
 # 用法：kctl <动作> <内核>，内核 ∈ xray｜sb｜caddy（all 在已配置 Naive 时也包含 Caddy）。
 # 关键约束：
 #   · stop/start 在 systemd/openrc 下必须经服务管理器，否则 Restart 策略会立刻把内核重新拉起，停不掉、端口释放不了。
-#   · reload：sing-box 支持 SIGHUP 热重载（校验后重建实例）；Xray 官方不支持热重载 → 自动改为 restart；caddy 预留。
+#   · reload：Xray/Sing-box 使用可检查启动结果的 restart；Caddy 保留原生热重载。
 kctl(){
   local action="$1" kernel="$2" name bin cfg pat sd rc log
   local caddy_admin_address="unix/$HOME/agsbx/caddy-admin.sock"
@@ -9944,9 +10124,16 @@ kctl(){
     [ -s "$cfg" ] || { echo "${name}：尚未配置。"; return 1; }
     case "$kernel" in xray|x) validate_generated_core_config xray || return 1 ;; sb|sing-box) validate_generated_core_config sing-box || return 1 ;; esac
   fi
-  # Xray 无配置热重载，reload 自动降级为 restart
-  if [ "$action" = "reload" ] && [ "$sd" = "xr" ]; then
-    echo "Xray 不支持配置热重载（官方设计），已自动改为 restart。"; action="restart"
+  # Sing-box 的 SIGHUP 没有完成确认；旧实例退出后新监听仍可能失败，不能以发信号成功代替重载成功。
+  if [ "$action" = reload ]; then
+    case "$kernel" in
+      xray|x) echo "Xray 不支持配置热重载，改为经检查的重启；连接会短暂中断。"; action=restart ;;
+      sb|sing-box)
+        agsbx_component_running sing-box || { echo "Sing-box：进程未运行，请使用 start。"; return 1; }
+        echo "Sing-box reload 改为经检查的重启，完成后验证进程与监听；连接会短暂中断。"
+        action=restart
+        ;;
+    esac
   fi
   # Caddy：start/restart/reload 前先做配置语法预检，坏配置直接拦截，不推上线、不动正在运行的服务
   if [ "$kernel" = caddy ] && { [ "$action" = start ] || [ "$action" = restart ] || [ "$action" = reload ]; } && [ -s "$cfg" ]; then
@@ -9972,10 +10159,13 @@ kctl(){
           return 1
         fi
       else
-        if [ "$action" = start ] && agsbx_component_running "${bin##*/}"; then echo "${name}：已在运行。"; return 0; fi
-        stop_component_processes "${bin##*/}" || return 1
-        [ "$kernel" = caddy ] && rm -f "$HOME/agsbx/caddy-admin.sock"
-        nohup "$bin" run "$runflag" "$cfg" 8>&- > "$log" 2>&1 &
+        if [ "$action" = start ] && agsbx_component_running "${bin##*/}"; then
+          echo "${name}：进程已在运行，继续检查监听。"
+        else
+          stop_component_processes "${bin##*/}" || return 1
+          [ "$kernel" = caddy ] && rm -f "$HOME/agsbx/caddy-admin.sock"
+          nohup "$bin" run "$runflag" "$cfg" 8>&- > "$log" 2>&1 &
+        fi
       fi
       sleep 1
       wait_agsbx_component "${bin##*/}" && wait_component_listeners "${bin##*/}" || return 1
@@ -10022,11 +10212,8 @@ kctl(){
           }
         fi
         echo "Caddy：配置校验通过，已热重载（连接不断）✓"
-      elif agsbx_component_running "${bin##*/}"; then
-        kill -HUP $(agsbx_component_pids "${bin##*/}") >/dev/null 2>&1 || return 1
-        echo "${name}：已发送热重载信号（SIGHUP）。"
       else
-        echo "${name}：进程未运行，无法 reload，请改用 start。"; return 1
+        echo "${name}：不支持未经状态确认的热重载，请使用 restart。"; return 1
       fi ;;
     *) echo "未知动作：$action（可选 start｜stop｜restart｜reload）"; return 1 ;;
   esac
@@ -10034,11 +10221,11 @@ kctl(){
     if [ "$sd" = sb ] && [ "$action" = stop ]; then
       echo "提示：Naive 二级链路已失败关闭；Caddy 伪装站仍可继续访问，不会回退为 A VPS 直连目标。"
     elif [ "$kernel" = caddy ] && { [ "$action" = start ] || [ "$action" = restart ] || [ "$action" = reload ]; } && \
-      ! pgrep -f 'agsbx/sing-box' >/dev/null 2>&1; then
-      echo "提示：Sing-box sidecar 未运行；Caddy 伪装站可用，但 Naive 二级代理保持失败关闭。"
+      ! { agsbx_component_running sing-box && wait_component_listeners sing-box; }; then
+      echo "提示：Sing-box 本地转接未就绪；Caddy 伪装站可用，但 Naive 二级代理保持失败关闭。"
     elif [ "$sd" = sb ] && { [ "$action" = start ] || [ "$action" = restart ] || [ "$action" = reload ]; } && \
-      pgrep -f 'agsbx/sing-box' >/dev/null 2>&1; then
-      echo "提示：Sing-box sidecar 已恢复；Caddy 的新代理请求会自动恢复，无需重启 Caddy（未探测 B）。"
+      agsbx_component_running sing-box; then
+      echo "提示：Sing-box 本地转接已启动并通过监听检查；Caddy 可转交新请求（尚未验证 B 的连通性）。"
     fi
   fi
 }
