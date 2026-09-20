@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-AIRGOSBX_VERSION='V26.09.19.4'
+AIRGOSBX_VERSION='V26.09.19.5'
 # 仅在内置 XHTTP 默认参数改变时更新此标记，普通脚本版本更新不使旧命令失效。
 XHTTP_DEFAULTS_VERSION='V26.09.08.1'
 agsbxurl="${agsbxurl:-https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/main/airgosbx.sh}"
@@ -882,7 +882,7 @@ vrow "securl"   "B节点URL：ss:// / socks5:// / http:// / https://（留空隐
 vrow "secuot"   "off（默认）或 on；仅 Sing-box 的 SS 二级出站可开启 UoT v2，B 须支持"
 echo "             secp 命中 Sing-box 或 naive 时，B 地址须使用 IPv4 或 [IPv6]；Xray 可使用域名"
 echo "             客户端仍连接 A；将 B 终端输出的完整 URL 填入 A 的 securl。Naive 仅转交目标 TCP。"
-echo "             A/B 均需加载配套配置；最终 SS/SOCKS5 入口在 B 按 Cloudflare DoH → Google DoH → 系统 DNS 解析并拦截私网目标。"
+echo "             A/B 均需加载配套配置；最终 SS/SOCKS5 入口在 B 按 Google DoH → 系统 DNS 解析并拦截私网目标。"
 
 vg "⑤ Cloudflare Argo 隧道（纯出站，VPS无需开放端口）"
 vrow "argo"     "指定哪个协议走隧道：vmpt / vwpt / xvargopt"
@@ -7702,38 +7702,30 @@ EOF
 
 # 仅最终落地的 SS/SOCKS5 入站使用此链；所有服务器均由当前 B VPS 拨号。
 append_singbox_landing_dns(){
-local tags="$1" provider host
+local tags="$1"
 [ -n "$tags" ] || return 0
 cat >> "$HOME/agsbx/sb.json" <<EOF
   ,"dns": {
     "servers": [
-      {"type": "local", "tag": "local-dns"}
-EOF
-for provider in cloudflare google; do
-  case "$provider" in cloudflare) host=cloudflare-dns.com ;; google) host=dns.google ;; esac
-  cat >> "$HOME/agsbx/sb.json" <<EOF
-      ,{
+      {"type": "local", "tag": "local-dns"},
+      {
         "type": "https",
-        "tag": "landing-$provider",
-        "server": "$host",
+        "tag": "landing-google",
+        "server": "dns.google",
         "server_port": 443,
         "path": "/dns-query",
         "domain_resolver": "local-dns",
-        "tls": {"enabled": true, "server_name": "$host"}
+        "tls": {"enabled": true, "server_name": "dns.google"}
       }
-EOF
-done
-cat >> "$HOME/agsbx/sb.json" <<EOF
     ],
     "rules": [
 EOF
-for provider in cloudflare google; do
-  if [ "$singbox_dns_response_rules" = yes ]; then
-    cat >> "$HOME/agsbx/sb.json" <<EOF
+if [ "$singbox_dns_response_rules" = yes ]; then
+  cat >> "$HOME/agsbx/sb.json" <<EOF
       {
         "inbound": [$tags],
         "action": "evaluate",
-        "server": "landing-$provider",
+        "server": "landing-google",
         "timeout": "5s"
       },
       {
@@ -7744,18 +7736,17 @@ for provider in cloudflare google; do
         "action": "respond"
       },
 EOF
-  else
-    # 1.12/1.13 的内部 Lookup 在此地址过滤规则失败或无地址时继续下一条规则。
-    cat >> "$HOME/agsbx/sb.json" <<EOF
+else
+  # 1.12/1.13 的内部 Lookup 在此地址过滤规则失败或无地址时继续下一条规则。
+  cat >> "$HOME/agsbx/sb.json" <<EOF
       {
         "inbound": [$tags],
         "ip_accept_any": true,
         "action": "route",
-        "server": "landing-$provider"
+        "server": "landing-google"
       },
 EOF
-  fi
-done
+fi
 cat >> "$HOME/agsbx/sb.json" <<EOF
       {
         "inbound": [$tags],
@@ -7791,7 +7782,6 @@ if [ "$landing_xray" = yes ]; then
   cat >> "$HOME/agsbx/xr.json" <<EOF
   "dns": {
     "servers": [
-      "https+local://cloudflare-dns.com/dns-query",
       "https+local://dns.google/dns-query",
       "localhost"
     ]
@@ -8919,7 +8909,7 @@ ss_link=$(secondary_share_link "$ss_link" "${sxname}Shadowsocks-2022-$hostname")
 echo "在 A VPS 配置 secp 时粘贴下一行完整 URL；此入口不加入聚合或 Clash/Mihomo 订阅。"
 echo "$ss_link"
 echo "默认使用原生 TCP/UDP；需要 UoT 时在 A 显式选择 secuot=on，仅支持 Sing-box 出站与兼容的 B。"
-echo "配套新配置中的最终 SS 入口负责 DNS 回退与私网拦截：Cloudflare DoH → Google DoH → 本机系统 DNS。"
+echo "配套新配置中的最终 SS 入口负责 DNS 回退与私网拦截：Google DoH → 本机系统 DNS。"
 echo "此入口部署在 B，不属于 A 的 secp 选择；更新脚本不会自动迁移已有配置。"
 echo
 fi
@@ -9179,7 +9169,7 @@ echo "客户端用户名：$socks_user"
 echo "客户端密码：$socks_pass"
 echo "分享链接：$socks_link"
 echo "在 A VPS 配置 secp 时粘贴完整 URL；此入口不加入聚合或 Clash/Mihomo 订阅。"
-echo "配套新配置中的最终 SOCKS5 入口负责 DNS 回退与私网拦截：Cloudflare DoH → Google DoH → 本机系统 DNS。"
+echo "配套新配置中的最终 SOCKS5 入口负责 DNS 回退与私网拦截：Google DoH → 本机系统 DNS。"
 echo "此入口部署在 B，不属于 A 的 secp 选择；更新脚本不会自动迁移已有配置。"
 echo
 fi
