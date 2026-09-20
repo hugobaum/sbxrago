@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-AIRGOSBX_VERSION='V26.09.19.3'
+AIRGOSBX_VERSION='V26.09.19.4'
 # 仅在内置 XHTTP 默认参数改变时更新此标记，普通脚本版本更新不使旧命令失效。
 XHTTP_DEFAULTS_VERSION='V26.09.08.1'
 agsbxurl="${agsbxurl:-https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/main/airgosbx.sh}"
@@ -8010,6 +8010,13 @@ fi
 append_singbox_landing_dns "$landing_singbox_tags" || return 1
 cat >> "$HOME/agsbx/sb.json" <<EOF
   ,"route": {
+EOF
+if [ -n "$landing_singbox_tags" ]; then
+  # 1.14+ 在多 DNS 配置下要求拨号器有明确的默认解析器，包括空 direct 出站。
+  # 此处不为下面的 resolve 动作指定 server，目标域名仍经过落地 DNS 回退规则。
+  printf '    "default_domain_resolver": "local-dns",\n' >> "$HOME/agsbx/sb.json" || return 1
+fi
+cat >> "$HOME/agsbx/sb.json" <<EOF
     "rules": [
 EOF
 if [ "$subscription_core" = singbox ]; then
