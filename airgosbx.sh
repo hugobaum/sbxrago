@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-AIRGOSBX_VERSION='V26.09.19.5'
+AIRGOSBX_VERSION='V26.09.26.1'
 # 仅在内置 XHTTP 默认参数改变时更新此标记，普通脚本版本更新不使旧命令失效。
 XHTTP_DEFAULTS_VERSION='V26.09.08.1'
 agsbxurl="${agsbxurl:-https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/main/airgosbx.sh}"
@@ -191,6 +191,7 @@ component_listener_specs(){
       printf '%s\n' 'hy2-sb:port_hy2:udp' 'tuic5-sb:port_tu:udp' 'anytls-sb:port_an:tcp' \
         'anyreality-sb:port_ar:tcp' 'ss-2022:port_ss:tcp' 'vmess-sb:port_vm_ws:tcp' \
         'socks5-sb:port_so:tcp' 'naive-secondary-in:naive_secondary_port:tcp' \
+        'secondary-bridge-in:secondary_bridge_port:tcp' \
         'sub-https-proxy:subport.log:tcp' ;;
     *) return 1 ;;
   esac
@@ -363,7 +364,16 @@ shortcut_is_owned(){
 }
 
 component_cron_line(){
-  local component="$1"
+  local component="$1" mode="${2:-native}" script="${3:-}"
+  if [ "$mode" = bridge ]; then
+    [ "$component" = xray ] || return 1
+    case "$script" in /usr/local/bin/agsbx|/usr/bin/agsbx|"$HOME/bin/agsbx") ;; *) return 1 ;; esac
+    # 一条任务串行启动两个核心，避免与独立 SB cron 同时创建两个进程。
+    # CLI 负责配置/归属检查和等待回环桥；这里只保存受管脚本路径，不保存连接凭据。
+    printf '@reboot sleep 10 && umask 077 && env -u BASH_ENV -u ENV /bin/bash --noprofile --norc "%s" start sb > "$HOME/agsbx/secondary-startup.log" 2>&1 && env -u BASH_ENV -u ENV /bin/bash --noprofile --norc "%s" start xray >> "$HOME/agsbx/secondary-startup.log" 2>&1' "$script" "$script"
+    return 0
+  fi
+  [ "$mode" = native ] || return 1
   case "$component" in
     xray|sing-box)
       printf '@reboot sleep 10 && /bin/sh -c "nohup $HOME/agsbx/%s run -c $HOME/agsbx/%s.json > $HOME/agsbx/%s.log 2>&1 &"' \
@@ -383,13 +393,18 @@ legacy_naive_cron_matches(){
 }
 
 filter_component_cron(){
-  local source="$1" destination="$2" mode="$3" line component expected managed
+  local source="$1" destination="$2" mode="$3" line component expected managed script
   : > "$destination" || return 1
   while IFS= read -r line || [ -n "$line" ]; do
     managed=no
     for component in xray sing-box caddy; do
       case "$component:$mode" in caddy:rep|caddy:runtime-rep) continue ;; esac
       expected=$(component_cron_line "$component") || return 1
+      if [ "$line" = "$expected" ] || [ "$line" = "$expected # AIRGOSBX_CORE" ]; then managed=yes; break; fi
+    done
+    # 不依赖当前桥状态/当前快捷路径；回滚、改回原生或卸载时仍能精确识别此前生成的桥任务。
+    for script in /usr/local/bin/agsbx /usr/bin/agsbx "$HOME/bin/agsbx"; do
+      expected=$(component_cron_line xray bridge "$script") || return 1
       if [ "$line" = "$expected" ] || [ "$line" = "$expected # AIRGOSBX_CORE" ]; then managed=yes; break; fi
     done
     case "$mode:$line" in del:*'# AIRGOSBX_HOPPING'|rep:*'# AIRGOSBX_HOPPING') managed=yes ;; esac
@@ -724,6 +739,10 @@ verify_install_required_components(){
     echo "错误：Naive 二级链路的 Sing-box 回环转交端口未监听。"
     failed=yes
   fi
+  if [ "$secondary_bridge_required" = yes ] && ! secondary_wait_bridge; then
+    echo "错误：A 本机 Sing-box 通用转接入口未就绪。"
+    failed=yes
+  fi
   if [ "$install_required_mita" = yes ]; then
     if ! command -v mita >/dev/null 2>&1 || ! mita status 2>/dev/null | grep -q 'RUNNING' \
       || ! mita_port_is_listening "$port_mieru" "$mieru_protocol"; then
@@ -868,21 +887,23 @@ vrow "shypt"    "Hysteria2（QUIC暴力传输，需TLS证书）"
 vrow "tupt"     "Tuic v5（QUIC，需TLS证书）"
 vrow "anpt"     "AnyTLS（需TLS证书）"
 vrow "arpt"     "Any-Reality（AnyTLS over Reality）"
-vrow "sspt"     "Shadowsocks-2022 二级代理入口；仅终端输出完整 URL，不加入订阅"
+vrow "sspt"     "Shadowsocks-2022 入站；可经 secp 继续连接 B，仅终端输出完整 URL"
 
 vg "③ 通用协议（落在当前激活的内核上）"
 vrow "vmpt"     "Vmess-ws（Xray或Sing-box，可走 Argo/CDN）"
-vrow "sopt"     "Socks5 二级代理入口（无加密）；仅终端输出完整 URL，不加入订阅"
+vrow "sopt"     "Socks5 入站（无加密）；可经 secp 继续连接 B，仅终端输出完整 URL"
 
 vg "④ 出站方式（默认直连；可选 WARP 或二级代理）"
 vrow "warp"     "出站经WARP，值选：s/x/sx 或 s4x4/s6x6 等"
 echo "             s=sing-box核走WARP  x=xray核走WARP  4/6=锁IPv4/IPv6"
-vrow "secp"     "仅选择 A 的入站协议，或 xr / sb；Naive 显式用 naive；不包含 B 的 SS/SOCKS5/HTTP"
-vrow "securl"   "B节点URL：ss:// / socks5:// / http:// / https://（留空隐藏输入；socks5/http无加密）"
-vrow "secuot"   "off（默认）或 on；仅 Sing-box 的 SS 二级出站可开启 UoT v2，B 须支持"
-echo "             secp 命中 Sing-box 或 naive 时，B 地址须使用 IPv4 或 [IPv6]；Xray 可使用域名"
-echo "             客户端仍连接 A；将 B 终端输出的完整 URL 填入 A 的 securl。Naive 仅转交目标 TCP。"
-echo "             A/B 均需加载配套配置；最终 SS/SOCKS5 入口在 B 按 Google DoH → 系统 DNS 解析并拦截私网目标。"
+vrow "secp"     "选择 A 的入站协议，或 xr / sb；Naive/Mieru 显式用 naive/mieru；SS/SOCKS 用 sspt/sopt"
+vrow "securl"   "A→B 分享链接：SS/SOCKS5/HTTP(S)/VLESS/Trojan/Hysteria2/WireGuard（留空隐藏输入）"
+vrow "secuot"   "SS UoT v2：off（默认）或 on；需要时经 A 本机 Sing-box 承载，B 须支持"
+echo "             B 可自建或购买，支持 IP/域名；SOCKS 支持明文、整段或认证信息 Base64，以及 remarks 备注、udp=0/1、method=auto。"
+echo "             Base64 是编码；SOCKS/HTTP 本身不加密。客户端仍连接 A，目标域名交给 B 解析。"
+echo "             B 域名保留到内核配置，运行时解析；Naive 经 A 本机 Sing-box 连接 B，不固定 B 的 IP。"
+echo "             A 内核原生支持则连接 B，否则转接本机 Sing-box；WireGuard 的目标 DNS 经隧道发送。"
+echo "             自建配套 B 会执行目标 DNS 回退和私网拦截；第三方 B 的 DNS、UDP 与访问限制由供应商决定。"
 
 vg "⑤ Cloudflare Argo 隧道（纯出站，VPS无需开放端口）"
 vrow "argo"     "指定哪个协议走隧道：vmpt / vwpt / xvargopt"
@@ -1129,20 +1150,34 @@ uri_percent_decode() {
   printf '%s' "$output"
 }
 
-# 同时兼容标准 Base64 与 Base64URL，并自动补齐省略的 padding；仅用于解析旧式 SS 链接。
+# 兼容标准 Base64 与 Base64URL；仅补齐完全省略的 padding，拒绝畸形编码及控制字节。
 base64_decode_compat() {
   local input="$1" remainder
+  [ -n "$input" ] || return 1
+  case "$input" in *[!A-Za-z0-9+/=_-]*) return 1 ;; esac
+  if [[ "$input" == *[+/]* && "$input" == *[-_]* ]]; then return 1; fi
   input=${input//-/+}
   input=${input//_/\/}
   remainder=$((${#input} % 4))
-  case "$remainder" in
-    0) ;;
-    2) input="${input}==" ;;
-    3) input="${input}=" ;;
-    *) return 1 ;;
+  case "$input" in
+    *=*) [ "$remainder" -eq 0 ] || return 1 ;;
+    *)
+      case "$remainder" in
+        0) ;;
+        2) input="${input}==" ;;
+        3) input="${input}=" ;;
+        *) return 1 ;;
+      esac
+      ;;
   esac
-  # 必须在命令替换前检查；否则 Bash 会静默剥离解码结果末尾的换行符。
-  if printf '%s' "$input" | base64 -d 2>/dev/null | LC_ALL=C grep -q '[[:cntrl:]]'; then
+  [[ "$input" =~ ^([A-Za-z0-9+/]{4})*([A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$ ]] || return 1
+  # 最后一个有效字符的未使用位必须为零，避免不同字串解码成同一份凭据。
+  case "$input" in
+    *==) case "$input" in *[AQgw]==) ;; *) return 1 ;; esac ;;
+    *=) case "$input" in *[AEIMQUYcgkosw048]=) ;; *) return 1 ;; esac ;;
+  esac
+  # 只把字节计数放进命令替换，防止 Bash 丢弃 NUL 或末尾换行后误接收凭据。
+  if [ "$(printf '%s' "$input" | base64 -d 2>/dev/null | LC_ALL=C tr -d '\040-\176\200-\377' | wc -c)" -ne 0 ]; then
     return 1
   fi
   printf '%s' "$input" | base64 -d 2>/dev/null
@@ -1670,11 +1705,6 @@ deployment_port_specs(){
 
 validate_deployment_inputs(){
   local flag variable file network value key has_link_protocol=no
-  if { [ "$ssp" = yes ] || [ "$sop" = yes ]; } && { [ -n "$secp" ] || [ -n "$securl" ]; }; then
-    echo "错误：SS/SOCKS5 是 B VPS 的入口，不能与 A 的 secp/securl 混在同一次部署。"
-    echo "请在 B 部署入口，将其完整 URL 填入 A 的 securl；secp 只选择 A 的接入协议。"
-    return 1
-  fi
   while IFS=: read -r flag variable file network; do
     [ "${!flag}" = yes ] || continue
     value=${!variable}
@@ -1763,6 +1793,7 @@ plan_deployment_ports(){
   port_plan_file=$(mktemp "$HOME/agsbx/.port-plan.XXXXXX") || return 1
   [ -z "$naive" ] || printf '443 both caddy\n80 tcp caddy-http\n' >> "$port_plan_file"
   [ -z "$naive_secondary_port" ] || printf '%s tcp naive-secondary\n' "$naive_secondary_port" >> "$port_plan_file"
+  [ -z "$secondary_bridge_port" ] || printf '%s tcp secondary-bridge\n' "$secondary_bridge_port" >> "$port_plan_file"
   while IFS=: read -r flag variable file network; do
     [ "${!flag}" = yes ] || continue
     value=${!variable}
@@ -2346,6 +2377,158 @@ fi
 [ -n "$v4" ] || v4dq=''
 [ -n "$v6" ] || v6dq=''
 }
+# DNS 服务商仅按已知公共地址识别，不联网查询归属，也不凭地址推断加密协议。
+system_dns_provider(){
+local address
+address=$(printf '%s' "${1%%#*}" | tr 'A-F' 'a-f')
+case "$address" in
+  \[*\]*) address=${address#\[}; address=${address%%\]*} ;;
+  *.*:*) address=${address%:*} ;;
+esac
+address=${address%%%*}
+case "$address" in
+  1.1.1.1|1.0.0.1|2606:4700:4700::1111|2606:4700:4700::1001) printf '%s' 'Cloudflare' ;;
+  8.8.8.8|8.8.4.4|2001:4860:4860::8888|2001:4860:4860::8844) printf '%s' 'Google Public DNS' ;;
+  9.9.9.9|149.112.112.112|2620:fe::fe|2620:fe::9) printf '%s' 'Quad9' ;;
+  208.67.222.222|208.67.220.220|2620:119:35::35|2620:119:53::53) printf '%s' 'Cisco OpenDNS' ;;
+  223.5.5.5|223.6.6.6|2400:3200::1|2400:3200:baba::1) printf '%s' '阿里公共 DNS' ;;
+  119.29.29.29|2402:4e00::|2402:4e00:1::) printf '%s' '腾讯 DNSPod' ;;
+  127.*|::1) printf '%s' '本机解析入口' ;;
+  *) printf '%s' '服务商未知（未收录或非公共 DNS）' ;;
+esac
+}
+
+# 只提取 resolved 状态中的 DNS 字段；保留接口分组，避免把分流 DNS 当成统一上游。
+system_dns_resolved_rows(){
+LC_ALL=C awk '
+  function emit(list, kind, count, addresses, i) {
+    count=split(list, addresses, /[[:space:]]+/)
+    for (i=1; i<=count; i++) {
+      if (addresses[i] == "") continue
+      printf "%s|%s|%s|%s|%s\n", scope, kind, addresses[i], tls, (addresses[i] == current ? "当前选用" : "")
+    }
+  }
+  function flush() {
+    emit(servers, "上游")
+    if (current != "" && index(" " servers " ", " " current " ") == 0) emit(current, "上游")
+    emit(fallback, "备用")
+  }
+  BEGIN { scope="全局"; tls="unknown" }
+  {
+    line=$0
+    sub(/^[[:space:]]+/, "", line)
+    sub(/[[:space:]]+$/, "", line)
+    if (line ~ /^Global$/ || line ~ /^Link [0-9]+ /) {
+      flush()
+      scope=(line == "Global" ? "全局" : line)
+      tls="unknown"; current=""; servers=""; fallback=""; field=""
+      next
+    }
+    if (line ~ /^Protocols:/) {
+      if (line ~ /DNSOverTLS=opportunistic/) tls="opportunistic"
+      else if (line ~ /\+DNSOverTLS/) tls="yes"
+      else if (line ~ /-DNSOverTLS/) tls="no"
+      field=""; next
+    }
+    if (line ~ /^DNSOverTLS setting:/) {
+      sub(/^DNSOverTLS setting:[[:space:]]*/, "", line)
+      tls=line; field=""; next
+    }
+    if (line ~ /^Current DNS Server:/) {
+      sub(/^Current DNS Server:[[:space:]]*/, "", line)
+      current=line; field=""; next
+    }
+    if (line ~ /^Fallback DNS Servers:/) {
+      sub(/^Fallback DNS Servers:[[:space:]]*/, "", line)
+      fallback=line; field="fallback"; next
+    }
+    if (line ~ /^DNS Servers:/) {
+      sub(/^DNS Servers:[[:space:]]*/, "", line)
+      servers=line; field="servers"; next
+    }
+    # 字段名的冒号后是空白或行尾；不能把以 a-f 开头的 IPv6 续行当成字段名。
+    if (line == "" || line ~ /^[A-Za-z][A-Za-z. ]*:([[:space:]]|$)/) { field=""; next }
+    if (field == "servers") servers=servers " " line
+    if (field == "fallback") fallback=fallback " " line
+  }
+  END { flush() }
+'
+}
+
+show_system_dns_info(){
+local nameservers endpoint provider resolv_target resolved_hint=no local_stub=no nss_resolve=no
+local resolved_status='' resolved_tool='' scope kind tls selected protocol rows=0
+# 此处在 Linux VPS 运行时只读取 DNS 相关配置，不发送解析请求或修改网络。
+nameservers=$(awk '$1 == "nameserver" {print $2}' /etc/resolv.conf 2>/dev/null)
+resolv_target=$(readlink -f /etc/resolv.conf 2>/dev/null)
+case "$resolv_target" in /run/systemd/resolve/*) resolved_hint=yes ;; esac
+if awk '
+  /^[[:space:]]*hosts[[:space:]]*:/ {
+    sub(/#.*/, "")
+    for (i=2; i<=NF; i++) if ($i == "resolve") found=1
+  }
+  END {exit !found}
+' /etc/nsswitch.conf 2>/dev/null; then
+  nss_resolve=yes; resolved_hint=yes
+fi
+while IFS= read -r endpoint; do
+  [ -n "$endpoint" ] && valid_ip "${endpoint%%%*}" || continue
+  provider=$(system_dns_provider "$endpoint")
+  printf '  %-12s %s\n' 'DNS 入口：' "$endpoint（$provider；/etc/resolv.conf）"
+  case "$endpoint" in 127.*|::1) local_stub=yes ;; esac
+  case "$endpoint" in 127.0.0.53|127.0.0.54) resolved_hint=yes ;; esac
+  rows=$((rows + 1))
+done <<< "$nameservers"
+[ "$rows" -gt 0 ] || printf '  %-12s %s\n' 'DNS 入口：' '未读取到有效 nameserver'
+if [ "$rows" -gt 0 ]; then
+  printf '  %-12s %s\n' '入口协议：' '按 resolv.conf 使用普通 DNS（UDP/TCP 53）；不代表后续上游协议'
+fi
+if [ "$nss_resolve" = yes ]; then
+  printf '  %-12s %s\n' '系统解析：' 'NSS 配置包含 systemd-resolved；程序也可能直接使用上述 DNS 入口'
+fi
+if [ "$resolved_hint" = yes ]; then
+  if command -v resolvectl >/dev/null 2>&1; then resolved_tool=resolvectl
+  elif command -v systemd-resolve >/dev/null 2>&1; then resolved_tool=systemd-resolve
+  fi
+  # timeout 不是强制依赖；缺少工具或查询失败时降级，不为展示信息安装软件。
+  if [ -n "$resolved_tool" ] && command -v timeout >/dev/null 2>&1; then
+    if [ "$resolved_tool" = resolvectl ]; then
+      resolved_status=$(LC_ALL=C SYSTEMD_COLORS=0 timeout -k 1 3 resolvectl --no-pager status 2>/dev/null) || resolved_status=''
+    else
+      resolved_status=$(LC_ALL=C SYSTEMD_COLORS=0 SYSTEMD_PAGER=cat timeout -k 1 3 systemd-resolve --status 2>/dev/null) || resolved_status=''
+    fi
+  fi
+  if [ -n "$resolved_status" ]; then
+    printf '  %-12s %s\n' 'DNS 链路：' 'systemd-resolved → 按全局/接口的域名路由规则选择上游'
+    rows=0
+    while IFS='|' read -r scope kind endpoint tls selected; do
+      [ -n "$endpoint" ] || continue
+      case "$tls" in
+        yes) protocol='配置为 DoT（DNS over TLS）' ;;
+        no) protocol='配置为普通 DNS（未启用 DoT）' ;;
+        opportunistic) protocol='机会性 DoT（允许回退普通 DNS）' ;;
+        *) protocol='上游协议未确认' ;;
+      esac
+      provider=$(system_dns_provider "$endpoint")
+      printf '  %-12s %s\n' "DNS $kind：" "$scope → $endpoint（$provider${selected:+；$selected}；$protocol）"
+      rows=$((rows + 1))
+    done < <(printf '%s\n' "$resolved_status" | system_dns_resolved_rows)
+    [ "$rows" -gt 0 ] || printf '  %-12s %s\n' 'DNS 上游：' '状态中未提供上游地址'
+    case "$resolved_status" in *'Fallback DNS Servers:'*)
+      echo '  DNS 备用：仅在没有其他 DNS 配置信息时使用，不代表查询失败后的逐个回退。' ;;
+    esac
+    echo '  DNS 说明：以上为配置状态，未验证实际连接或加密会话；上游若仍是本地代理，后续 DoH/DoT 未确认。'
+  else
+    printf '  %-12s %s\n' 'DNS 链路：' '存在 systemd-resolved 相关配置，但上游/协议未确认（工具不可用或状态查询失败）'
+  fi
+elif [ "$local_stub" = yes ]; then
+  printf '  %-12s %s\n' 'DNS 链路：' '上述本地入口 → 本地解析服务 → 未知上游；后续普通 DNS / DoT / DoH 未确认'
+elif [ "$rows" -gt 0 ]; then
+  printf '  %-12s %s\n' 'DNS 链路：' '应用 → 上述 DNS 地址；仅确认本机配置，服务器后续转发方式未知'
+fi
+return 0
+}
+
 show_vps_info(){
 # 依赖安装完成后集中展示部署决策真正需要的 VPS 信息；公网 IP 复用 v4v6() 缓存，后续不重复联网探测。
 local kernel_version cpu_model cpu_cores mem_total_kb mem_available_kb mem_total_mb mem_available_mb
@@ -2388,6 +2571,7 @@ printf "  %-12s %s\n" "内存：" "总计 $mem_total_mb / 可用 $mem_available_
 printf "  %-12s %s\n" "系统盘：" "总计 $disk_total / 已用 $disk_used（$disk_usage）/ 可用 $disk_available"
 printf "  %-12s %s\n" "公网 IPv4：" "${v4:-未检测到}${v4dq:+（$v4dq）}"
 printf "  %-12s %s\n" "公网 IPv6：" "${v6:-未检测到}${v6dq:+（$v6dq）}"
+show_system_dns_info
 printf "  %-12s %s\n" "TCP 拥塞算法：" "$current_cc"
 printf "  %-12s %s\n" "BBR 状态：" "$bbr_support"
 echo "  网络调优：接下来将按内存容量自动调整 TCP/UDP 缓冲区，并尝试启用 BBR。"
@@ -2667,17 +2851,29 @@ install_script_shortcut(){
 }
 
 refresh_runtime_cron(){
-  local before after component cfg mode=runtime
+  local before after component cfg mode=runtime bridge_boot=no bridge_script='' entry
   [ "$rep_mode" != yes ] || mode=runtime-rep
   before=$(mktemp) && after=$(mktemp) || return 1
   read_crontab_or_empty "$before" && filter_component_cron "$before" "$after" "$mode" \
     || { rm -f "$before" "$after"; return 1; }
   if ! pidof systemd >/dev/null 2>&1 && ! command -v rc-service >/dev/null 2>&1; then
+    if secondary_saved_uses_bridge xray; then
+      bridge_script=$(managed_script_path) && shortcut_is_owned "$bridge_script" \
+        && [ -s "$HOME/agsbx/xr.json" ] && [ -s "$HOME/agsbx/sb.json" ] || {
+        rm -f "$before" "$after"
+        echo "错误：Xray 转接开机任务缺少受管脚本或两核配置，未写入 crontab。"
+        return 1
+      }
+      bridge_boot=yes
+    fi
     for component in xray sing-box caddy; do
       [ "$component:$rep_mode" != caddy:yes ] || continue
+      [ "$bridge_boot:$component" != yes:sing-box ] || continue
       case "$component" in xray) cfg=xr.json ;; sing-box) cfg=sb.json ;; caddy) cfg=Caddyfile ;; esac
       [ -s "$HOME/agsbx/$cfg" ] || continue
-      printf '%s # AIRGOSBX_CORE\n' "$(component_cron_line "$component")" >> "$after" || return 1
+      if [ "$bridge_boot:$component" = yes:xray ]; then entry=$(component_cron_line xray bridge "$bridge_script")
+      else entry=$(component_cron_line "$component"); fi
+      [ "$?" = 0 ] && printf '%s # AIRGOSBX_CORE\n' "$entry" >> "$after" || { rm -f "$before" "$after"; return 1; }
     done
   fi
   if [ "$install_required_argo" = yes ]; then
@@ -2701,7 +2897,8 @@ upxray(){
   metadata=$(release_json XTLS/Xray-core "$version") && tag=$(release_tag "$metadata") || return 1
   case "$cpu" in amd64) asset=Xray-linux-64.zip ;; arm64) asset=Xray-linux-arm64-v8a.zip ;; *) return 1 ;; esac
   stage=$(mktemp -d "$HOME/agsbx/.stage-xray.XXXXXX") || return 1
-  if ! fetch_file "https://github.com/XTLS/Xray-core/releases/download/$tag/$asset" "$stage/archive.zip" \
+  echo "正在下载 Xray 内核：$tag（$asset）……"
+  if ! fetch_file "https://github.com/XTLS/Xray-core/releases/download/$tag/$asset" "$stage/archive.zip" progress \
     || ! fetch_file "https://github.com/XTLS/Xray-core/releases/download/$tag/$asset.dgst" "$stage/archive.dgst"; then
     rm -rf -- "$stage"; return 1
   fi
@@ -2710,6 +2907,7 @@ upxray(){
   if ! [[ "$expected" =~ ^[0-9a-f]{64}$ ]] || [ "$expected" != "$actual" ]; then
     rm -rf -- "$stage"; echo "错误：Xray 完整性校验失败，未替换原内核。"; return 1
   fi
+  echo "Xray SHA256 校验通过 ✓ ($actual)"
   if ! unzip -o "$stage/archive.zip" xray -d "$stage" >/dev/null 2>&1 \
     || ! activate_core_candidate xray "$stage/xray"; then
     rm -rf -- "$stage"; echo "错误：Xray 候选版本未成功启用。"; return 1
@@ -2726,9 +2924,11 @@ upsingbox(){
     echo "错误：GitHub 未提供该 Sing-box 资产的 SHA256，拒绝无校验下载。"; return 1;
   }
   stage=$(mktemp -d "$HOME/agsbx/.stage-singbox.XXXXXX") || return 1
-  if ! fetch_file "https://github.com/SagerNet/sing-box/releases/download/$tag/$asset" "$stage/archive.tar.gz"; then rm -rf -- "$stage"; return 1; fi
+  echo "正在下载 Sing-box 内核：$tag（$asset）……"
+  if ! fetch_file "https://github.com/SagerNet/sing-box/releases/download/$tag/$asset" "$stage/archive.tar.gz" progress; then rm -rf -- "$stage"; return 1; fi
   actual=$(sha256sum "$stage/archive.tar.gz" | awk '{print $1}') || return 1
   if [ "$actual" != "$expected" ]; then rm -rf -- "$stage"; echo "错误：Sing-box SHA256 不匹配。"; return 1; fi
+  echo "Sing-box SHA256 校验通过 ✓ ($actual)"
   if ! tar -xzf "$stage/archive.tar.gz" -C "$stage" "sing-box-${tag#v}-linux-$cpu/sing-box" \
     || ! activate_core_candidate sing-box "$stage/sing-box-${tag#v}-linux-$cpu/sing-box"; then
     rm -rf -- "$stage"; echo "错误：Sing-box 候选版本未成功启用。"; return 1
@@ -3151,11 +3351,16 @@ echo "NaiveProxy 密码：$naivepass"
 }
 fetch_file(){
   local fetch_url="$1" fetch_out="$2"
+  local -a curl_display=(-sS) wget_display=(-q)
+  if [ "${3:-}" = progress ]; then
+    curl_display=(-#)
+    wget_display=()
+  fi
   case "$fetch_url" in https://*) ;; *) echo "错误：下载地址必须使用 HTTPS。" >&2; return 1 ;; esac
   if command -v curl >/dev/null 2>&1; then
-    curl -fLsS --proto '=https' --proto-redir '=https' --connect-timeout 10 --max-time 600 --retry 2 -o "$fetch_out" "$fetch_url"
+    curl -fL "${curl_display[@]}" --proto '=https' --proto-redir '=https' --connect-timeout 10 --max-time 600 --retry 2 -o "$fetch_out" "$fetch_url"
   elif command -v wget >/dev/null 2>&1; then
-    wget -qO "$fetch_out" --timeout=30 --tries=2 "$fetch_url"
+    wget "${wget_display[@]}" -O "$fetch_out" --timeout=30 --tries=2 "$fetch_url"
   else return 1; fi
 }
 valid_domain(){
@@ -3957,10 +4162,15 @@ validate_mita_platform(){
 
 mita_fetch(){
   local url="$1" out="$2"
+  local -a curl_display=(-sS) wget_display=(-q)
+  if [ "${3:-}" = progress ]; then
+    curl_display=(-#)
+    wget_display=()
+  fi
   if command -v curl >/dev/null 2>&1; then
-    curl -fLsS --retry 2 --connect-timeout 8 -o "$out" "$url"
+    curl -fL "${curl_display[@]}" --retry 2 --connect-timeout 8 -o "$out" "$url"
   elif command -v wget >/dev/null 2>&1; then
-    wget -q --tries=2 --timeout=15 -O "$out" "$url"
+    wget "${wget_display[@]}" --tries=2 --timeout=15 -O "$out" "$url"
   else
     return 1
   fi
@@ -3991,8 +4201,8 @@ upmita(){
     return 0
   fi
   base="https://github.com/enfein/mieru/releases/download/${tag}"
-  echo "下载 Mita ${tag} 官方 ${mita_pkg_type} 包并校验 SHA256……"
-  if ! mita_fetch "$base/$asset" "$stage/$asset" || ! mita_fetch "$base/$asset.sha256.txt" "$stage/$asset.sha256.txt"; then
+  echo "正在下载 Mita ${tag} 官方 ${mita_pkg_type} 包：$asset ……"
+  if ! mita_fetch "$base/$asset" "$stage/$asset" progress || ! mita_fetch "$base/$asset.sha256.txt" "$stage/$asset.sha256.txt"; then
     echo "错误：Mita 安装包或官方 SHA256 文件下载失败。"; rm -rf "$stage"; return 1
   fi
   if ! command -v sha256sum >/dev/null 2>&1; then
@@ -4004,7 +4214,7 @@ upmita(){
     echo "错误：Mita 官方包 SHA256 校验失败，已停止安装。"
     rm -rf "$stage"; return 1
   fi
-  echo "SHA256 校验通过 ✓"
+  echo "Mita SHA256 校验通过 ✓ ($actual)"
   # 标记在包管理器写入前创建：即使安装中途失败，也能明确这次残留由脚本创建并允许后续安全清理。
   touch "$HOME/agsbx/mita_managed" || { echo "错误：无法写入 Mita 归属标记。"; rm -rf "$stage"; return 1; }
   install_log="$stage/install.log"
@@ -4323,6 +4533,52 @@ export_mieru_traffic_pattern(){
   chmod 600 "$pattern_file"
 }
 
+append_mita_secondary_egress(){
+  secondary_protocol_is_selected mieru || return 0
+  local host="$sec_server" port="$sec_port" user="$sec_username" password="$sec_password" auth=''
+  if [ "$secondary_mita_backend" = bridge ]; then
+    host=127.0.0.1; port="$secondary_bridge_port"
+    user="$secondary_bridge_user"; password="$secondary_bridge_pass"
+  fi
+  if [ -n "$user" ]; then
+    printf -v auth ',"socks5Authentication":{"user":"%s","password":"%s"}' "$(json_escape "$user")" "$(json_escape "$password")"
+  fi
+  cat >> "$HOME/agsbx/mita.json" <<EOF
+  ,"egress": {
+    "proxies":[{"name":"secondary-out","protocol":"SOCKS5_PROXY_PROTOCOL","host":"$(json_escape "$host")","port":$port$auth}],
+    "rules":[{"ipRanges":["*"],"domainNames":["*"],"action":"PROXY","proxyNames":["secondary-out"]}]
+  }
+EOF
+}
+
+mita_secondary_dependency_owned(){
+  [ ! -L /etc/systemd/system/mita.service.d ] && \
+    [ ! -L /etc/systemd/system/mita.service.d/agsbx-secondary.conf ] && \
+    [ -f /etc/systemd/system/mita.service.d/agsbx-secondary.conf ] && \
+    grep -Fxq '# AIRGOSBX_MITA_SECONDARY' /etc/systemd/system/mita.service.d/agsbx-secondary.conf
+}
+
+configure_mita_secondary_dependency(){
+  local mode="$1" path=/etc/systemd/system/mita.service.d/agsbx-secondary.conf
+  if [ -L "$path" ] || [ -L /etc/systemd/system/mita.service.d ]; then
+    echo "错误：Mita 二级出站依赖路径是符号链接，拒绝修改。"; return 1
+  fi
+  if [ -e "$path" ] && ! mita_secondary_dependency_owned; then
+    echo "错误：Mita 二级出站服务依赖文件已被其他配置占用，拒绝覆盖。"; return 1
+  fi
+  if [ "$mode" = bridge ]; then
+    mkdir -p /etc/systemd/system/mita.service.d || return 1
+    cat > "$path" <<'EOF'
+# AIRGOSBX_MITA_SECONDARY
+[Unit]
+Wants=sb.service
+After=sb.service
+EOF
+    [ $? -eq 0 ] || { echo "错误：无法写入 Mita 二级出站服务依赖。"; return 1; }
+  elif mita_secondary_dependency_owned; then rm -f -- "$path" || return 1; fi
+  systemctl daemon-reload >/dev/null 2>&1
+}
+
 write_mita_config(){
   local user_json pass_json traffic_seed
   validate_mita_port_value "$port_mieru" || return 1
@@ -4346,6 +4602,7 @@ EOF
   ,"dns": {"dualStack": "$mita_dns_policy"}
 EOF
   fi
+  append_mita_secondary_egress || return 1
   cat >> "$HOME/agsbx/mita.json" <<EOF
   ,"loggingLevel": "INFO",
   "mtu": 1400,
@@ -4361,7 +4618,7 @@ EOF
 }
 
 installmita(){
-  local apply_out status_out
+  local apply_out status_out mita_version
   validate_mita_platform || return 1
   configure_mieru_inputs
   reset_mita_config || return 1
@@ -4373,6 +4630,15 @@ installmita(){
   else
     upmita || return 1
   fi
+  if secondary_protocol_is_selected mieru; then
+    mita_version=$(mita version 2>/dev/null | head -1 | awk '{print $NF}' | sed 's/^v//')
+    if ! [[ "$mita_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || [ "$(vercmp "$mita_version" 3.37.0)" = lt ]; then
+      echo "错误：Mita 二级出站需要 3.37.0+；旧版 SOCKS5 UDP 关联存在兼容问题，未启用代理配置。"
+      return 1
+    fi
+    secondary_ensure_bridge mita || return 1
+  fi
+  configure_mita_secondary_dependency "${secondary_mita_backend:-none}" || return 1
   # 官方包安装后会自动拉起 daemon；再次停止并清除内部配置，确保只应用当前脚本生成的单一用户/端口。
   reset_mita_config || return 1
   ensure_mieru_ufw || return 1
@@ -4383,7 +4649,7 @@ installmita(){
   fi
   apply_out=$(mita apply config "$HOME/agsbx/mita.json" 2>&1)
   if [ $? -ne 0 ]; then
-    echo "错误：Mita 配置写入失败："; printf '%s\n' "$apply_out" | tail -n 5; return 1
+    echo "错误：Mita 配置写入失败；为避免暴露连接凭据，此处不打印原始配置错误。"; return 1
   fi
   mita stop >/dev/null 2>&1 || true
   if ! mita start >/dev/null 2>&1; then
@@ -4406,6 +4672,7 @@ installmita(){
 uninstall_mita_managed(){
   cleanup_mieru_ufw || return 1
   [ -f "$HOME/agsbx/mita_managed" ] || return 0
+  configure_mita_secondary_dependency none || return 1
   detect_mita_package_target || { echo "错误：无法识别 Mita 包管理器，已保留 Mita 以免误删。"; return 1; }
   reset_mita_config || return 1
   systemctl disable mita >/dev/null 2>&1 || true
@@ -6138,6 +6405,12 @@ if secondary_protocol_is_selected naive && [ ! -s "$HOME/agsbx/sing-box" ]; then
   secondary_error "Naive 二级出站依赖 Sing-box sidecar，但内核未成功下载或不可用。"
   return 1
 fi
+if [ "$secondary_need_singbox" = yes ]; then
+  secondary_probe_singbox_outbound "$HOME/agsbx/sing-box" || {
+    secondary_error "当前 Sing-box 版本无法完整加载 A → B 配置；未生成降级或直连配置。"
+    return 1
+  }
+fi
 cat > "$HOME/agsbx/sb.json" <<EOF
 {
   "log": {
@@ -6379,6 +6652,7 @@ cat >> "$HOME/agsbx/sb.json" <<EOF
 EOF
 echo "Naive 二级代理本地转交端口：127.0.0.1:${naive_secondary_port}（HTTP CONNECT，仅 TCP）"
 fi
+append_secondary_bridge_inbound || return 1
 }
 
 installcaddy(){
@@ -6927,7 +7201,10 @@ secondary_protocol_is_active(){
     anpt)     [ "$anp" = yes ] ;;
     arpt)     [ "$arp" = yes ] ;;
     vmpt)     [ "$vmp" = yes ] ;;
+    sspt)     [ "$ssp" = yes ] ;;
+    sopt)     [ "$sop" = yes ] ;;
     naive)    [ -n "$naive" ] ;;
+    mieru)    [ "$mierup" = yes ] ;;
     *) return 1 ;;
   esac
 }
@@ -6953,17 +7230,18 @@ determine_secondary_common_core(){
 secondary_protocol_core(){
   case "$1" in
     xhpt|vlpt|vxpt|vwpt|xhypt|xdns|xicmp|xvcdnpt|xvargopt) printf 'xr' ;;
-    shypt|tupt|anpt|arpt) printf 'sb' ;;
+    shypt|tupt|anpt|arpt|sspt) printf 'sb' ;;
     # Naive 入站仍由 Caddy 驱动；这里的 sb 仅表示本地转交和二级出站由 Sing-box 承载。
     naive) printf 'sb' ;;
-    vmpt) printf '%s' "$secondary_common_core" ;;
+    mieru) printf 'mita' ;;
+    vmpt|sopt) printf '%s' "$secondary_common_core" ;;
     *) return 1 ;;
   esac
 }
 
 secondary_expand_group(){
   local group="$1" protocol matched=no
-  for protocol in xhpt vlpt vxpt vwpt xhypt xdns xicmp xvcdnpt xvargopt shypt tupt anpt arpt vmpt; do
+  for protocol in xhpt vlpt vxpt vwpt xhypt xdns xicmp xvcdnpt xvargopt shypt tupt anpt arpt vmpt sspt sopt; do
     secondary_protocol_is_active "$protocol" || continue
     [ "$(secondary_protocol_core "$protocol")" = "$group" ] || continue
     matched=yes
@@ -6996,15 +7274,19 @@ normalize_secondary_selectors(){
         }
         secondary_add_protocol naive
         ;;
+      mieru|mita)
+        [ "$mierup" = yes ] || { secondary_error "secp=mieru 需要同时启用 mieru=y。"; return 1; }
+        secondary_add_protocol mieru
+        ;;
       ca|all)
         secondary_error "不支持 secp=$normalized；NaiveProxy 二级出站请显式使用 secp=naive。"
         return 1
         ;;
-      sspt|sopt|ss|shadowsocks|socks5|http|https)
-        secondary_error "SS/SOCKS5/HTTP 是 B 的入口，不属于 secp；请把 B 的完整 URL 填入 A 的 securl。"
+      ss|shadowsocks|socks5|http|https)
+        secondary_error "secp 需要 A 入站选择名；SS/SOCKS5 入站用 sspt/sopt，B 的地址填 securl。"
         return 1
         ;;
-      xhpt|vlpt|vxpt|vwpt|xhypt|xdns|xicmp|xvcdnpt|xvargopt|shypt|tupt|anpt|arpt|vmpt)
+      xhpt|vlpt|vxpt|vwpt|xhypt|xdns|xicmp|xvcdnpt|xvargopt|shypt|tupt|anpt|arpt|vmpt|sspt|sopt)
         secondary_protocol_is_active "$normalized" || {
           secondary_error "secp=$normalized 已被选择，但本次没有启用对应协议变量。"
           return 1
@@ -7022,7 +7304,7 @@ normalize_secondary_selectors(){
 }
 
 secondary_split_hostport(){
-  local authority="$1" host port suffix
+  local authority="$1" host port suffix normalized_host
   if [[ "$authority" == \[* ]]; then
     case "$authority" in *']:'*) ;; *) secondary_error "IPv6 地址必须使用 [IPv6]:端口 格式。"; return 1 ;; esac
     host=${authority#\[}
@@ -7030,6 +7312,7 @@ secondary_split_hostport(){
     suffix=${authority#*\]}
     port=${suffix#:}
     [ "$authority" = "[$host]:$port" ] || { secondary_error "B 节点地址包含不支持的路径或字符。"; return 1; }
+    valid_ipv6 "$host" || { secondary_error "方括号内必须是纯 IPv6 地址。"; return 1; }
   else
     case "$authority" in *:*) ;; *) secondary_error "B 节点 URL 必须显式包含端口。"; return 1 ;; esac
     host=${authority%:*}
@@ -7043,10 +7326,16 @@ secondary_split_hostport(){
   [ -n "$host" ] || { secondary_error "B 节点服务器地址为空。"; return 1; }
   case "$host" in *%*) secondary_error "当前不支持带 zone-id 的 IPv6 地址。"; return 1 ;; esac
   if ! valid_ipv4 "$host" && ! valid_ipv6 "$host" && ! valid_domain "$host"; then
-    secondary_error "B 节点服务器地址不是有效的 IPv4、IPv6 或域名：$host"
+    secondary_error "B 节点服务器地址不是有效的 IPv4、IPv6 或域名。"
     return 1
   fi
   case "$host" in 0.0.0.0|::) secondary_error "B 节点服务器地址不能是未指定地址 $host。"; return 1 ;; esac
+  if valid_ipv6 "$host"; then
+    normalized_host=$(secondary_normalize_ipv6 "$host") || { secondary_error "B 节点 IPv6 地址格式无效。"; return 1; }
+    [ "$normalized_host" != 0000:0000:0000:0000:0000:0000:0000:0000 ] || {
+      secondary_error "B 节点服务器地址不能是未指定 IPv6。"; return 1;
+    }
+  fi
   sec_server="$host"
   sec_port="$port"
 }
@@ -7109,11 +7398,13 @@ secondary_server_is_local_address(){
   return 1
 }
 
-# Naive sidecar 的 B 地址必须是可直接拨号的远端 IP，拒绝明显的本机、链路本地和保留地址。
+# Naive 的字面 IP 做本机地址检查；域名交给 Sing-box 的出站解析器，不冻结 DNS 结果。
+# 这些静态检查不覆盖域名运行时返回的 IP，不能声称具备逐次解析结果的防回环校验。
 # RFC1918/ULA 不在此一刀切禁止，保留 A/B 通过受信私网互联的部署能力。
 secondary_validate_naive_server(){
   secondary_protocol_is_selected naive || return 0
-  local first second lower_server normalized_v4 normalized_v6
+  valid_domain "$sec_server" && return 0
+  local first second normalized_v4 normalized_v6
   if valid_ipv4 "$sec_server"; then
     sec_server=$(secondary_normalize_ipv4 "$sec_server") || return 1
     IFS='.' read -r first second _ _ <<< "$sec_server"
@@ -7123,17 +7414,16 @@ secondary_validate_naive_server(){
       return 1
     fi
   elif valid_ipv6 "$sec_server"; then
-    lower_server=$(printf '%s' "$sec_server" | tr 'A-F' 'a-f')
-    case "$lower_server" in
-      ::|0:0:0:0:0:0:0:0|::1|0:0:0:0:0:0:0:1|fe[89ab]*:*|ff*:*)
+    sec_server=$(secondary_normalize_ipv6 "$sec_server") || {
+      secondary_error "无法规范化 B 节点 IPv6 地址。"
+      return 1
+    }
+    case "$sec_server" in
+      0000:0000:0000:0000:0000:0000:0000:000[01]|0000:0000:0000:0000:0000:ffff:*|fe[89ab]*:*|ff*:*)
         secondary_error "secp=naive 的 B 地址不能使用本机、链路本地、组播或未指定 IPv6：$sec_server"
         return 1
         ;;
     esac
-    sec_server=$(secondary_normalize_ipv6 "$sec_server") || {
-      secondary_error "无法规范化 B 节点 IPv6 地址：$sec_server"
-      return 1
-    }
   else
     secondary_error "secp=naive 的 B 地址必须是 IPv4 或 [IPv6]。"
     return 1
@@ -7219,13 +7509,19 @@ validate_naive_credentials(){
 }
 
 secondary_parse_userinfo(){
-  local userinfo="$1" user_raw pass_raw
+  local userinfo="$1" encoding="${2:-uri}" user_raw pass_raw
   [ -n "$userinfo" ] || { sec_has_auth=no; sec_username=''; sec_password=''; return 0; }
   case "$userinfo" in *:*) ;; *) secondary_error "代理认证信息必须使用 用户名:密码 格式。"; return 1 ;; esac
   user_raw=${userinfo%%:*}
   pass_raw=${userinfo#*:}
-  sec_username=$(uri_percent_decode "$user_raw") || { secondary_error "代理用户名包含无效百分号编码。"; return 1; }
-  sec_password=$(uri_percent_decode "$pass_raw") || { secondary_error "代理密码包含无效百分号编码。"; return 1; }
+  if [ "$encoding" = raw ]; then
+    # Base64 包裹的是原始凭据，字面 % 及其后字符不能再进行 URI 解码。
+    sec_username="$user_raw"
+    sec_password="$pass_raw"
+  else
+    sec_username=$(uri_percent_decode "$user_raw") || { secondary_error "代理用户名包含无效百分号编码。"; return 1; }
+    sec_password=$(uri_percent_decode "$pass_raw") || { secondary_error "代理密码包含无效百分号编码。"; return 1; }
+  fi
   [ -n "$sec_username" ] && [ -n "$sec_password" ] || { secondary_error "代理用户名和密码都不能为空。"; return 1; }
   secondary_valid_text "$sec_username" 255 && secondary_valid_text "$sec_password" 1024 && \
     secondary_valid_ascii "$sec_username" && secondary_valid_ascii "$sec_password" || {
@@ -7235,14 +7531,184 @@ secondary_parse_userinfo(){
   sec_has_auth=yes
 }
 
+# 每次导入清空全部规范字段；不能继承上一个 URL 或调用环境中的 TLS/密钥选项。
+secondary_reset_endpoint(){
+  export -n sec_username sec_password sec_uuid sec_wg_private_key sec_wg_preshared_key sec_obfs_password 2>/dev/null || true
+  sec_scheme='' sec_outbound_type='' sec_server='' sec_port='' sec_username='' sec_password=''
+  sec_has_auth=no sec_method='' sec_label='' sec_source_format=uri sec_network=tcp_udp sec_tls_enabled=false
+  sec_uuid='' sec_security=none sec_sni='' sec_flow='' sec_fp='' sec_public_key='' sec_short_id=''
+  sec_transport=tcp sec_path='' sec_host='' sec_service_name='' sec_grpc_mode=gun sec_grpc_authority=''
+  sec_spider_x='' sec_alpn='' sec_insecure=false sec_pin_sha256='' sec_obfs='' sec_obfs_password=''
+  sec_ports='' sec_hop_interval=''
+  sec_wg_private_key='' sec_wg_public_key='' sec_wg_preshared_key='' sec_wg_address=''
+  sec_wg_allowed_ips='0.0.0.0/0,::/0' sec_wg_reserved='' sec_wg_mtu=1280 sec_wg_keepalive=0 sec_wg_dns=''
+  sec_query_keys=() sec_query_values=()
+}
+
+secondary_query_has(){
+  local key
+  for key in "${sec_query_keys[@]}"; do [ "$key" != "$1" ] || return 0; done
+  return 1
+}
+
+secondary_query_value(){
+  local index
+  for ((index=0; index<${#sec_query_keys[@]}; index++)); do
+    if [ "${sec_query_keys[index]}" = "$1" ]; then printf '%s' "${sec_query_values[index]}"; return 0; fi
+  done
+  return 0
+}
+
+# 各协议只开放已实现的字段；先拆分原始分隔符，再分别解码名称和值一次。
+# insecure/allowInsecure 是已有客户端会同时输出的别名，仅允许规范值相同的组合。
+secondary_parse_query(){
+  local scheme="$1" query="$2" allowed item raw_key key value index duplicate seen_raw='|'
+  sec_query_keys=() sec_query_values=()
+  case "$scheme" in
+    socks5) allowed='|remarks|udp|method|' ;;
+    ss|http|https) allowed='|remarks|' ;;
+    vless) allowed='|remarks|type|security|sni|fp|alpn|insecure|encryption|flow|pbk|sid|spx|path|host|serviceName|mode|authority|headerType|' ;;
+    trojan) allowed='|remarks|type|security|sni|fp|alpn|insecure|path|host|serviceName|mode|authority|headerType|' ;;
+    hysteria2) allowed='|remarks|security|sni|alpn|insecure|pinSHA256|obfs|obfs-password|mport|' ;;
+    wireguard) allowed='|remarks|publickey|address|allowedips|presharedkey|reserved|mtu|keepalive|dns|' ;;
+    *) secondary_error "无法识别上游参数类型。"; return 1 ;;
+  esac
+  [ -n "$query" ] || { secondary_error "代理 URL 的 query 不能为空。"; return 1; }
+  case "$query" in '&'*|*'&'|*'&&'*) secondary_error "代理 URL 的 query 包含空参数。"; return 1 ;; esac
+  while [ -n "$query" ]; do
+    item=${query%%&*}
+    case "$query" in *'&'*) query=${query#*&} ;; *) query='' ;; esac
+    case "$item" in *=*) ;; *) secondary_error "代理参数必须使用 名称=值 格式。"; return 1 ;; esac
+    raw_key=$(uri_percent_decode "${item%%=*}") && value=$(uri_percent_decode "${item#*=}") || {
+      secondary_error "代理参数包含无效百分号编码或控制字符。"; return 1;
+    }
+    [[ "$raw_key" =~ ^[A-Za-z][A-Za-z0-9_-]{0,63}$ ]] && secondary_valid_text "$value" 4096 || {
+      secondary_error "代理参数名无效，或参数值过长、包含控制字符。"; return 1;
+    }
+    case "$seen_raw" in *"|$raw_key|"*) secondary_error "代理 URL 不能重复指定同一参数。"; return 1 ;; esac
+    seen_raw="$seen_raw$raw_key|"
+    key="$raw_key"
+    case "$scheme:$key" in vless:allowInsecure|trojan:allowInsecure|hysteria2:allowInsecure) key=insecure ;; esac
+    case "$allowed" in *"|$key|"*) ;; *) secondary_error "该代理 URL 包含未支持的参数，已拒绝以免丢失连接或安全设置。"; return 1 ;; esac
+    if [ "$key" = insecure ]; then
+      case "$value" in 0|false) value=false ;; 1|true) value=true ;; *) secondary_error "insecure 参数只支持 0、1、false 或 true。"; return 1 ;; esac
+    fi
+    duplicate=no
+    for ((index=0; index<${#sec_query_keys[@]}; index++)); do
+      [ "${sec_query_keys[index]}" = "$key" ] || continue
+      if [ "$key" = insecure ] && [ "${sec_query_values[index]}" = "$value" ]; then duplicate=yes; break; fi
+      secondary_error "代理 URL 的同义参数存在冲突。"; return 1
+    done
+    [ "$duplicate" != yes ] || continue
+    sec_query_keys+=("$key") sec_query_values+=("$value")
+    if [ "$key" = remarks ] && [ "${sec_fragment_present:-no}" != yes ]; then sec_label="$value"; fi
+  done
+  return 0
+}
+
+secondary_query_forbids(){
+  local key
+  for key in "$@"; do
+    if secondary_query_has "$key"; then secondary_error "代理参数与所选安全或传输类型不相容。"; return 1; fi
+  done
+  return 0
+}
+
+secondary_uint_valid(){
+  [[ "$1" =~ ^[0-9]{1,5}$ ]] && [ "$((10#$1))" -ge "$2" ] && [ "$((10#$1))" -le "$3" ]
+}
+
+secondary_text_bytes_valid(){
+  local LC_ALL=C
+  secondary_valid_text "$1" "$2"
+}
+
+# 密钥保持二进制语义；复用规范 Base64 的 32 字节检查，不经过会拒绝控制字节的文本解码器。
+secondary_key32_normalize(){
+  local key="$1"
+  case "$key" in ''|*[!A-Za-z0-9+/_=-]*) return 1 ;; esac
+  [[ "$key" != *[+/]* || "$key" != *[-_]* ]] || return 1
+  key=${key//-/+}; key=${key//_/\/}
+  [ "${#key}" -ne 43 ] || key="$key="
+  ss2022_key_valid 2022-blake3-aes-256-gcm "$key" || return 1
+  printf '%s' "$key"
+}
+
+secondary_header_host_valid(){
+  local host="$1" port='' suffix='' has_port=no
+  [ -n "$host" ] && [ "${#host}" -le 320 ] || return 1
+  if [[ "$host" == \[* ]]; then
+    suffix=${host#*\]}; host=${host#\[}; host=${host%%\]*}
+    case "$host" in :*) [[ "$host" == ::* ]] || return 1 ;; esac
+    case "$host" in *:) [[ "$host" == *:: ]] || return 1 ;; esac
+    valid_ipv6 "$host" || return 1
+    case "$suffix" in '') return 0 ;; :*) port=${suffix#:}; has_port=yes ;; *) return 1 ;; esac
+  else
+    case "$host" in *:*) port=${host##*:}; host=${host%:*}; has_port=yes ;; esac
+    valid_domain "$host" || valid_ipv4 "$host" || return 1
+  fi
+  [ "$has_port" = no ] || valid_port "$port"
+}
+
+secondary_alpn_valid(){
+  local item remainder="$1"
+  case "$remainder" in ''|,*|*,|*,,*) return 1 ;; esac
+  while [ -n "$remainder" ]; do
+    item=${remainder%%,*}; case "$remainder" in *,*) remainder=${remainder#*,} ;; *) remainder='' ;; esac
+    secondary_valid_ascii "$item" && [ "${#item}" -le 255 ] || return 1
+    case "$item" in *[[:space:]]*) return 1 ;; esac
+  done
+}
+
+secondary_port_list_normalize(){
+  local input="$1" item first last output='' count=0
+  case "$input" in ''|,*|*,|*,,*) return 1 ;; esac
+  while [ -n "$input" ]; do
+    item=${input%%,*}; case "$input" in *,*) input=${input#*,} ;; *) input='' ;; esac
+    [[ "$item" =~ ^[0-9]{1,5}(-[0-9]{1,5})?$ ]] || return 1
+    first=${item%%-*}; last=${item##*-}
+    valid_port "$first" && valid_port "$last" || return 1
+    first=$((10#$first)); last=$((10#$last)); [ "$first" -le "$last" ] || return 1
+    item="$first"; [ "$first" = "$last" ] || item="$first-$last"
+    output="${output:+$output,}$item"; count=$((count + 1)); [ "$count" -le 64 ] || return 1
+  done
+  printf '%s' "$output"
+}
+
+secondary_cidr_list_normalize(){
+  local input="$1" mode="${2:-cidr}" item ip prefix max output=''
+  case "$input" in ''|,*|*,|*,,*) return 1 ;; esac
+  while [ -n "$input" ]; do
+    item=${input%%,*}; case "$input" in *,*) input=${input#*,} ;; *) input='' ;; esac
+    ip=${item%%/*}; prefix=''; [ "$ip" = "$item" ] || prefix=${item#*/}
+    case "$ip" in *:)
+      [[ "$ip" == *:: ]] || return 1 ;; esac
+    case "$ip" in :*) [[ "$ip" == ::* ]] || return 1 ;; esac
+    if valid_ipv4 "$ip"; then ip=$(secondary_normalize_ipv4 "$ip") || return 1; max=32
+    elif valid_ipv6 "$ip"; then ip=$(secondary_normalize_ipv6 "$ip") || return 1; max=128
+    else return 1; fi
+    if [ "$mode" = ip ]; then
+      [ "$item" = "${item%%/*}" ] || return 1
+      item="$ip"
+    else
+      [ "${item%%/*}" != "$item" ] || prefix="$max"
+      secondary_uint_valid "$prefix" 0 "$max" || return 1
+      item="$ip/$((10#$prefix))"
+    fi
+    output="${output:+$output,}$item"
+  done
+  printf '%s' "$output"
+}
+
 secondary_validate_ss_method(){
   case "$sec_method" in
-    2022-blake3-aes-128-gcm|2022-blake3-aes-256-gcm|2022-blake3-chacha20-poly1305) ;;
-    *) secondary_error "SS 二级出站仅支持三种 Shadowsocks-2022 加密方法：$sec_method"; return 1 ;;
+    aes-128-gcm|aes-256-gcm|chacha20-ietf-poly1305|2022-blake3-aes-128-gcm|2022-blake3-aes-256-gcm|2022-blake3-chacha20-poly1305) ;;
+    *) secondary_error "SS 二级出站只支持已列明的 AEAD 和 Shadowsocks-2022 加密方法。"; return 1 ;;
   esac
 }
 
 secondary_validate_ss_key(){
+  case "$sec_method" in aes-128-gcm|aes-256-gcm|chacha20-ietf-poly1305) return 0 ;; esac
   ss2022_key_valid "$sec_method" "$sec_password" || {
     secondary_error "SS 密钥须为规范的标准 Base64；aes-128 方法解码后为 16 字节，其余两种 2022 方法为 32 字节。"
     return 1
@@ -7250,8 +7716,8 @@ secondary_validate_ss_key(){
 }
 
 secondary_parse_ss_url(){
-  local body="$1" userinfo hostport decoded credentials method_raw password_raw
-  case "$body" in *\?*) secondary_error "当前不支持带 query/plugin 的 SS URL。"; return 1 ;; esac
+  local body="$1" userinfo hostport decoded credentials method_raw password_raw query
+  case "$body" in *\?*) query=${body#*\?}; body=${body%%\?*}; secondary_parse_query ss "$query" || return 1 ;; esac
   if [[ "$body" == *@* ]]; then
     body=${body%/}
     hostport=${body##*@}
@@ -7281,7 +7747,7 @@ secondary_parse_ss_url(){
     sec_password=${credentials#*:}
     sec_source_format=legacy
   fi
-  secondary_valid_text "$sec_method" 64 && secondary_valid_text "$sec_password" 512 || {
+  secondary_valid_text "$sec_method" 64 && secondary_text_bytes_valid "$sec_password" 512 || {
     secondary_error "SS method 或密钥过长、为空或包含控制字符。"
     return 1
   }
@@ -7297,9 +7763,75 @@ secondary_parse_ss_url(){
   sec_network=tcp_udp
 }
 
+secondary_parse_socks_query(){
+  local value
+  secondary_parse_query socks5 "$1" || return 1
+  if secondary_query_has udp; then
+    value=$(secondary_query_value udp)
+    case "$value" in 0) sec_network=tcp ;; 1) sec_network=tcp_udp ;;
+      *) secondary_error "SOCKS URL 的 udp 参数只能为 0 或 1。"; return 1 ;;
+    esac
+  fi
+  if secondary_query_has method && [ "$(secondary_query_value method)" != auto ]; then
+    secondary_error "SOCKS URL 的 method 参数仅支持 auto。"; return 1
+  fi
+  return 0
+}
+
+secondary_parse_socks_url(){
+  local body="$1" authority userinfo='' decoded query encoding=uri source_format=uri
+  sec_network=tcp_udp
+  case "$body" in
+    *\?*)
+      query=${body#*\?}
+      body=${body%%\?*}
+      secondary_parse_socks_query "$query" || return 1
+      ;;
+  esac
+  if [[ "$body" == *@* ]]; then
+    authority=${body##*@}
+    userinfo=${body%@*}
+    case "$userinfo" in *@*) secondary_error "URI 认证信息中的 @ 必须进行百分号编码。"; return 1 ;; esac
+    [ -n "$userinfo" ] || { secondary_error "SOCKS URL 的认证信息为空。"; return 1; }
+    if [[ "$userinfo" != *:* ]]; then
+      userinfo=$(uri_percent_decode "$userinfo") || { secondary_error "SOCKS userinfo Base64 的外层百分号编码无效。"; return 1; }
+      userinfo=$(base64_decode_compat "$userinfo") || { secondary_error "SOCKS userinfo Base64 解码失败。"; return 1; }
+      encoding=raw
+      source_format=base64-userinfo
+    else
+      case "$userinfo" in */*) secondary_error "URI 认证信息中的 / 必须进行百分号编码。"; return 1 ;; esac
+    fi
+    authority=${authority%/}
+    case "$authority" in */*) secondary_error "SOCKS URL 只允许空路径或结尾的 /。"; return 1 ;; esac
+  elif [[ "$body" == *:* ]]; then
+    authority=${body%/}
+    case "$authority" in */*) secondary_error "SOCKS URL 只允许空路径或结尾的 /。"; return 1 ;; esac
+  else
+    # 整体编码中的 / 属于 Base64 字符集，不能按 URI 路径截掉。
+    body=$(uri_percent_decode "$body") || { secondary_error "SOCKS URL Base64 的外层百分号编码无效。"; return 1; }
+    decoded=$(base64_decode_compat "$body") || { secondary_error "SOCKS URL Base64 解码失败。"; return 1; }
+    case "$decoded" in *:*@*) ;; *) secondary_error "SOCKS URL 解码后须为 用户名:密码@服务器:端口。"; return 1 ;; esac
+    userinfo=${decoded%@*}
+    authority=${decoded##*@}
+    encoding=raw
+    source_format=base64
+  fi
+  secondary_parse_userinfo "$userinfo" "$encoding" || return 1
+  if [ "$sec_has_auth" = yes ] && ! secondary_valid_text "$sec_password" 255; then
+    secondary_error "SOCKS5 用户名和密码分别不能超过 255 字节。"
+    return 1
+  fi
+  secondary_split_hostport "$authority" || return 1
+  sec_scheme=socks5
+  sec_outbound_type=socks
+  sec_tls_enabled=false
+  sec_method=''
+  sec_source_format="$source_format"
+}
+
 secondary_parse_generic_url(){
-  local scheme="$1" body="$2" authority userinfo='' has_userinfo=no
-  case "$body" in *\?*) secondary_error "$scheme URL 不支持 query 参数。"; return 1 ;; esac
+  local scheme="$1" body="$2" authority userinfo='' has_userinfo=no query
+  case "$body" in *\?*) query=${body#*\?}; body=${body%%\?*}; secondary_parse_query "$scheme" "$query" || return 1 ;; esac
   body=${body%/}
   case "$body" in */*) secondary_error "$scheme URL 只允许空路径或结尾的 /。"; return 1 ;; esac
   authority="$body"
@@ -7311,26 +7843,223 @@ secondary_parse_generic_url(){
   fi
   [ "$has_userinfo" = no ] || [ -n "$userinfo" ] || { secondary_error "$scheme URL 的认证信息为空。"; return 1; }
   secondary_parse_userinfo "$userinfo" || return 1
-  if [ "$scheme" = socks5 ] && [ "$sec_has_auth" = yes ] && ! secondary_valid_text "$sec_password" 255; then
-    secondary_error "SOCKS5 用户名和密码分别不能超过 255 字节。"
-    return 1
-  fi
   if [ "$scheme" = http ] || [ "$scheme" = https ]; then
     case "$sec_username" in *:*) secondary_error "HTTP Basic 用户名不能包含冒号。"; return 1 ;; esac
   fi
   secondary_split_hostport "$authority" || return 1
   sec_scheme="$scheme"
   case "$scheme" in
-    socks5) sec_outbound_type=socks; sec_tls_enabled=false; sec_network=tcp_udp ;;
-    http)   sec_outbound_type=http;  sec_tls_enabled=false; sec_network=tcp ;;
-    https)  sec_outbound_type=http;  sec_tls_enabled=true;  sec_network=tcp ;;
+    http)   sec_outbound_type=http; sec_security=none; sec_tls_enabled=false; sec_network=tcp ;;
+    https)  sec_outbound_type=http; sec_security=tls; sec_tls_enabled=true; sec_sni="$sec_server"; sec_network=tcp ;;
   esac
   sec_method=''
   sec_source_format=uri
 }
 
+secondary_load_tls_options(){
+  sec_sni=$(secondary_query_value sni)
+  sec_alpn=$(secondary_query_value alpn)
+  sec_fp=$(secondary_query_value fp)
+  sec_insecure=$(secondary_query_value insecure); sec_insecure=${sec_insecure:-false}
+  if [ "$sec_security" = none ]; then
+    secondary_query_forbids sni alpn fp insecure pbk sid spx || return 1
+    return 0
+  fi
+  sec_tls_enabled=true
+  if secondary_query_has sni && [ -z "$sec_sni" ]; then secondary_error "TLS SNI 不能显式设为空。"; return 1; fi
+  sec_sni=${sec_sni:-$sec_server}
+  { valid_domain "$sec_sni" || valid_ip "$sec_sni"; } && [ "${#sec_sni}" -le 253 ] || {
+    secondary_error "TLS SNI 必须是有效域名或 IP。"; return 1;
+  }
+  if secondary_query_has alpn && ! secondary_alpn_valid "$sec_alpn"; then
+    secondary_error "ALPN 必须为非空、无空白的可打印 ASCII 项，以逗号分隔。"; return 1
+  fi
+  if [ "$sec_scheme" = vless ] || [ "$sec_scheme" = trojan ]; then
+    if ! secondary_query_has fp; then sec_fp=chrome; fi
+    case "$sec_fp" in chrome|firefox|safari|ios|android|edge|360|qq|random|randomized) ;;
+      *) secondary_error "TLS 指纹不在当前支持范围内。"; return 1 ;;
+    esac
+  fi
+  if [ "$sec_security" = reality ]; then
+    secondary_query_forbids insecure || return 1
+    sec_public_key=$(secondary_query_value pbk)
+    [[ "$sec_public_key" =~ ^[A-Za-z0-9_-]{43}$ ]] && secondary_key32_normalize "$sec_public_key" >/dev/null || {
+      secondary_error "Reality 必须提供有效的 32 字节 Base64URL 公钥。"; return 1;
+    }
+    sec_short_id=$(secondary_query_value sid)
+    [[ "$sec_short_id" =~ ^[0-9A-Fa-f]{0,16}$ ]] && [ "$((${#sec_short_id} % 2))" -eq 0 ] || {
+      secondary_error "Reality short ID 必须为空或最多 16 个偶数位十六进制字符。"; return 1;
+    }
+    sec_short_id=$(printf '%s' "$sec_short_id" | tr A-F a-f)
+    sec_spider_x=$(secondary_query_value spx)
+    secondary_text_bytes_valid "$sec_spider_x" 2048 && [[ -z "$sec_spider_x" || "$sec_spider_x" == /* ]] || {
+      secondary_error "Reality spx 必须为空或以 / 开头的路径，且不能过长。"; return 1;
+    }
+  else
+    secondary_query_forbids pbk sid spx || return 1
+  fi
+  return 0
+}
+
+# VLESS/Trojan 的 userinfo 是独立认证字段，不套用 SOCKS 的 username:password 约定。
+secondary_parse_tls_proxy_url(){
+  local scheme="$1" body="$2" query authority auth value
+  sec_scheme="$scheme"; sec_outbound_type="$scheme"
+  [ "$scheme" != trojan ] || sec_security=tls
+  case "$body" in *\?*) query=${body#*\?}; body=${body%%\?*}; secondary_parse_query "$scheme" "$query" || return 1 ;; esac
+  case "$body" in *@*) ;; *) secondary_error "VLESS/Trojan URL 必须包含认证信息。"; return 1 ;; esac
+  auth=${body%@*}; authority=${body##*@}; authority=${authority%/}
+  case "$auth" in *@*|*/*) secondary_error "代理认证信息中的 @ 或 / 必须进行百分号编码。"; return 1 ;; esac
+  auth=$(uri_percent_decode "$auth") || { secondary_error "代理认证信息的百分号编码无效。"; return 1; }
+  [ -n "$auth" ] && secondary_text_bytes_valid "$auth" 1024 || { secondary_error "代理认证信息为空、过长或包含控制字符。"; return 1; }
+  secondary_split_hostport "$authority" || return 1
+  sec_has_auth=yes
+  if [ "$scheme" = vless ]; then
+    [[ "$auth" =~ ^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$ ]] || {
+      secondary_error "VLESS 认证信息必须是规范 UUID。"; return 1;
+    }
+    sec_uuid=$(printf '%s' "$auth" | tr A-F a-f)
+    if secondary_query_has encryption && [ "$(secondary_query_value encryption)" != none ]; then
+      secondary_error "当前 VLESS 二级导入仅支持 encryption=none；不能丢弃其他加密设置。"; return 1
+    fi
+    sec_flow=$(secondary_query_value flow)
+    case "$sec_flow" in ''|xtls-rprx-vision) ;; *) secondary_error "当前仅支持空 flow 或 xtls-rprx-vision。"; return 1 ;; esac
+  else
+    sec_password="$auth"
+  fi
+  if secondary_query_has security; then sec_security=$(secondary_query_value security); fi
+  case "$scheme:$sec_security" in vless:none|vless:tls|vless:reality|trojan:tls) ;;
+    *) secondary_error "VLESS 仅支持 none/TLS/Reality，Trojan 必须使用 TLS。"; return 1 ;;
+  esac
+  if secondary_query_has type; then sec_transport=$(secondary_query_value type); fi
+  case "$sec_transport" in raw) sec_transport=tcp ;; tcp|ws|grpc) ;; *) secondary_error "此代理仅支持 TCP/RAW、WebSocket 或 gRPC 传输。"; return 1 ;; esac
+  case "$sec_transport" in
+    tcp)
+      secondary_query_forbids path host serviceName mode authority || return 1
+      if secondary_query_has headerType && [ "$(secondary_query_value headerType)" != none ]; then
+        secondary_error "TCP 二级导入不支持额外 headerType 伪装。"; return 1
+      fi
+      ;;
+    ws)
+      secondary_query_forbids serviceName mode authority headerType || return 1
+      sec_path=$(secondary_query_value path); secondary_query_has path || sec_path=/
+      [[ "$sec_path" == /* ]] && secondary_text_bytes_valid "$sec_path" 2048 || { secondary_error "WebSocket path 必须以 / 开头且不能过长。"; return 1; }
+      sec_host=$(secondary_query_value host)
+      if secondary_query_has host && ! secondary_header_host_valid "$sec_host"; then secondary_error "WebSocket Host 必须是有效主机名或 IP，可带端口。"; return 1; fi
+      ;;
+    grpc)
+      secondary_query_forbids path host headerType || return 1
+      sec_service_name=$(secondary_query_value serviceName)
+      [ -n "$sec_service_name" ] && secondary_text_bytes_valid "$sec_service_name" 1024 || { secondary_error "gRPC 必须提供非空且不过长的 serviceName。"; return 1; }
+      if secondary_query_has mode; then sec_grpc_mode=$(secondary_query_value mode); fi
+      case "$sec_grpc_mode" in gun|multi|guna) ;; *) secondary_error "gRPC mode 仅支持 gun、multi 或 guna。"; return 1 ;; esac
+      sec_grpc_authority=$(secondary_query_value authority)
+      [ -z "$sec_grpc_authority" ] || secondary_header_host_valid "$sec_grpc_authority" || { secondary_error "gRPC authority 必须是有效主机名或 IP，可带端口。"; return 1; }
+      ;;
+  esac
+  if [ -n "$sec_flow" ] && { [ "$sec_transport" != tcp ] || [ "$sec_security" = none ]; }; then
+    secondary_error "Vision 仅支持带 TLS 或 Reality 的 TCP/RAW 传输。"; return 1
+  fi
+  secondary_load_tls_options
+}
+
+secondary_parse_hysteria2_url(){
+  local body="$1" query auth='' authority host ports first authority_multi=no
+  sec_scheme=hysteria2 sec_outbound_type=hysteria2 sec_security=tls
+  case "$body" in *\?*) query=${body#*\?}; body=${body%%\?*}; secondary_parse_query hysteria2 "$query" || return 1 ;; esac
+  if [[ "$body" == *@* ]]; then
+    auth=${body%@*}; body=${body##*@}
+    [ -n "$auth" ] || { secondary_error "Hysteria2 的认证字段不能显式为空。"; return 1; }
+  fi
+  case "$auth" in *@*|*/*) secondary_error "Hysteria2 认证信息中的 @ 或 / 必须进行百分号编码。"; return 1 ;; esac
+  sec_password=$(uri_percent_decode "$auth") || { secondary_error "Hysteria2 认证信息百分号编码无效。"; return 1; }
+  secondary_text_bytes_valid "$sec_password" 1024 || { secondary_error "Hysteria2 认证信息过长或包含控制字符。"; return 1; }
+  [ -z "$sec_password" ] || sec_has_auth=yes
+  authority=${body%/}
+  if [[ "$authority" == \[* ]]; then
+    case "$authority" in *']:'*) ports=${authority##*]:}; host=${authority%:*} ;; *']') host="$authority"; ports=443 ;; *) secondary_error "Hysteria2 IPv6 端点格式无效。"; return 1 ;; esac
+  else
+    case "$authority" in *:*) host=${authority%:*}; ports=${authority##*:} ;; *) host="$authority"; ports=443 ;; esac
+  fi
+  case "$ports" in *,*|*-*) authority_multi=yes ;; esac
+  ports=$(secondary_port_list_normalize "$ports") || { secondary_error "Hysteria2 端口必须是有效端口或以逗号分隔的端口/范围。"; return 1; }
+  if secondary_query_has mport; then
+    [ "$authority_multi" = no ] || { secondary_error "Hysteria2 不能同时在端点和 mport 中指定端口跳跃。"; return 1; }
+    ports=$(secondary_port_list_normalize "$(secondary_query_value mport)") || { secondary_error "Hysteria2 mport 范围无效。"; return 1; }
+    sec_ports="$ports"
+  elif [ "$authority_multi" = yes ]; then sec_ports="$ports"; fi
+  first=${ports%%,*}; first=${first%%-*}
+  secondary_split_hostport "$host:$first" || return 1
+  if secondary_query_has security && [ "$(secondary_query_value security)" != tls ]; then secondary_error "Hysteria2 必须使用 TLS。"; return 1; fi
+  sec_obfs=$(secondary_query_value obfs); sec_obfs_password=$(secondary_query_value obfs-password)
+  if secondary_query_has obfs || secondary_query_has obfs-password; then
+    [ "$sec_obfs" = salamander ] && [ -n "$sec_obfs_password" ] && secondary_text_bytes_valid "$sec_obfs_password" 1024 || {
+      secondary_error "Hysteria2 仅支持 salamander，且须同时提供非空 obfs-password。"; return 1;
+    }
+  fi
+  sec_pin_sha256=$(secondary_query_value pinSHA256)
+  if secondary_query_has pinSHA256; then
+    [[ "$sec_pin_sha256" =~ ^[0-9A-Fa-f]{64}$ || "$sec_pin_sha256" =~ ^([0-9A-Fa-f]{2}:){31}[0-9A-Fa-f]{2}$ ]] || {
+      secondary_error "pinSHA256 必须是 64 位十六进制，或 32 组以冒号分隔的十六进制字节。"; return 1;
+    }
+    sec_pin_sha256=${sec_pin_sha256//:/}
+    sec_pin_sha256=$(printf '%s' "$sec_pin_sha256" | tr A-F a-f)
+  fi
+  secondary_load_tls_options
+}
+
+# WireGuard URL 采用 v2rayN 的 userinfo/private-key 与小写参数布局；不推测其他厂商格式。
+secondary_parse_wireguard_url(){
+  local body="$1" query authority key value item count=0 reserved=''
+  sec_scheme=wireguard sec_outbound_type=wireguard
+  case "$body" in *\?*) query=${body#*\?}; body=${body%%\?*}; secondary_parse_query wireguard "$query" || return 1 ;; esac
+  case "$body" in *@*) ;; *) secondary_error "WireGuard URL 必须包含私钥和端点。"; return 1 ;; esac
+  key=${body%@*}; authority=${body##*@}; authority=${authority%/}
+  case "$key" in *@*) secondary_error "WireGuard 私钥格式无效。"; return 1 ;; esac
+  key=$(uri_percent_decode "$key") && sec_wg_private_key=$(secondary_key32_normalize "$key") || {
+    secondary_error "WireGuard 私钥必须是规范的 32 字节 Base64。"; return 1;
+  }
+  sec_has_auth=yes
+  secondary_split_hostport "$authority" || return 1
+  sec_wg_public_key=$(secondary_key32_normalize "$(secondary_query_value publickey)") || { secondary_error "WireGuard 必须提供有效的 32 字节公钥。"; return 1; }
+  if secondary_query_has presharedkey; then
+    sec_wg_preshared_key=$(secondary_key32_normalize "$(secondary_query_value presharedkey)") || { secondary_error "WireGuard 预共享密钥必须是规范的 32 字节 Base64。"; return 1; }
+  fi
+  sec_wg_address=$(secondary_cidr_list_normalize "$(secondary_query_value address)") || { secondary_error "WireGuard 必须提供有效的隧道 IP/CIDR 地址，以逗号分隔。"; return 1; }
+  if secondary_query_has allowedips; then
+    sec_wg_allowed_ips=$(secondary_cidr_list_normalize "$(secondary_query_value allowedips)") || { secondary_error "WireGuard allowedips 必须是有效 IP/CIDR 列表。"; return 1; }
+  fi
+  if secondary_query_has dns; then
+    sec_wg_dns=$(secondary_cidr_list_normalize "$(secondary_query_value dns)" ip) || { secondary_error "WireGuard dns 仅支持以逗号分隔的 IP 地址。"; return 1; }
+  fi
+  if secondary_query_has mtu; then
+    value=$(secondary_query_value mtu)
+    secondary_uint_valid "$value" 576 9000 || { secondary_error "WireGuard MTU 必须是 576-9000 的整数。"; return 1; }
+    sec_wg_mtu=$((10#$value))
+  fi
+  if [[ "$sec_wg_address" == *:* ]] && [ "$sec_wg_mtu" -lt 1280 ]; then secondary_error "包含 IPv6 隧道地址时 WireGuard MTU 不能小于 1280。"; return 1; fi
+  if secondary_query_has keepalive; then
+    value=$(secondary_query_value keepalive)
+    secondary_uint_valid "$value" 0 65535 || { secondary_error "WireGuard keepalive 必须是 0-65535 的秒数。"; return 1; }
+    sec_wg_keepalive=$((10#$value))
+  fi
+  if secondary_query_has reserved; then
+    value=$(secondary_query_value reserved)
+    case "$value" in ''|,*|*,|*,,*) secondary_error "WireGuard reserved 必须包含三个逗号分隔的字节。"; return 1 ;; esac
+    while [ -n "$value" ]; do
+      item=${value%%,*}; case "$value" in *,*) value=${value#*,} ;; *) value='' ;; esac
+      secondary_uint_valid "$item" 0 255 || { secondary_error "WireGuard reserved 的每个字节必须为 0-255。"; return 1; }
+      reserved="${reserved:+$reserved,}$((10#$item))"; count=$((count + 1))
+    done
+    [ "$count" -eq 3 ] || { secondary_error "WireGuard reserved 必须恰好包含三个字节。"; return 1; }
+    sec_wg_reserved="$reserved"
+  fi
+  return 0
+}
+
 parse_secondary_url(){
-  local raw="$1" body scheme rest label_raw=''
+  local raw="$1" body scheme rest label_raw='' sec_fragment_present=no
+  secondary_reset_endpoint
   [ -n "$raw" ] || { secondary_error "B 节点 URL 不能为空。"; return 1; }
   [ "${#raw}" -le 4096 ] && secondary_valid_text "$raw" 4096 || {
     secondary_error "B 节点 URL 过长或包含控制字符。"
@@ -7338,6 +8067,7 @@ parse_secondary_url(){
   }
   body=${raw%%#*}
   if [ "$body" != "$raw" ]; then
+    sec_fragment_present=yes
     label_raw=${raw#*#}
     case "$label_raw" in *'#'*) secondary_error "URL fragment 中的 # 必须进行百分号编码。"; return 1 ;; esac
   fi
@@ -7348,19 +8078,152 @@ parse_secondary_url(){
   rest=${body#*://}
   case "$scheme" in
     ss) secondary_parse_ss_url "$rest" ;;
-    socks5|http|https) secondary_parse_generic_url "$scheme" "$rest" ;;
-    *) secondary_error "不支持的 B 节点 URL：$scheme://（支持 ss、socks5、http、https）。"; return 1 ;;
+    socks|socks5) secondary_parse_socks_url "$rest" ;;
+    http|https) secondary_parse_generic_url "$scheme" "$rest" ;;
+    vless|trojan) secondary_parse_tls_proxy_url "$scheme" "$rest" ;;
+    hysteria2|hy2) secondary_parse_hysteria2_url "$rest" ;;
+    wireguard|wg) secondary_parse_wireguard_url "$rest" ;;
+    *) secondary_error "不支持的 B 节点 URL（支持 SS、SOCKS5、HTTP(S)、VLESS、Trojan、Hysteria2 和 WireGuard）。"; return 1 ;;
   esac
 }
 
-secondary_has_singbox_selection(){
+# 只读保存的依赖标记；不把运行期 shell 变量当成重启/回滚时的事实来源。
+secondary_saved_uses_bridge(){
+  local source="$1"
+  case "$source" in xray|mita) ;; *) return 1 ;; esac
+  [ -f "$HOME/agsbx/secondary_backends" ] || return 1
+  grep -Fxq "$source=bridge" "$HOME/agsbx/secondary_backends" 2>/dev/null
+}
+
+secondary_has_xray_selection(){
   local protocol
-  local -a secondary_check_protocols
-  IFS=',' read -r -a secondary_check_protocols <<< "$secondary_protocols"
-  for protocol in "${secondary_check_protocols[@]}"; do
-    [ "$(secondary_protocol_core "$protocol")" = sb ] && return 0
+  local -a choices
+  IFS=',' read -r -a choices <<< "$secondary_protocols"
+  for protocol in "${choices[@]}"; do
+    [ "$(secondary_protocol_core "$protocol")" = xr ] && return 0
   done
   return 1
+}
+
+secondary_finalize_backends(){
+  local protocol
+  local -a choices
+  secondary_xray_backend=none
+  secondary_mita_backend=none
+  secondary_need_singbox=no
+  secondary_bridge_required=no
+  [ "$secondary_prepared" = yes ] || return 0
+  IFS=',' read -r -a choices <<< "$secondary_protocols"
+  for protocol in "${choices[@]}"; do
+    [ "$(secondary_protocol_core "$protocol")" != sb ] || secondary_need_singbox=yes
+  done
+  if secondary_has_xray_selection; then
+    # 原生能力由 VPS 上实际的内核解析器确认；不根据 GUI 或协议名字猜版本。
+    [ -x "$HOME/agsbx/xray" ] || upxray || return 1
+    if secondary_probe_xray_outbound "$HOME/agsbx/xray"; then
+      secondary_xray_backend=native
+    else
+      secondary_xray_backend=bridge
+      secondary_bridge_required=yes
+      secondary_need_singbox=yes
+    fi
+  fi
+  if secondary_protocol_is_selected mieru; then
+    # Mita 的客户端出站只支持 SOCKS5；TCP-only 需要交给桥的路由规则拒绝目标 UDP。
+    if [ "$sec_scheme" = socks5 ] && [ "$sec_network" = tcp_udp ]; then
+      secondary_mita_backend=native
+    else
+      secondary_mita_backend=bridge
+      secondary_bridge_required=yes
+      secondary_need_singbox=yes
+    fi
+  fi
+  if [ "$secondary_need_singbox" = yes ]; then
+    secondary_singbox_supported || { secondary_error "${secondary_capability_error:-A → B 的协议参数不能由当前 Sing-box 适配器完整表达，已停止。}"; return 1; }
+    require_service_slot sing-box || return 1
+  fi
+  if [ "$secondary_xray_backend" != none ]; then echo "A 的 Xray → B：$secondary_xray_backend（bridge 表示经 A 本机 Sing-box）。"; fi
+  if [ "$secondary_mita_backend" != none ]; then echo "A 的 Mita → B：$secondary_mita_backend。"; fi
+}
+
+secondary_init_bridge(){
+  export -n secondary_bridge_pass 2>/dev/null || true
+  secondary_bridge_port=''
+  secondary_bridge_user='agsbx-core-bridge'
+  secondary_bridge_pass=''
+  [ "$secondary_bridge_required" = yes ] || return 0
+  local threshold upper attempt candidate state_file port_file="$HOME/agsbx/secondary_bridge_port" pass_file="$HOME/agsbx/secondary_bridge_pass"
+  for state_file in "$port_file" "$pass_file"; do
+    if [ -L "$state_file" ] || { [ -e "$state_file" ] && [ ! -f "$state_file" ]; }; then
+      secondary_error "内核转接状态文件类型异常，拒绝读取或覆盖。"; return 1
+    fi
+  done
+  threshold=$(sysctl -n net.ipv4.ip_unprivileged_port_start 2>/dev/null)
+  case "$threshold" in ''|*[!0-9]*) secondary_error "无法确认本机转接端口的权限保护。"; return 1 ;; esac
+  [ "$threshold" -gt 200 ] || { secondary_error "本机低位端口未受权限保护，无法安全建立内核转接。"; return 1; }
+  upper=$((threshold - 1)); [ "$upper" -le 1023 ] || upper=1023
+  for attempt in {1..20}; do
+    candidate=$(get_free_privileged_port "$upper") || return 1
+    [ "$candidate" != "$naive_secondary_port" ] || continue
+    secondary_bridge_port="$candidate"; break
+  done
+  valid_port "$secondary_bridge_port" || { secondary_error "无法分配独立的本机转接端口。"; return 1; }
+  atomic_text_file "$port_file" "$secondary_bridge_port" || return 1
+  if [ ! -s "$pass_file" ]; then
+    secondary_bridge_pass=$(openssl rand -hex 24) || return 1
+    atomic_text_file "$pass_file" "$secondary_bridge_pass" || return 1
+  else secondary_bridge_pass=$(cat "$pass_file") || return 1; fi
+  [[ "$secondary_bridge_pass" =~ ^[0-9a-f]{48}$ ]] || { secondary_error "内核转接凭据状态无效。"; return 1; }
+  chmod 600 "$port_file" "$pass_file" || return 1
+}
+
+append_secondary_bridge_inbound(){
+  [ "$secondary_bridge_required" = yes ] || return 0
+  cat >> "$HOME/agsbx/sb.json" <<EOF
+    {
+      "type": "socks", "tag": "secondary-bridge-in",
+      "listen": "127.0.0.1", "listen_port": $secondary_bridge_port,
+      "users": [{"username": "$secondary_bridge_user", "password": "$secondary_bridge_pass"}]
+    },
+EOF
+}
+
+secondary_wait_bridge(){
+  local port attempt
+  port=$(cat "$HOME/agsbx/secondary_bridge_port" 2>/dev/null)
+  valid_port "$port" || return 1
+  for attempt in {1..10}; do
+    component_owns_listener sing-box "$port" tcp && return 0
+    sleep 1
+  done
+  return 1
+}
+
+secondary_ensure_bridge(){
+  secondary_saved_uses_bridge "$1" || return 0
+  [ -s "$HOME/agsbx/sb.json" ] || { echo "错误：A 本机 Sing-box 转接配置缺失；不会回退直连目标。"; return 1; }
+  if ! agsbx_component_running sing-box; then kctl start sb || return 1; fi
+  secondary_wait_bridge || { echo "错误：A 本机 Sing-box 转接尚未就绪。"; return 1; }
+}
+
+show_secondary_backend_status(){
+  local source mode bridge_port
+  [ -f "$HOME/agsbx/secondary_backends" ] || return 0
+  bridge_port=$(cat "$HOME/agsbx/secondary_bridge_port" 2>/dev/null)
+  for source in xray mita; do
+    mode=$(sed -n "s/^$source=//p" "$HOME/agsbx/secondary_backends")
+    case "$mode" in
+      native) printf '  A 的 %s → B：原生客户端\n' "$source" ;;
+      bridge)
+        if component_owns_listener sing-box "$bridge_port" tcp; then
+          printf '  A 的 %s → A 本机 Sing-box → B：转接监听就绪（未主动探测 B）\n' "$source"
+        else
+          printf '  A 的 %s → A 本机 Sing-box → B：转接未就绪，失败关闭\n' "$source"
+        fi ;;
+      none|'') ;;
+      *) printf '  A 的 %s → B：保存的客户端模式无效\n' "$source" ;;
+    esac
+  done
 }
 
 prepare_secondary_proxy(){
@@ -7390,7 +8253,7 @@ prepare_secondary_proxy(){
     echo
     printf '%s\n' "${C_CYAN}=========配置二级代理出站=========${C_RESET}"
     echo "已选择协议：$secp"
-    printf "请粘贴 B VPS 的 ss://、socks5://、http:// 或 https:// URL（输入内容隐藏）："
+    printf "请粘贴自建或购买的 B 节点 ss://、socks://、socks5://、http:// 或 https:// URL（输入内容隐藏）："
     IFS= read -r -s securl
     echo
   fi
@@ -7398,17 +8261,6 @@ prepare_secondary_proxy(){
   unset securl
   if [ "$secuot" = on ]; then
     [ "$sec_scheme" = ss ] || { secondary_error "secuot=on 仅适用于 SS 上游，B 须支持 UoT v2。"; return 1; }
-    IFS=',' read -r -a selected_protocols <<< "$secondary_protocols"
-    for protocol in "${selected_protocols[@]}"; do
-      [ "$(secondary_protocol_core "$protocol")" = sb ] || {
-        secondary_error "secuot=on 不支持 Xray 二级出站，请关闭 UoT 或只选择 Sing-box 出站的入口。"
-        return 1
-      }
-    done
-  fi
-  if secondary_has_singbox_selection && ! valid_ipv4 "$sec_server" && ! valid_ipv6 "$sec_server"; then
-    secondary_error "当前脚本要求 Sing-box 1.12+；为避免新版域名解析字段不兼容，Sing-box 二级出站的 B 地址必须使用 IP。"
-    return 1
   fi
   secondary_validate_naive_server || return 1
   secondary_prepared=yes
@@ -7416,15 +8268,16 @@ prepare_secondary_proxy(){
   valid_ipv6 "$sec_server" && secondary_display_host="[$sec_server]"
   echo "二级代理出站已解析：$sec_scheme://$secondary_display_host:$sec_port（认证信息已隐藏）"
   echo "应用二级出站的 A VPS 入站协议：$secp"
+  if [ "$sec_network" = tcp ]; then echo "该上游只转发目标 TCP；选中入口的目标 UDP 请求会拒绝，不回退直连。"; fi
   if [ "$sec_scheme" = ss ]; then echo "SS UDP over TCP：$secuot（off 使用原生 UDP；on 要求 B 支持 UoT v2）"; fi
-  if secondary_protocol_is_selected naive; then echo "Naive 经本机 Sing-box 将目标 TCP 和域名交给 B；请在 B 加载配套 SS/SOCKS5 配置以执行 DNS 回退和私网拦截。"; fi
+  if secondary_protocol_is_selected naive; then echo "Naive 经本机 Sing-box 将目标 TCP 和域名交给 B；第三方节点的 DNS 与访问限制须由供应商确认。"; fi
 }
 
 persist_secondary_proxy_state(){
   if [ "$secondary_prepared" = yes ]; then
-    printf '%s\n' "$secp" > "$HOME/agsbx/secondary_secp"
-    printf '%s\n%s\n%s\n%s\n' "$sec_scheme" "$sec_server" "$sec_port" "$secuot" > "$HOME/agsbx/secondary_meta"
-    chmod 600 "$HOME/agsbx/secondary_secp" "$HOME/agsbx/secondary_meta" 2>/dev/null
+    atomic_text_file "$HOME/agsbx/secondary_secp" "$secp" && \
+      atomic_text_file "$HOME/agsbx/secondary_meta" "$(printf '%s\n%s\n%s\n%s' "$sec_scheme" "$sec_server" "$sec_port" "$secuot")" && \
+      atomic_text_file "$HOME/agsbx/secondary_backends" "$(printf 'xray=%s\nmita=%s' "${secondary_xray_backend:-none}" "${secondary_mita_backend:-none}")" || return 1
   fi
 }
 
@@ -7441,11 +8294,14 @@ secondary_tag_for_protocol(){
     xr:xvcdnpt) printf 'vlessenc-xhttp-cdn' ;;
     xr:xvargopt) printf 'vlessenc-xhttp-argo' ;;
     xr:vmpt) printf 'vmess-xr' ;;
+    xr:sopt) printf 'socks5-xr' ;;
     sb:shypt) printf 'hy2-sb' ;;
     sb:tupt) printf 'tuic5-sb' ;;
     sb:anpt) printf 'anytls-sb' ;;
     sb:arpt) printf 'anyreality-sb' ;;
     sb:vmpt) printf 'vmess-sb' ;;
+    sb:sspt) printf 'ss-2022' ;;
+    sb:sopt) printf 'socks5-sb' ;;
     sb:naive) printf 'naive-secondary-in' ;;
     *) return 1 ;;
   esac
@@ -7472,6 +8328,7 @@ secondary_build_runtime_tags(){
   IFS=',' read -r -a protocols <<< "$secondary_protocols"
   for protocol in "${protocols[@]}"; do
     core=$(secondary_protocol_core "$protocol")
+    [ "$core" != mita ] || continue
     tag=$(secondary_tag_for_protocol "$core" "$protocol") || {
       secondary_error "无法将 secp=$protocol 映射到 $core 内核入站 tag。"
       return 1
@@ -7491,115 +8348,361 @@ secondary_build_runtime_tags(){
       esac
     fi
   done
+  if [ "$secondary_bridge_required" = yes ]; then
+    [ -s "$HOME/agsbx/sb.json" ] && grep -Fq '"secondary-bridge-in"' "$HOME/agsbx/sb.json" || {
+      secondary_error "A 本机 Sing-box 转接入口没有生成。"; return 1;
+    }
+    secondary_append_runtime_tag sb secondary-bridge-in
+    secondary_singbox_remote_dns_tags="${secondary_singbox_remote_dns_tags:+$secondary_singbox_remote_dns_tags, }\"secondary-bridge-in\""
+  fi
+}
+
+# 以下渲染函数只输出一个 JSON 对象，既用于最终配置，也用于 VPS 上的内核能力检查。
+# sec_* 必须来自 parse_secondary_url；未知协议/参数不能静默退化成其他出站。
+secondary_json_csv_strings(){
+  local input="$1" mode="${2:-text}" item separator=''
+  local -a items=()
+  [ -z "$input" ] || IFS=',' read -r -a items <<< "$input"
+  printf '['
+  for item in "${items[@]}"; do
+    case "$mode" in ports) item=${item/-/:} ;; addresses) item=${item%/*} ;; esac
+    printf '%s"%s"' "$separator" "$(json_escape "$item")"
+    separator=,
+  done
+  printf ']'
+}
+
+secondary_hex_sha256_base64(){
+  local value="$1" bytes='' pair
+  [ "${#value}" -eq 64 ] || return 1
+  case "$value" in *[!0-9a-fA-F]*) return 1 ;; esac
+  while [ -n "$value" ]; do
+    pair=${value:0:2}
+    bytes="$bytes\\x$pair"
+    value=${value:2}
+  done
+  printf '%b' "$bytes" | base64 | tr -d '\r\n'
+}
+
+secondary_xray_native_candidate(){
+  secondary_capability_error=''
+  case "$sec_outbound_type" in socks|http|shadowsocks|vless|trojan|hysteria2|wireguard) ;;
+    *) secondary_capability_error='Xray 没有该协议的二级出站渲染器。'; return 1 ;; esac
+  if [ "${secuot:-off}" = on ]; then
+    secondary_capability_error='该 SS UoT v2 配置由 Sing-box 承载。'; return 1
+  fi
+  if [ "${sec_insecure:-false}" = true ]; then
+    secondary_capability_error='Xray 不采用忽略 TLS 证书验证的旧字段。'; return 1
+  fi
+  if [ "${sec_security:-none}" = reality ] && [ -n "${sec_alpn:-}" ]; then
+    secondary_capability_error='Xray REALITY 配置没有独立的 ALPN 参数。'; return 1
+  fi
+  if [ "${sec_transport:-tcp}" = grpc ]; then
+    case "${sec_grpc_mode:-gun}" in gun|multi) ;;
+      *) secondary_capability_error='Xray 渲染器不支持该 gRPC 模式。'; return 1 ;; esac
+  fi
+  return 0
+}
+
+secondary_singbox_native_candidate(){
+  secondary_capability_error=''
+  case "$sec_outbound_type" in socks|http|shadowsocks|vless|trojan|hysteria2|wireguard) ;;
+    *) secondary_capability_error='Sing-box 没有该协议的二级出站渲染器。'; return 1 ;; esac
+  case "${sec_flow:-}" in ''|xtls-rprx-vision) ;;
+    *) secondary_capability_error='Sing-box 不支持该 VLESS flow。'; return 1 ;; esac
+  if [ -n "${sec_spider_x:-}" ]; then
+    secondary_capability_error='Sing-box 不能完整保留 REALITY spx 参数。'; return 1
+  fi
+  if [ "${sec_transport:-tcp}" = grpc ]; then
+    if [ "${sec_grpc_mode:-gun}" != gun ] || [ -n "${sec_grpc_authority:-}" ]; then
+      secondary_capability_error='Sing-box 不能完整保留该 gRPC mode/authority。'; return 1
+    fi
+  fi
+  if [ "${secuot:-off}" = on ] && [ "$sec_outbound_type" != shadowsocks ]; then
+    secondary_capability_error='UoT v2 仅支持本轮的 SS 二级出站。'; return 1
+  fi
+  if [ "$sec_outbound_type" = hysteria2 ]; then
+    case "${sec_fp:-}" in ''|chrome) ;;
+      *) secondary_capability_error='Sing-box Hysteria2 不能保留该 TLS 指纹选项。'; return 1 ;; esac
+  fi
+  return 0
+}
+
+secondary_singbox_supported(){
+  secondary_singbox_native_candidate
+}
+
+secondary_render_xray_stream(){
+  local transport="${sec_transport:-tcp}" security="${sec_security:-none}" fields='' tls_fields='' mask_fields=''
+  local sni fp alpn password public_key short_id path host service authority multi=false
+  local authority_json pin_json spider_json udp_json hop_json
+  sni=$(json_escape "${sec_sni:-$sec_server}")
+  fp=$(json_escape "${sec_fp:-}")
+  alpn=$(secondary_json_csv_strings "${sec_alpn:-}")
+  path=$(json_escape "${sec_path:-/}")
+  host=$(json_escape "${sec_host:-}")
+  case "$transport" in
+    tcp|raw) transport=tcp ;;
+    ws)
+      fields=",\"wsSettings\":{\"path\":\"$path\""
+      [ -z "${sec_host:-}" ] || fields="$fields,\"headers\":{\"Host\":\"$host\"}"
+      fields="$fields}"
+      ;;
+    grpc)
+      service=$(json_escape "${sec_service_name:-}")
+      authority=$(json_escape "${sec_grpc_authority:-}")
+      authority_json="\"$authority\""
+      [ "${sec_grpc_mode:-gun}" != multi ] || multi=true
+      [ "${secondary_probe_invalid:-}" != grpc-authority ] || authority_json='{}'
+      [ "${secondary_probe_invalid:-}" != grpc-multi ] || multi='{}'
+      fields=",\"grpcSettings\":{\"serviceName\":\"$service\",\"authority\":$authority_json,\"multiMode\":$multi}"
+      ;;
+    *) return 1 ;;
+  esac
+  case "$security" in
+    none) ;;
+    tls)
+      tls_fields="\"serverName\":\"$sni\""
+      [ -z "${sec_fp:-}" ] || tls_fields="$tls_fields,\"fingerprint\":\"$fp\""
+      [ -z "${sec_alpn:-}" ] || tls_fields="$tls_fields,\"alpn\":$alpn"
+      if [ -n "${sec_pin_sha256:-}" ]; then
+        pin_json="[\"$(json_escape "$sec_pin_sha256")\"]"
+        [ "${secondary_probe_invalid:-}" != pin ] || pin_json='{}'
+        tls_fields="$tls_fields,\"pinnedPeerCertSha256\":$pin_json"
+      fi
+      fields="$fields,\"tlsSettings\":{$tls_fields}"
+      ;;
+    reality)
+      public_key=$(json_escape "${sec_public_key:-}")
+      short_id=$(json_escape "${sec_short_id:-}")
+      # publicKey 是仍受支持的旧名称；保持与较早内核的配置兼容。
+      fields="$fields,\"realitySettings\":{\"serverName\":\"$sni\",\"fingerprint\":\"${fp:-chrome}\",\"publicKey\":\"$public_key\",\"shortId\":\"$short_id\""
+      if [ -n "${sec_spider_x:-}" ]; then
+        spider_json="\"$(json_escape "$sec_spider_x")\""
+        [ "${secondary_probe_invalid:-}" != spider ] || spider_json='{}'
+        fields="$fields,\"spiderX\":$spider_json"
+      fi
+      fields="$fields}"
+      ;;
+    *) return 1 ;;
+  esac
+  if [ "$sec_outbound_type" = hysteria2 ]; then
+    transport=hysteria
+    password=$(json_escape "$sec_password")
+    fields="$fields,\"hysteriaSettings\":{\"version\":2,\"auth\":\"$password\"}"
+    if [ "${sec_obfs:-}" = salamander ]; then
+      udp_json="[{\"type\":\"salamander\",\"settings\":{\"password\":\"$(json_escape "$sec_obfs_password")\"}}]"
+      [ "${secondary_probe_invalid:-}" != hy2-obfs ] || udp_json='{}'
+      mask_fields="\"udp\":$udp_json"
+    fi
+    if [ -n "${sec_ports:-}" ]; then
+      hop_json="{\"ports\":\"$(json_escape "$sec_ports")\"}"
+      [ "${secondary_probe_invalid:-}" != hy2-ports ] || hop_json='[]'
+      mask_fields="${mask_fields:+$mask_fields,}\"quicParams\":{\"udpHop\":$hop_json}"
+    fi
+    [ -z "$mask_fields" ] || fields="$fields,\"finalmask\":{$mask_fields}"
+  fi
+  printf '{"network":"%s","security":"%s"%s}' "$transport" "$security" "$fields"
+}
+
+secondary_render_xray_outbound(){
+  local tag="${1:-secondary-out}" backend="${2:-native}" address password username method settings stream endpoint dns
+  # 仅供本函数的反向检查调用；普通渲染始终清空该局部标志。
+  local secondary_probe_invalid="${3:-}" no_kernel_tun=true
+  tag=$(json_escape "$tag")
+  if [ "$backend" = bridge ]; then
+    [ -n "${secondary_bridge_port:-}" ] && [ -n "${secondary_bridge_user:-}" ] && [ -n "${secondary_bridge_pass:-}" ] || return 1
+    printf '{"tag":"%s","protocol":"socks","settings":{"servers":[{"address":"127.0.0.1","port":%s,"users":[{"user":"%s","pass":"%s"}]}]}}' \
+      "$tag" "$secondary_bridge_port" "$(json_escape "$secondary_bridge_user")" "$(json_escape "$secondary_bridge_pass")"
+    return 0
+  fi
+  [ "$backend" = native ] && secondary_xray_native_candidate || return 1
+  address=$(json_escape "$sec_server")
+  password=$(json_escape "$sec_password")
+  username=$(json_escape "$sec_username")
+  method=$(json_escape "$sec_method")
+  case "$sec_outbound_type" in
+    socks|http)
+      settings="\"address\":\"$address\",\"port\":$sec_port"
+      [ "$sec_has_auth" != yes ] || settings="$settings,\"users\":[{\"user\":\"$username\",\"pass\":\"$password\"}]"
+      settings="{\"servers\":[{$settings}]}"
+      ;;
+    shadowsocks)
+      settings="{\"servers\":[{\"address\":\"$address\",\"port\":$sec_port,\"method\":\"$method\",\"password\":\"$password\"}]}"
+      ;;
+    vless)
+      settings="{\"vnext\":[{\"address\":\"$address\",\"port\":$sec_port,\"users\":[{\"id\":\"$(json_escape "$sec_uuid")\",\"encryption\":\"none\",\"flow\":\"$(json_escape "${sec_flow:-}")\"}]}]}"
+      ;;
+    trojan)
+      settings="{\"servers\":[{\"address\":\"$address\",\"port\":$sec_port,\"password\":\"$password\"}]}"
+      ;;
+    hysteria2) settings="{\"version\":2,\"address\":\"$address\",\"port\":$sec_port}" ;;
+    wireguard)
+      endpoint="$sec_server:$sec_port"
+      valid_ipv6 "$sec_server" && endpoint="[$sec_server]:$sec_port"
+      dns=$(secondary_json_csv_strings "${sec_wg_dns:-1.1.1.1,1.0.0.1,2606:4700:4700::1111,2606:4700:4700::1001}")
+      [ "$secondary_probe_invalid" != wg-no-kernel ] || no_kernel_tun='{}'
+      [ "$secondary_probe_invalid" != wg-dns ] || dns='{}'
+      settings="{\"secretKey\":\"$(json_escape "$sec_wg_private_key")\",\"address\":$(secondary_json_csv_strings "$sec_wg_address" addresses),\"noKernelTun\":$no_kernel_tun,\"mtu\":${sec_wg_mtu:-1280},\"reserved\":[${sec_wg_reserved:-0,0,0}],\"remoteDNS\":$dns,\"peers\":[{\"endpoint\":\"$(json_escape "$endpoint")\",\"publicKey\":\"$(json_escape "$sec_wg_public_key")\",\"allowedIPs\":$(secondary_json_csv_strings "${sec_wg_allowed_ips:-0.0.0.0/0,::/0}"),\"keepAlive\":${sec_wg_keepalive:-0}"
+      [ -z "${sec_wg_preshared_key:-}" ] || settings="$settings,\"preSharedKey\":\"$(json_escape "$sec_wg_preshared_key")\""
+      printf '{"tag":"%s","protocol":"wireguard","settings":%s}]}}' "$tag" "$settings"
+      return 0
+      ;;
+    *) return 1 ;;
+  esac
+  stream=$(secondary_render_xray_stream) || return 1
+  method="$sec_outbound_type"
+  [ "$method" != hysteria2 ] || method=hysteria
+  printf '{"tag":"%s","protocol":"%s","settings":%s,"streamSettings":%s}' "$tag" "$method" "$settings" "$stream"
+}
+
+secondary_render_singbox_tls(){
+  local fields pin
+  fields="\"enabled\":true,\"server_name\":\"$(json_escape "${sec_sni:-$sec_server}")\",\"insecure\":${sec_insecure:-false}"
+  [ -z "${sec_alpn:-}" ] || fields="$fields,\"alpn\":$(secondary_json_csv_strings "$sec_alpn")"
+  if [ -n "${sec_fp:-}" ] && [ "$sec_outbound_type" != hysteria2 ]; then
+    fields="$fields,\"utls\":{\"enabled\":true,\"fingerprint\":\"$(json_escape "$sec_fp")\"}"
+  fi
+  if [ "${sec_security:-none}" = reality ]; then
+    fields="$fields,\"reality\":{\"enabled\":true,\"public_key\":\"$(json_escape "$sec_public_key")\",\"short_id\":\"$(json_escape "$sec_short_id")\"}"
+  fi
+  if [ -n "${sec_pin_sha256:-}" ]; then
+    # URI pinSHA256 钉住完整 DER 证书，不能误用仅钉住 SPKI 公钥的字段。
+    pin=$(secondary_hex_sha256_base64 "$sec_pin_sha256") || return 1
+    fields="$fields,\"certificate_sha256\":[\"$(json_escape "$pin")\"]"
+  fi
+  printf '{%s}' "$fields"
+}
+
+secondary_render_singbox_resolver(){
+  if ! valid_ip "$sec_server"; then
+    printf ',"domain_resolver":{"server":"secondary-dns","strategy":"%s"}' "$(json_escape "${ip_policy_sing_strategy:-prefer_ipv4}")"
+  fi
+}
+
+secondary_render_singbox_outbound(){
+  local tag="${1:-secondary-out}" fields tls transport
+  secondary_singbox_native_candidate || return 1
+  [ "$sec_outbound_type" != wireguard ] || return 1
+  fields="\"type\":\"$(json_escape "$sec_outbound_type")\",\"tag\":\"$(json_escape "$tag")\",\"server\":\"$(json_escape "$sec_server")\",\"server_port\":$sec_port"
+  case "$sec_outbound_type" in
+    socks|http)
+      [ "$sec_outbound_type" != socks ] || fields="$fields,\"version\":\"5\""
+      [ "$sec_has_auth" != yes ] || fields="$fields,\"username\":\"$(json_escape "$sec_username")\",\"password\":\"$(json_escape "$sec_password")\""
+      ;;
+    shadowsocks)
+      fields="$fields,\"method\":\"$(json_escape "$sec_method")\",\"password\":\"$(json_escape "$sec_password")\""
+      [ "${secuot:-off}" != on ] || fields="$fields,\"udp_over_tcp\":{\"enabled\":true,\"version\":2}"
+      ;;
+    vless)
+      fields="$fields,\"uuid\":\"$(json_escape "$sec_uuid")\""
+      [ -z "${sec_flow:-}" ] || fields="$fields,\"flow\":\"$(json_escape "$sec_flow")\""
+      ;;
+    trojan|hysteria2) fields="$fields,\"password\":\"$(json_escape "$sec_password")\"" ;;
+    *) return 1 ;;
+  esac
+  [ "${sec_network:-tcp_udp}" != tcp ] || [ "$sec_outbound_type" = http ] || fields="$fields,\"network\":\"tcp\""
+  if [ "$sec_outbound_type" = hysteria2 ]; then
+    if [ -n "${sec_ports:-}" ]; then
+      # server_ports 与 server_port 互斥，重建公共字段后追加认证及跳端口配置。
+      fields="\"type\":\"hysteria2\",\"tag\":\"$(json_escape "$tag")\",\"server\":\"$(json_escape "$sec_server")\",\"password\":\"$(json_escape "$sec_password")\",\"server_ports\":$(secondary_json_csv_strings "$sec_ports" ports)"
+      [ "${sec_network:-tcp_udp}" != tcp ] || fields="$fields,\"network\":\"tcp\""
+    fi
+    [ -z "${sec_obfs:-}" ] || fields="$fields,\"obfs\":{\"type\":\"$(json_escape "$sec_obfs")\",\"password\":\"$(json_escape "$sec_obfs_password")\"}"
+  fi
+  if [ "${sec_tls_enabled:-false}" = true ]; then
+    tls=$(secondary_render_singbox_tls) || return 1
+    fields="$fields,\"tls\":$tls"
+  fi
+  case "${sec_transport:-tcp}" in
+    tcp|raw) ;;
+    ws)
+      transport="\"type\":\"ws\",\"path\":\"$(json_escape "${sec_path:-/}")\""
+      [ -z "${sec_host:-}" ] || transport="$transport,\"headers\":{\"Host\":\"$(json_escape "$sec_host")\"}"
+      fields="$fields,\"transport\":{$transport}"
+      ;;
+    grpc) fields="$fields,\"transport\":{\"type\":\"grpc\",\"service_name\":\"$(json_escape "${sec_service_name:-}")\"}" ;;
+    *) return 1 ;;
+  esac
+  fields="$fields$(secondary_render_singbox_resolver)"
+  printf '{%s}' "$fields"
+}
+
+secondary_render_singbox_wireguard_endpoint(){
+  local tag="${1:-secondary-out}" fields peer
+  secondary_singbox_native_candidate && [ "$sec_outbound_type" = wireguard ] || return 1
+  fields="\"type\":\"wireguard\",\"tag\":\"$(json_escape "$tag")\",\"system\":false,\"mtu\":${sec_wg_mtu:-1280},\"address\":$(secondary_json_csv_strings "$sec_wg_address"),\"private_key\":\"$(json_escape "$sec_wg_private_key")\""
+  peer="\"address\":\"$(json_escape "$sec_server")\",\"port\":$sec_port,\"public_key\":\"$(json_escape "$sec_wg_public_key")\",\"allowed_ips\":$(secondary_json_csv_strings "${sec_wg_allowed_ips:-0.0.0.0/0,::/0}"),\"persistent_keepalive_interval\":${sec_wg_keepalive:-0},\"reserved\":[${sec_wg_reserved:-0,0,0}]"
+  [ -z "${sec_wg_preshared_key:-}" ] || peer="$peer,\"pre_shared_key\":\"$(json_escape "$sec_wg_preshared_key")\""
+  printf '{%s,"peers":[{%s}]%s}' "$fields" "$peer" "$(secondary_render_singbox_resolver)"
+}
+
+# 只在 VPS 部署准备阶段调用。配置与凭据经 stdin 传入，检查输出不回显。
+# 正向检查通过后，反向检查还要求内核拒绝错误类型，防止旧版静默忽略新字段。
+secondary_probe_xray_json(){
+  local binary="$1" outbound="$2"
+  printf '{"log":{"loglevel":"none"},"outbounds":[%s]}' "$outbound" | \
+    "$binary" run -test -format json -c stdin: >/dev/null 2>&1
+}
+
+secondary_probe_xray_outbound(){
+  local binary="${1:-$HOME/agsbx/xray}" outbound invalid probe
+  local -a probes=()
+  secondary_xray_native_candidate && [ -x "$binary" ] || return 1
+  outbound=$(secondary_render_xray_outbound secondary-out native) || return 1
+  secondary_probe_xray_json "$binary" "$outbound" || return 1
+  [ -z "${sec_spider_x:-}" ] || probes+=(spider)
+  if [ "${sec_transport:-tcp}" = grpc ]; then
+    [ -z "${sec_grpc_authority:-}" ] || probes+=(grpc-authority)
+    [ "${sec_grpc_mode:-gun}" != multi ] || probes+=(grpc-multi)
+  fi
+  [ -z "${sec_pin_sha256:-}" ] || probes+=(pin)
+  if [ "$sec_outbound_type" = hysteria2 ]; then
+    [ -z "${sec_obfs:-}" ] || probes+=(hy2-obfs)
+    [ -z "${sec_ports:-}" ] || probes+=(hy2-ports)
+  elif [ "$sec_outbound_type" = wireguard ]; then
+    probes+=(wg-no-kernel wg-dns)
+  fi
+  for probe in "${probes[@]}"; do
+    invalid=$(secondary_render_xray_outbound secondary-out native "$probe") || return 1
+    secondary_probe_xray_json "$binary" "$invalid" && return 1
+  done
+  return 0
+}
+
+secondary_probe_singbox_outbound(){
+  local binary="${1:-$HOME/agsbx/sing-box}" object section version
+  secondary_singbox_native_candidate && [ -x "$binary" ] || return 1
+  if [ -n "${sec_pin_sha256:-}" ]; then
+    # 完整证书指纹字段从 1.15 起提供；不能让旧内核忽略 pin 后只保留 insecure。
+    version=$("$binary" version 2>/dev/null | awk '/version/{print $NF; exit}' | sed 's/^v//')
+    [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && [ "$(vercmp "$version" 1.15.0)" != lt ] || return 1
+  fi
+  if [ "$sec_outbound_type" = wireguard ]; then
+    object=$(secondary_render_singbox_wireguard_endpoint) || return 1
+    section="\"endpoints\":[$object],\"outbounds\":[{\"type\":\"direct\",\"tag\":\"probe-direct\"}]"
+  else
+    object=$(secondary_render_singbox_outbound) || return 1
+    section="\"outbounds\":[$object]"
+  fi
+  printf '{"log":{"disabled":true},"dns":{"servers":[{"type":"udp","tag":"secondary-dns","server":"1.1.1.1"}]},%s}' "$section" | \
+    "$binary" check -c /dev/stdin >/dev/null 2>&1
 }
 
 append_xray_secondary_outbound(){
-  local address method password username auth_fields stream_fields tls_server_name
+  local object
   [ -n "$secondary_xray_tags" ] || return 0
-  address=$(json_escape "$sec_server")
-  method=$(json_escape "$sec_method")
-  password=$(json_escape "$sec_password")
-  username=$(json_escape "$sec_username")
-  auth_fields=''
-  if [ "$sec_has_auth" = yes ]; then
-    printf -v auth_fields ',\n        "user": "%s",\n        "pass": "%s"' "$username" "$password"
-  fi
-  # 不设置 dialerProxy=direct：该字段表示通过另一个 Xray 出站建立连接，
-  # 省略后才是由当前协议出站直接连接 B 节点。
-  stream_fields=''
-  if [ "$sec_tls_enabled" = true ]; then
-    tls_server_name="$address"
-    valid_ipv6 "$sec_server" && tls_server_name="[$address]"
-    printf -v stream_fields ',\n      "streamSettings": {"security": "tls", "tlsSettings": {"serverName": "%s"}}' "$tls_server_name"
-  fi
-  case "$sec_outbound_type" in
-    shadowsocks)
-      cat >> "$HOME/agsbx/xr.json" <<EOF
-    ,
-    {
-      "tag": "secondary-out",
-      "protocol": "shadowsocks",
-      "settings": {
-        "address": "$address",
-        "port": $sec_port,
-        "method": "$method",
-        "password": "$password"
-      }$stream_fields
-    }
-EOF
-      ;;
-    socks|http)
-      cat >> "$HOME/agsbx/xr.json" <<EOF
-    ,
-    {
-      "tag": "secondary-out",
-      "protocol": "$sec_outbound_type",
-      "settings": {
-        "address": "$address",
-        "port": $sec_port$auth_fields
-      }$stream_fields
-    }
-EOF
-      ;;
-  esac
+  object=$(secondary_render_xray_outbound secondary-out "${secondary_xray_backend:-native}") || return 1
+  printf '    ,\n    %s\n' "$object" >> "$HOME/agsbx/xr.json"
 }
 
 append_singbox_secondary_outbound(){
-  local server method password username auth_fields tls_fields uot_fields=''
+  local object
   [ -n "$secondary_singbox_tags" ] || return 0
-  server=$(json_escape "$sec_server")
-  method=$(json_escape "$sec_method")
-  password=$(json_escape "$sec_password")
-  username=$(json_escape "$sec_username")
-  auth_fields=''
-  if [ "$sec_has_auth" = yes ]; then
-    printf -v auth_fields ',\n      "username": "%s",\n      "password": "%s"' "$username" "$password"
-  fi
-  tls_fields=''
-  if [ "$sec_tls_enabled" = true ]; then
-    printf -v tls_fields ',\n      "tls": {"enabled": true, "server_name": "%s"}' "$server"
-  fi
-  # 不设置 detour=direct：当前 Sing-box 会在实际拨号时拒绝把空 direct 出站作为上游；
-  # 省略 detour 即由系统网络直接连接 B 节点，也不会重新进入入站路由形成递归。
-  case "$sec_outbound_type" in
-    shadowsocks)
-      if [ "$secuot" = on ]; then uot_fields=', "udp_over_tcp": {"enabled": true, "version": 2}'; fi
-      cat >> "$HOME/agsbx/sb.json" <<EOF
-    ,
-    {
-      "type": "shadowsocks",
-      "tag": "secondary-out",
-      "server": "$server",
-      "server_port": $sec_port,
-      "method": "$method",
-      "password": "$password"$uot_fields
-    }
-EOF
-      ;;
-    socks)
-      cat >> "$HOME/agsbx/sb.json" <<EOF
-    ,
-    {
-      "type": "socks",
-      "tag": "secondary-out",
-      "server": "$server",
-      "server_port": $sec_port,
-      "version": "5"$auth_fields
-    }
-EOF
-      ;;
-    http)
-      cat >> "$HOME/agsbx/sb.json" <<EOF
-    ,
-    {
-      "type": "http",
-      "tag": "secondary-out",
-      "server": "$server",
-      "server_port": $sec_port$auth_fields$tls_fields
-    }
-EOF
-      ;;
-  esac
+  # WireGuard 使用顶层 endpoints 数组，由配置装配层添加。
+  [ "$sec_outbound_type" != wireguard ] || return 0
+  object=$(secondary_render_singbox_outbound) || return 1
+  printf '    ,\n    %s\n' "$object" >> "$HOME/agsbx/sb.json"
 }
 
 validate_generated_core_config(){
@@ -7632,7 +8735,7 @@ validate_generated_core_config(){
 }
 
 start_agsbx_core(){
-  local core="$1" binary config service init_name description unit_path init_path core_pid
+  local core="$1" binary config service init_name description unit_path init_path core_pid sd_bridge='' rc_bridge=''
   case "$core" in
     xray)
       binary="$HOME/agsbx/xray"; config="$HOME/agsbx/xr.json"; service="xr"; init_name="xray"; description="xr service"
@@ -7645,12 +8748,18 @@ start_agsbx_core(){
 
   validate_generated_core_config "$core" || return 1
   require_service_slot "$core" || return 1
+  if [ "$core" = xray ] && secondary_saved_uses_bridge xray; then
+    secondary_ensure_bridge xray || return 1
+    sd_bridge=$'Wants=sb.service\nAfter=sb.service'
+    rc_bridge='need sing-box'
+  fi
   if pidof systemd >/dev/null 2>&1 && is_root; then
     unit_path="/etc/systemd/system/${service}.service"
     cat > "$unit_path" <<EOF
 [Unit]
 Description=$description
 After=network.target
+$sd_bridge
 [Service]
 Type=simple
 NoNewPrivileges=yes
@@ -7682,6 +8791,7 @@ command_background=yes
 pidfile="/run/${init_name}.pid"
 depend() {
 need net
+$rc_bridge
 }
 EOF
     if [ $? -ne 0 ]; then
@@ -7700,14 +8810,45 @@ EOF
   wait_agsbx_component "$core" || { echo "错误：$core 启动后未检测到对应进程。"; return 1; }
 }
 
-# 仅最终落地的 SS/SOCKS5 入站使用此链；所有服务器均由当前 B VPS 拨号。
+append_singbox_wireguard_dns(){
+  # 保留独立调用入口，但所有组合共用一个 DNS 块；参数可同时包含普通落地入口。
+  append_singbox_landing_dns "${1:-}"
+}
+
+# B 节点域名使用独立解析器；未走 WireGuard 二级出站的 SS/SOCKS5 入口保留目标解析回退链。
 append_singbox_landing_dns(){
-local tags="$1"
-[ -n "$tags" ] || return 0
-cat >> "$HOME/agsbx/sb.json" <<EOF
+  local tags="${1:-}" secondary_dns_address='1.1.1.1' need_secondary_dns=no need_wireguard_dns=no
+  local servers="${sec_wg_dns:-}" address index=0
+  local -a dns_addresses=()
+  if [ -n "$secondary_singbox_tags" ]; then
+    valid_ip "$sec_server" || need_secondary_dns=yes
+    [ "$sec_outbound_type" != wireguard ] || need_wireguard_dns=yes
+  fi
+  [ -n "$tags" ] || [ "$need_secondary_dns" = yes ] || [ "$need_wireguard_dns" = yes ] || return 0
+  if [ "$effective_ipv_mode" = 6 ] || { [ -z "$v4" ] && [ -n "$v6" ]; }; then
+    secondary_dns_address='2606:4700:4700::1111'
+  fi
+  if [ "$need_wireguard_dns" = yes ]; then
+    if [ -z "$servers" ]; then
+      case "$sec_wg_address" in
+        *.*) servers='1.1.1.1,1.0.0.1' ;;
+        *) servers='2606:4700:4700::1111,2606:4700:4700::1001' ;;
+      esac
+    fi
+    IFS=',' read -r -a dns_addresses <<< "$servers"
+    [ "${#dns_addresses[@]}" -gt 0 ] || return 1
+    # 在开始追加 JSON 前检查整个列表，不能写到一半才发现无效地址。
+    for address in "${dns_addresses[@]}"; do valid_ip "$address" || return 1; done
+  fi
+  cat >> "$HOME/agsbx/sb.json" <<EOF
   ,"dns": {
     "servers": [
-      {"type": "local", "tag": "local-dns"},
+      {"type": "local", "tag": "local-dns"}
+EOF
+  [ $? -eq 0 ] || return 1
+  if [ -n "$tags" ]; then
+    cat >> "$HOME/agsbx/sb.json" <<EOF
+      ,
       {
         "type": "https",
         "tag": "landing-google",
@@ -7717,50 +8858,70 @@ cat >> "$HOME/agsbx/sb.json" <<EOF
         "domain_resolver": "local-dns",
         "tls": {"enabled": true, "server_name": "dns.google"}
       }
-    ],
-    "rules": [
 EOF
-if [ "$singbox_dns_response_rules" = yes ]; then
+    [ $? -eq 0 ] || return 1
+  fi
+  if [ "$need_secondary_dns" = yes ]; then
+    # 此解析器只解析 B 节点地址；固定 Cloudflare IP 提供引导，不经过 B。
+    cat >> "$HOME/agsbx/sb.json" <<EOF
+      ,
+      {"type":"https","tag":"secondary-dns","server":"$secondary_dns_address","server_port":443,"path":"/dns-query","tls":{"enabled":true,"server_name":"cloudflare-dns.com"}}
+EOF
+    [ $? -eq 0 ] || return 1
+  fi
+  if [ "$need_wireguard_dns" = yes ]; then
+    for address in "${dns_addresses[@]}"; do
+      index=$((index + 1))
+      printf '      ,{"type":"udp","tag":"secondary-tunnel-dns-%s","server":"%s","detour":"secondary-out"}\n' \
+        "$index" "$(json_escape "$address")" >> "$HOME/agsbx/sb.json" || return 1
+    done
+  fi
+  printf '    ],\n' >> "$HOME/agsbx/sb.json" || return 1
+  if [ "$need_wireguard_dns" = yes ] || [ -n "$tags" ]; then
+    printf '    "rules": [\n' >> "$HOME/agsbx/sb.json" || return 1
+    if [ "$need_wireguard_dns" = yes ]; then
+      # 选中入口优先使用隧道 DNS；即使它同时是 SS/SOCKS 落地入口，也不能落到系统回退。
+      for ((index=1; index<=${#dns_addresses[@]}; index++)); do
+        if [ "$singbox_dns_response_rules" = yes ]; then
+          cat >> "$HOME/agsbx/sb.json" <<EOF
+      {"inbound":[$secondary_singbox_tags],"action":"evaluate","server":"secondary-tunnel-dns-$index","timeout":"5s"},
+      {"inbound":[$secondary_singbox_tags],"match_response":true,"response_rcode":"NOERROR","ip_accept_any":true,"action":"respond"},
+EOF
+        else
+          # 1.12/1.13 的内部 Lookup 在失败或无地址时继续下一条规则。
+          cat >> "$HOME/agsbx/sb.json" <<EOF
+      {"inbound":[$secondary_singbox_tags],"ip_accept_any":true,"action":"route","server":"secondary-tunnel-dns-$index"},
+EOF
+        fi
+        [ $? -eq 0 ] || return 1
+      done
+      printf '      {"inbound":[%s],"action":"reject"}' "$secondary_singbox_tags" >> "$HOME/agsbx/sb.json" || return 1
+      if [ -n "$tags" ]; then printf ',\n' >> "$HOME/agsbx/sb.json" || return 1; else printf '\n' >> "$HOME/agsbx/sb.json" || return 1; fi
+    fi
+    if [ -n "$tags" ]; then
+      if [ "$singbox_dns_response_rules" = yes ]; then
+        cat >> "$HOME/agsbx/sb.json" <<EOF
+      {"inbound":[$tags],"action":"evaluate","server":"landing-google","timeout":"5s"},
+      {"inbound":[$tags],"match_response":true,"response_rcode":"NOERROR","ip_accept_any":true,"action":"respond"},
+EOF
+      else
+        cat >> "$HOME/agsbx/sb.json" <<EOF
+      {"inbound":[$tags],"ip_accept_any":true,"action":"route","server":"landing-google"},
+EOF
+      fi
+      [ $? -eq 0 ] || return 1
+      printf '      {"inbound":[%s],"action":"route","server":"local-dns"}\n' "$tags" >> "$HOME/agsbx/sb.json" || return 1
+    fi
+    printf '    ],\n' >> "$HOME/agsbx/sb.json" || return 1
+  fi
   cat >> "$HOME/agsbx/sb.json" <<EOF
-      {
-        "inbound": [$tags],
-        "action": "evaluate",
-        "server": "landing-google",
-        "timeout": "5s"
-      },
-      {
-        "inbound": [$tags],
-        "match_response": true,
-        "response_rcode": "NOERROR",
-        "ip_accept_any": true,
-        "action": "respond"
-      },
-EOF
-else
-  # 1.12/1.13 的内部 Lookup 在此地址过滤规则失败或无地址时继续下一条规则。
-  cat >> "$HOME/agsbx/sb.json" <<EOF
-      {
-        "inbound": [$tags],
-        "ip_accept_any": true,
-        "action": "route",
-        "server": "landing-google"
-      },
-EOF
-fi
-cat >> "$HOME/agsbx/sb.json" <<EOF
-      {
-        "inbound": [$tags],
-        "action": "route",
-        "server": "local-dns"
-      }
-    ],
     "final": "local-dns"${singbox_dns_cache_fields}
   }
 EOF
 }
 
 xrsbout(){
-local landing_xray=no landing_singbox_tags='' tag destination strategy
+local landing_xray=no landing_singbox_tags='' tag destination strategy xray_config_ready=no
 # 同一份清单用于 B 端两套内核；解析后的实际目标不能访问这些私网范围。
 local landing_private_ips='"10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16", "172.16.0.0/12", "192.168.0.0/16", "::1/128", "fc00::/7", "fe80::/10"'
 secondary_build_runtime_tags || return 1
@@ -7809,7 +8970,12 @@ cat >> "$HOME/agsbx/xr.json" <<EOF
      }
     }
 EOF
-append_xray_secondary_outbound
+append_xray_secondary_outbound || return 1
+if [ -n "$secondary_xray_tags" ] && [ "$sec_network" = tcp ]; then
+  cat >> "$HOME/agsbx/xr.json" <<EOF
+    ,{"protocol": "blackhole", "tag": "secondary-udp-reject"}
+EOF
+fi
 if [ "$landing_xray" = yes ]; then
   cat >> "$HOME/agsbx/xr.json" <<EOF
     ,{"protocol": "blackhole", "tag": "landing-reject"}
@@ -7893,6 +9059,16 @@ EOF
 fi
 if [ -n "$secondary_xray_tags" ]; then
 # 二级代理规则必须保持在所有 IP 规则之前，避免 IPOnDemand 在 A 上触发目标域名解析。
+if [ "$sec_network" = tcp ]; then
+cat >> "$HOME/agsbx/xr.json" <<EOF
+      {
+        "type": "field",
+        "inboundTag": [$secondary_xray_tags],
+        "network": "udp",
+        "outboundTag": "secondary-udp-reject"
+      },
+EOF
+fi
 cat >> "$HOME/agsbx/xr.json" <<EOF
       {
         "type": "field",
@@ -7952,7 +9128,8 @@ cat >> "$HOME/agsbx/xr.json" <<EOF
   }
 }
 EOF
-start_agsbx_core xray || return 1
+validate_generated_core_config xray || return 1
+xray_config_ready=yes
 fi
 if [ -e "$HOME/agsbx/sb.json" ]; then
 sed -i '$ s/,[[:space:]]*$//' "$HOME/agsbx/sb.json" 2>/dev/null || sed -i '$s/,$//' "$HOME/agsbx/sb.json"
@@ -7964,14 +9141,17 @@ cat >> "$HOME/agsbx/sb.json" <<EOF
       "tag": "direct"
     }
 EOF
-append_singbox_secondary_outbound
+append_singbox_secondary_outbound || return 1
 cat >> "$HOME/agsbx/sb.json" <<EOF
   ]
 EOF
-if [ "$wap" = warp ]; then
+if [ "$wap" = warp ] || { [ -n "$secondary_singbox_tags" ] && [ "$sec_outbound_type" = wireguard ]; }; then
 cat >> "$HOME/agsbx/sb.json" <<EOF
   ,
   "endpoints": [
+EOF
+if [ "$wap" = warp ]; then
+cat >> "$HOME/agsbx/sb.json" <<EOF
     {
       "type": "wireguard",
       "tag": "warp-out",
@@ -7994,14 +9174,19 @@ cat >> "$HOME/agsbx/sb.json" <<EOF
         }
       ]
     }
-  ]
 EOF
+fi
+if [ -n "$secondary_singbox_tags" ] && [ "$sec_outbound_type" = wireguard ]; then
+  [ "$wap" != warp ] || printf ',\n' >> "$HOME/agsbx/sb.json" || return 1
+  secondary_render_singbox_wireguard_endpoint secondary-out >> "$HOME/agsbx/sb.json" || return 1
+fi
+printf '\n  ]\n' >> "$HOME/agsbx/sb.json" || return 1
 fi
 append_singbox_landing_dns "$landing_singbox_tags" || return 1
 cat >> "$HOME/agsbx/sb.json" <<EOF
   ,"route": {
 EOF
-if [ -n "$landing_singbox_tags" ]; then
+if [ -n "$landing_singbox_tags" ] || { [ -n "$secondary_singbox_tags" ] && { [ "$sec_outbound_type" = wireguard ] || ! valid_ip "$sec_server"; }; }; then
   # 1.14+ 在多 DNS 配置下要求拨号器有明确的默认解析器，包括空 direct 出站。
   # 此处不为下面的 resolve 动作指定 server，目标域名仍经过落地 DNS 回退规则。
   printf '    "default_domain_resolver": "local-dns",\n' >> "$HOME/agsbx/sb.json" || return 1
@@ -8024,6 +9209,21 @@ cat >> "$HOME/agsbx/sb.json" <<EOF
       },
 EOF
 # 所有二级入站在本地解析前转交目标域名；Naive 另用 TCP 专用规则，B 负责解析与私网检查。
+if [ -n "$secondary_singbox_tags" ] && [ "$sec_network" = tcp ]; then
+cat >> "$HOME/agsbx/sb.json" <<EOF
+      {
+        "inbound": [$secondary_singbox_tags],
+        "network": "udp",
+        "action": "reject"
+      },
+EOF
+fi
+if [ -n "$secondary_singbox_tags" ] && [ "$sec_outbound_type" = wireguard ]; then
+  # WG 传送 IP 包：先在 A 通过 WG 隧道查询目标 DNS，再把同一地址交给 WG 端点拨号。
+  cat >> "$HOME/agsbx/sb.json" <<EOF
+      {"inbound":[$secondary_singbox_tags],"action":"resolve","strategy":"${ip_policy_sing_strategy:-prefer_ipv4}"},
+EOF
+fi
 if [ -n "$secondary_singbox_remote_dns_tags" ]; then
 cat >> "$HOME/agsbx/sb.json" <<EOF
       {
@@ -8077,6 +9277,7 @@ cat >> "$HOME/agsbx/sb.json" <<EOF
 EOF
 start_agsbx_core sing-box || return 1
 fi
+[ "$xray_config_ready" != yes ] || start_agsbx_core xray || return 1
 }
 #============================================================
 # [第8段] 全流程安装编排主函数
@@ -8340,19 +9541,20 @@ fi
 if [ "$mierup" = yes ]; then
   validate_mita_platform || exit 1
 fi
+secondary_finalize_backends || return 1
 secondary_init_naive_sidecar || return 1
+secondary_init_bridge || return 1
+persist_secondary_proxy_state || return 1
 plan_deployment_ports || return 1
 prepare_transport_paths || return 1
 printf '端口与路径准备完成（耗时 %s 秒）。\n' "$((SECONDS - phase_started_at))"
 [ "$rep_mode" = yes ] || enable_system_bbr
 # Mieru/Mita 是独立系统服务，不参与 Xray/Sing-box 内核归属判断；设置 mieru=y（或预设 mierupt）时单独安装。
-if [ "$mierup" = yes ]; then
-  installmita || exit 1
-fi
+# Mita 若依赖本机 Sing-box，待下面的内核配置与转接就绪后再应用其代理配置。
 # Naive 二级出站的 Caddy 与 Sing-box 必须引用同一个持久化回环端口。
 secondary_init_naive_sidecar || exit 1
 # Caddy 必须先启动以获取证书；先落盘不含密码的链路契约，确保后续 sidecar 失败也能被状态页识别为失败关闭。
-secondary_protocol_is_selected naive && persist_secondary_proxy_state
+if secondary_protocol_is_selected naive; then persist_secondary_proxy_state || return 1; fi
 # NaiveProxy（Caddy）优先装配：先让 Caddy 起来并自动托管签发真实域名证书，
 # 之后 hy2/tuic/anytls/xhy2 等 TLS 节点在 setup_tls_certificate 中复用该证书（SNI=naive 域名）。
 # 仅当显式设置 naive=<域名> 时执行，与 xray/sing-box 隔离并存；Caddy 用独立端口(443)，不与代理内核抢占。
@@ -8385,6 +9587,7 @@ if [ "$vmp" = yes ] || [ "$sop" = yes ]; then
   if [ "$secondary_common_core" = sb ]; then need_singbox=yes; else need_xray=yes; fi
 fi
 secondary_protocol_is_selected naive && need_singbox=yes
+[ "$secondary_need_singbox" != yes ] || need_singbox=yes
 subscription_core=''
 if [ "$sub" = yes ]; then
   if [ "$need_xray" = yes ]; then
@@ -8423,7 +9626,8 @@ if [ "$need_xray" = yes ] || [ "$need_singbox" = yes ]; then
 fi
 
 # B 节点凭据只保留在 xr.json/sb.json；状态卡仅落盘无密码的协议、地址与端口。
-persist_secondary_proxy_state
+persist_secondary_proxy_state || return 1
+if [ "$mierup" = yes ]; then installmita || return 1; fi
 
 # 双内核 Hysteria 2 跳跃端口规则解耦挂载
 # Sing-box 驱动的 Hysteria 2：shyjpt -> port_hy2
@@ -8463,11 +9667,13 @@ local metadata tag expected actual stage asset="cloudflared-linux-$cpu"
 metadata=$(release_json cloudflare/cloudflared latest) && tag=$(release_tag "$metadata") \
   && expected=$(release_asset_digest "$metadata" "$asset") || { echo "错误：无法确认 Cloudflared 资产及 SHA256。"; return 1; }
 stage=$(mktemp "$HOME/agsbx/.cloudflared.XXXXXX") || return 1
-if ! fetch_file "https://github.com/cloudflare/cloudflared/releases/download/$tag/$asset" "$stage"; then rm -f "$stage"; return 1; fi
+echo "正在下载 Cloudflared 内核：$tag（$asset）……"
+if ! fetch_file "https://github.com/cloudflare/cloudflared/releases/download/$tag/$asset" "$stage" progress; then rm -f "$stage"; return 1; fi
 actual=$(sha256sum "$stage" | awk '{print $1}')
 if [ "$expected" != "$actual" ] || ! chmod 700 "$stage" || ! "$stage" --version >/dev/null 2>&1; then
   rm -f "$stage"; echo "错误：Cloudflared 完整性或可执行性检查失败。"; return 1
 fi
+echo "Cloudflared SHA256 校验通过 ✓ ($actual)"
 mv -f -- "$stage" "$HOME/agsbx/cloudflared" || { rm -f "$stage"; return 1; }
 fi
 if [ "$argo" = "vmpt" ]; then argoport=$(cat "$HOME/agsbx/port_vm_ws" 2>/dev/null); echo "Vmess" > "$HOME/agsbx/vlvm"; elif [ "$argo" = "vwpt" ]; then argoport=$(cat "$HOME/agsbx/port_vw" 2>/dev/null); echo "Vless" > "$HOME/agsbx/vlvm"; elif [ "$argo" = "xvargopt" ]; then argoport=$(cat "$HOME/agsbx/port_xvargo" 2>/dev/null); echo "Vlessenc-xhttp-vision" > "$HOME/agsbx/vlvm"; fi; echo "$argoport" > "$HOME/agsbx/argoport.log"
@@ -8638,6 +9844,7 @@ if secondary_saved_protocol_is_selected naive; then
     printf '%s\n' "Naive 二级链路：${C_RED}未运行${C_RESET}"
   fi
 fi
+show_secondary_backend_status
 }
 cip(){
 local cip_mode="${1:-show}" node_links='' clash_config='' subtoken='' server_host render_cert_hash special_protocol special_client
@@ -9413,17 +10620,13 @@ dns:
     - "time.*.gov"
     - "pool.ntp.org"
     - "localhost.work.weixin.qq.com"
-  default-nameserver: ["223.5.5.5", "119.29.29.29"]
+  default-nameserver: ["1.1.1.1", "8.8.8.8"]
   nameserver:
     - "https://1.1.1.1/dns-query"
     - "https://8.8.8.8/dns-query"
   proxy-server-nameserver:
-    - "https://223.5.5.5/dns-query"
-    - "https://doh.pub/dns-query"
-  nameserver-policy:
-    "geosite:cn":
-      - "https://223.5.5.5/dns-query"
-      - "https://doh.pub/dns-query"
+    - "https://1.1.1.1/dns-query"
+    - "https://8.8.8.8/dns-query"
 proxies:
 $clxy
 
@@ -9741,6 +10944,12 @@ rep_begin_transaction(){
   if [ -f "$HOME/agsbx/mita_managed" ] && [ -e /etc/mita/server.conf.pb ] && ! cp -a -- /etc/mita/server.conf.pb "$rep_backup_dir/mita/"; then
     rep_remove_backup >/dev/null 2>&1 || true; return 1
   fi
+  if [ -L /etc/systemd/system/mita.service.d ] || [ -L /etc/systemd/system/mita.service.d/agsbx-secondary.conf ]; then
+    echo "错误：Mita 二级出站依赖路径是符号链接，拒绝纳入事务快照。"; return 1
+  fi
+  if mita_secondary_dependency_owned; then
+    cp -a -- /etc/systemd/system/mita.service.d/agsbx-secondary.conf "$rep_backup_dir/mita/agsbx-secondary.conf" || return 1
+  fi
   if shortcut_is_owned "$HOME/bin/agsbx" && ! cp -a -- "$HOME/bin/agsbx" "$rep_backup_dir/shortcuts/home-bin-agsbx"; then
     rep_remove_backup >/dev/null 2>&1 || true; return 1
   fi
@@ -9838,6 +11047,17 @@ rep_restore_snapshot_files(){
     mkdir -p /etc/mita || return 1
     cp -a -- "$rep_backup_dir/mita/server.conf.pb" /etc/mita/server.conf.pb || return 1
   fi
+  if [ -L /etc/systemd/system/mita.service.d ] || [ -L /etc/systemd/system/mita.service.d/agsbx-secondary.conf ] || \
+    [ -L "$rep_backup_dir/mita/agsbx-secondary.conf" ]; then
+    echo "错误：Mita 二级出站依赖恢复路径是符号链接，已停止恢复。"; return 1
+  fi
+  if [ -f "$rep_backup_dir/mita/agsbx-secondary.conf" ]; then
+    if [ -e /etc/systemd/system/mita.service.d/agsbx-secondary.conf ] && ! mita_secondary_dependency_owned; then return 1; fi
+    mkdir -p /etc/systemd/system/mita.service.d || return 1
+    cp -a -- "$rep_backup_dir/mita/agsbx-secondary.conf" /etc/systemd/system/mita.service.d/agsbx-secondary.conf || return 1
+  elif mita_secondary_dependency_owned; then
+    rm -f -- /etc/systemd/system/mita.service.d/agsbx-secondary.conf || return 1
+  fi
 
   for unit in home-bin-agsbx usr-local-bin-agsbx usr-bin-agsbx; do
     case "$unit" in home-bin-agsbx) path="$HOME/bin/agsbx" ;; usr-local-bin-agsbx) path=/usr/local/bin/agsbx ;; usr-bin-agsbx) path=/usr/bin/agsbx ;; esac
@@ -9933,11 +11153,11 @@ rep_restore_runtime(){
     systemctl enable mita >/dev/null 2>&1 || failed=yes
   fi
 
-  if [ "$rep_old_xray_running" = yes ]; then
-    validate_generated_core_config xray && kctl start xray || failed=yes
-  fi
   if [ "$rep_old_singbox_running" = yes ]; then
     validate_generated_core_config sing-box && kctl start sb || failed=yes
+  fi
+  if [ "$rep_old_xray_running" = yes ]; then
+    validate_generated_core_config xray && kctl start xray || failed=yes
   fi
   if [ "$rep_old_argo_running" = yes ]; then
     if [ "$rep_argo_persistence_ready" = yes ]; then rep_restore_argo_runtime || failed=yes
@@ -10120,6 +11340,7 @@ kctl(){
     command -v ss >/dev/null 2>&1 || { echo "错误：缺少 ss，无法确认监听状态；未启动或重启内核。"; return 1; }
     [ -s "$cfg" ] || { echo "${name}：尚未配置。"; return 1; }
     case "$kernel" in xray|x) validate_generated_core_config xray || return 1 ;; sb|sing-box) validate_generated_core_config sing-box || return 1 ;; esac
+    case "$kernel" in xray|x) secondary_ensure_bridge xray || return 1 ;; esac
   fi
   # Sing-box 的 SIGHUP 没有完成确认；旧实例退出后新监听仍可能失败，不能以发信号成功代替重载成功。
   if [ "$action" = reload ]; then
@@ -10225,6 +11446,11 @@ kctl(){
       echo "提示：Sing-box 本地转接已启动并通过监听检查；Caddy 可转交新请求（尚未验证 B 的连通性）。"
     fi
   fi
+  if [ "$sd" = sb ] && [ "$action" = stop ]; then
+    if secondary_saved_uses_bridge xray || secondary_saved_uses_bridge mita; then
+      echo "提示：依赖 A 本机 Sing-box 转接的入站已失去 A → B 通路；不会自动改成直连目标。"
+    fi
+  fi
 }
 
 # Mita 的 systemd daemon 与 Mieru 代理监听是两层状态；启停命令控制代理本身，stop 后 daemon 保持在线以便再次 start。
@@ -10236,6 +11462,7 @@ mitactl(){
   if ! command -v mita >/dev/null 2>&1; then
     echo "Mita：系统包不存在，无法执行 ${action}。"; return 1
   fi
+  [ "$action" = stop ] || secondary_ensure_bridge mita || return 1
   if [ "$action" != stop ] && [ ! -s "$HOME/agsbx/mita.json" ]; then
     echo "Mita：已安装但没有 Mieru 配置，请先用 mieru=y agsbx rep 启用。"; return 1
   fi
@@ -10423,7 +11650,7 @@ for shortcut in "$HOME/bin/agsbx" /usr/local/bin/agsbx /usr/bin/agsbx; do
   if shortcut_is_owned "$shortcut"; then rm -f -- "$shortcut" || exit 1; fi
 done
 echo "卸载完成；未改动无归属记录的旧目录和 shell 配置。"
-echo "欢迎继续使用Airgosbx一键无交互小钢炮脚本💣" && sleep 2
+echo "欢迎继续使用Airgosbx小钢炮脚本💣" && sleep 2
 echo
 showmode
 exit
@@ -10444,7 +11671,7 @@ apply_requested_ip_policy || exit 1
 cleandel rep || exit 1
 cleanup_mieru_ufw || exit 1
 reset_mita_config || exit 1
-rm -rf "$HOME/agsbx"/{sb.json,xr.json,sbargoym.log,sbargotoken.log,argo.log,argoport.log,cdnym,name,secondary_secp,secondary_meta,direct_xh_profile,direct_vl_profile,xray_xh_profile,xray_vl_profile,xray_vx_profile,xray_vw_profile,xray_vm_profile,xray_hy_profile,xray_xvd_profile,xray_xva_profile,mita.json,mieru_user,mieru_pass,port_mieru,mieru_protocol,mieru_traffic_seed,mieru_traffic_pattern,mieru_ufw_rule,shyjpt,xhyjpt,socks_user,socks_pass,transport_vm,transport_vw,transport_vx,transport_xh,transport_xvd,transport_xva} \
+rm -rf "$HOME/agsbx"/{sb.json,xr.json,sbargoym.log,sbargotoken.log,argo.log,argoport.log,cdnym,name,secondary_secp,secondary_meta,secondary_backends,secondary_bridge_port,secondary_bridge_pass,direct_xh_profile,direct_vl_profile,xray_xh_profile,xray_vl_profile,xray_vx_profile,xray_vw_profile,xray_vm_profile,xray_hy_profile,xray_xvd_profile,xray_xva_profile,mita.json,mieru_user,mieru_pass,port_mieru,mieru_protocol,mieru_traffic_seed,mieru_traffic_pattern,mieru_ufw_rule,shyjpt,xhyjpt,socks_user,socks_pass,transport_vm,transport_vw,transport_vx,transport_xh,transport_xvd,transport_xva} \
   || { echo "错误：rep 无法清理旧的可变协议状态。"; exit 1; }
 rm -f -- "$HOME/agsbx/xdns-client.json" "$HOME/agsbx/xicmp-client.json" "$HOME/agsbx/xdns_domain" "$HOME/agsbx/xdns_resolver" \
   || { echo "错误：rep 无法清理旧 XDNS/XICMP 客户端状态。"; exit 1; }
@@ -10490,7 +11717,7 @@ migrate_subscription_persistent_startup || res_failed=1
 if [ "$res_failed" = 0 ]; then
   restart_managed_subscription_http || res_failed=1
 fi
-for component in xray sing-box caddy; do
+for component in sing-box xray caddy; do
   case "$component" in xray) cfg=xr.json; target=xray ;; sing-box) cfg=sb.json; target=sb ;; caddy) cfg=Caddyfile; target=caddy ;; esac
   [ ! -s "$HOME/agsbx/$cfg" ] || kctl restart "$target" || res_failed=1
 done
@@ -10513,7 +11740,7 @@ action="$1"; target="${2:-all}"
 case "$target" in
   all)
     lifecycle_failed=0
-    if [ "$action" = stop ]; then lifecycle_order="caddy xray sb"; else lifecycle_order="xray sb caddy"; fi
+    if [ "$action" = stop ]; then lifecycle_order="caddy xray sb"; else lifecycle_order="sb xray caddy"; fi
     for target in $lifecycle_order; do
       case "$target" in xray) cfg=xr.json ;; sb) cfg=sb.json ;; caddy) cfg=Caddyfile ;; esac
       [ -s "$HOME/agsbx/$cfg" ] || continue
