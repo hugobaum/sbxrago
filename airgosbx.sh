@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-AIRGOSBX_VERSION='V26.09.27.4'
+AIRGOSBX_VERSION='V26.09.27.5'
 # 仅在内置 XHTTP 默认参数改变时更新此标记，普通脚本版本更新不使旧命令失效。
 XHTTP_DEFAULTS_VERSION='V26.09.08.1'
 agsbxurl="${agsbxurl:-https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/main/airgosbx.sh}"
@@ -703,17 +703,27 @@ subscription_http_status(){
 }
 
 subscription_http_responds(){
-  local port="$1" authorization
+  local port="$1" authorization probe_path='/.airgosbx-subscription' anonymous_status wrong_status authenticated_status
   export -n authorization 2>/dev/null || true
-  load_subscription_auth || return 1
-  authorization=$(printf 'agsbx:%s' "$subscription_password" | safe_base64) || return 1
-  [ "$(subscription_http_status "$port" /)" = 401 ] \
-    && [ "$(subscription_http_status "$port" / YWdzYng6aW52YWxpZA==)" = 401 ] \
-    && [ "$(subscription_http_status "$port" /.airgosbx-subscription "$authorization")" = 200 ]
+  subscription_http_error=''
+  load_subscription_auth || { subscription_http_error='认证状态文件无效'; return 1; }
+  [ -f "$HOME/websbx$probe_path" ] && [ -s "$HOME/websbx$probe_path" ] && [ ! -L "$HOME/websbx$probe_path" ] || {
+    subscription_http_error='认证探测文件缺失或类型异常'; return 1;
+  }
+  authorization=$(printf 'agsbx:%s' "$subscription_password" | safe_base64) || {
+    subscription_http_error='无法准备认证请求'; return 1;
+  }
+  # 根目录没有 index.html，BusyBox 可能先返回 404；三种凭据必须检查同一个实际存在的受保护文件。
+  anonymous_status=$(subscription_http_status "$port" "$probe_path") || anonymous_status='无有效响应'
+  wrong_status=$(subscription_http_status "$port" "$probe_path" YWdzYng6aW52YWxpZA==) || wrong_status='无有效响应'
+  authenticated_status=$(subscription_http_status "$port" "$probe_path" "$authorization") || authenticated_status='无有效响应'
+  if [ "$anonymous_status" = 401 ] && [ "$wrong_status" = 401 ] && [ "$authenticated_status" = 200 ]; then return 0; fi
+  subscription_http_error="同一文件的 HTTP 状态：无密码=$anonymous_status、错误密码=$wrong_status、正确密码=$authenticated_status；预期为 401/401/200"
+  return 1
 }
 
 start_subscription_http(){
-  local port="$1" binary pid attempt
+  local port="$1" binary pid attempt failure='' subscription_http_error=''
   valid_port "$port" || { echo "错误：订阅监听端口无效。"; return 1; }
   load_subscription_auth || { echo "错误：订阅认证状态缺失或异常，拒绝启动无密码服务；请执行 agsbx res 迁移。"; return 1; }
   subscription_tree_is_owned || return 1
@@ -730,16 +740,21 @@ start_subscription_http(){
     -p "127.0.0.1:$port" -h "$HOME/websbx" 8>&- >/dev/null 2>&1 &
   pid=$!
   for attempt in {1..5}; do
-    if kill -0 "$pid" >/dev/null 2>&1 \
-      && subscription_http_is_running "$port" \
-      && subscription_http_is_listening "$port" \
-      && subscription_http_responds "$port"; then
+    if ! kill -0 "$pid" >/dev/null 2>&1; then
+      failure='启动进程已退出'; break
+    elif ! subscription_http_is_running "$port"; then
+      failure='无法识别受管 BusyBox 进程'
+    elif ! subscription_http_is_listening "$port"; then
+      failure='未监听预期的 IPv4 回环端口'
+    elif subscription_http_responds "$port"; then
       return 0
+    else
+      failure="$subscription_http_error"
     fi
     sleep 1
   done
   kill -15 "$pid" >/dev/null 2>&1 || true
-  echo "错误：BusyBox 订阅服务未通过回环监听及密码认证检查，已停止。"
+  printf '错误：BusyBox 订阅服务检查失败（%s），已停止。\n' "$failure"
   return 1
 }
 
