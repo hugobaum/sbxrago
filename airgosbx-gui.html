@@ -10,7 +10,7 @@
     与 airgosbx.sh 配套维护、同版本提交和发布。无外部资源、请求、遥测或自动持久化。
     与 airgosbx.sh 配套维护：修改 showvars、协议归属、secp、warp、rep 或 URL 生成规则时，
     同时核对 PROTOCOLS、XRAY_PROFILES、FIELDS、collect、savedCommandPlan 和 validate。
-    配套版本：V26.09.27.6。XHTTP_DEFAULTS_VERSION 与 BUILD.presetVersion 仅在默认参数变化时更新。
+    配套版本：V26.09.27.7。XHTTP_DEFAULTS_VERSION 与 BUILD.presetVersion 仅在默认参数变化时更新。
     发布前须核对配套脚本是否已同步到 GitHub main；存在未发布接口变更时 remoteAligned 保持 false。
     页面只生成文本，不执行命令。选择“对照脚本”时只读取用户明确选择的文件。
   -->
@@ -242,7 +242,7 @@
 <div class="page">
   <header class="masthead">
     <div class="brand"><div class="brand-mark" aria-hidden="true">A</div><div><div class="eyebrow">AIRGOSBX / WORKBENCH</div><h1>配置工作台</h1><p class="meta">配置连接，生成 VPS 命令。</p></div></div>
-    <div class="tools"><span id="build-version" class="meta">V26.09.27.6 · 离线单文件</span><button id="reset" type="button">重置表单</button></div>
+    <div class="tools"><span id="build-version" class="meta">V26.09.27.7 · 离线单文件</span><button id="reset" type="button">重置表单</button></div>
   </header>
   <noscript><p class="notice warning">此页面需要浏览器 JavaScript 才能生成命令。所有逻辑都在当前 HTML 内，不加载外部资源。</p></noscript>
 
@@ -285,7 +285,7 @@
       <section class="panel" id="certificates"><div class="panel-heading"><div><h2 class="step"><span class="section-index">03</span>证书与订阅</h2><p class="section-description">证书、地址与订阅</p><p class="intro">统一配置节点证书、系统 IP 策略与 HTTPS 订阅。</p></div></div><div class="policy-summary" aria-label="证书使用规则"><p><strong>REALITY</strong><span>无需申请 CA 证书。</span></p><p><strong>HTTPS 订阅</strong><span>必须使用 CA，优先复用；没有则申请。</span></p><p><strong>NaiveProxy</strong><span>Caddy 自动申请并管理域名证书。</span></p></div><div id="common-fields" class="form-grid"></div><div id="certificate-fields" class="form-grid" style="margin-top:16px"></div><div id="certificate-specific" class="form-grid" style="margin-top:16px"></div><p class="note">自签证书只用于未开启订阅的普通 TLS 节点，需要客户端建立信任或固定指纹；HTTPS 订阅不接受自签证书。SS / SOCKS5 入口仅在终端输出完整 URL，不加入订阅。VLESS Encryption 节点请使用完整 URL 或聚合订阅，脚本不会生成缺失加密参数的 Clash 节点。</p><div id="subscription-fields" class="form-grid" style="margin-top:16px"></div><div id="subscription-specific" class="form-grid" style="margin-top:16px" hidden></div><details><summary>更多变量：证书账户、跳跃端口与源地址</summary><div id="advanced-fields" class="form-grid"></div></details></section>
       </div>
 
-      <section class="panel" id="reference"><div class="panel-heading"><div><h2 class="step">维护对照</h2><p class="section-description">脚本与 GUI 的维护对照</p><p class="intro">页面以当前工作区脚本为依据；HTML 不会自动读取磁盘或远端代码。</p></div></div><div class="table-wrap"><table class="help-table"><thead><tr><th>功能位置</th><th>脚本入口</th><th>GUI 同步点</th></tr></thead><tbody><tr><td>协议及所属核心</td><td><code>showvars / ins</code></td><td>协议清单、能力标记、核心推导</td></tr><tr><td>Xray 扩展</td><td><code>各入口的 extra / mode / fm 变量</code></td><td>按协议默认方案、FM 组合与独立调参</td></tr><tr><td>CDN / Argo</td><td><code>cdnym / argo / agn / agk</code></td><td>接入条件、端口、隧道绑定</td></tr><tr><td>出站</td><td><code>warp / secpN / securlN / secuotN</code></td><td>B1–B16 的目标、独立范围及 WARP 出站互斥；兼容旧版单 B</td></tr><tr><td>订阅</td><td><code>sub / subpt / subid / subpass / res</code></td><td>路径 Token、可选密码与 VPS 独立随机密码、旧订阅迁移说明</td></tr><tr><td>命令生成与还原</td><td><code>环境变量与管理命令</code></td><td>字段映射、引用转义、旧版通用参数继承</td></tr><tr><td>生命周期</td><td><code>rep / del / upx / ups …</code></td><td>操作清单、参数过滤、影响说明</td></tr></tbody></table></div><p class="note">覆盖范围：常用部署、证书、订阅、出站和管理入口。XDNS / XICMP 使用 Xray ≥26.7.28 的专用配置与完整客户端 JSON，不加入通用链接订阅；目录中标为不可配置的核心字段未接入脚本，内部证书续期和跳跃规则恢复命令由脚本管理。端口占用、服务归属、证书和真实连通性须在 VPS 检查。</p><p class="note">对照功能只提取你选择的脚本中的变量声明与帮助条目，不执行、不上传。它能提示变量清单差异，不能代替调用逻辑审查。</p><div class="tools" style="margin-top:14px"><label class="file-label">选择 airgosbx.sh 对照<input id="source-file" class="visually-hidden" type="file" accept=".sh,text/plain"></label><button id="clear-compare" type="button" class="text-button">清除对照</button></div><p id="sync-result" class="sync-result" role="status">配套版本：V26.09.27.6；XHTTP 默认参数版本：V26.09.08.1。尚未读取其他文件。</p></section>
+      <section class="panel" id="reference"><div class="panel-heading"><div><h2 class="step">维护对照</h2><p class="section-description">脚本与 GUI 的维护对照</p><p class="intro">页面以当前工作区脚本为依据；HTML 不会自动读取磁盘或远端代码。</p></div></div><div class="table-wrap"><table class="help-table"><thead><tr><th>功能位置</th><th>脚本入口</th><th>GUI 同步点</th></tr></thead><tbody><tr><td>协议及所属核心</td><td><code>showvars / ins</code></td><td>协议清单、能力标记、核心推导</td></tr><tr><td>Xray 扩展</td><td><code>各入口的 extra / mode / fm 变量</code></td><td>按协议默认方案、FM 组合与独立调参</td></tr><tr><td>CDN / Argo</td><td><code>cdnym / argo / agn / agk</code></td><td>接入条件、端口、隧道绑定</td></tr><tr><td>出站</td><td><code>warp / secpN / securlN / secuotN</code></td><td>B1–B16 的目标、独立范围及 WARP 出站互斥；兼容旧版单 B</td></tr><tr><td>订阅</td><td><code>sub / subpt / subid / subpass / res</code></td><td>路径 Token、可选密码与 VPS 独立随机密码、旧订阅迁移说明</td></tr><tr><td>命令生成与还原</td><td><code>环境变量与管理命令</code></td><td>字段映射、引用转义、旧版通用参数继承</td></tr><tr><td>生命周期</td><td><code>rep / del / upx / ups …</code></td><td>操作清单、参数过滤、影响说明</td></tr></tbody></table></div><p class="note">覆盖范围：常用部署、证书、订阅、出站和管理入口。XDNS / XICMP 使用 Xray ≥26.7.28 的专用配置与完整客户端 JSON，不加入通用链接订阅；目录中标为不可配置的核心字段未接入脚本，内部证书续期和跳跃规则恢复命令由脚本管理。端口占用、服务归属、证书和真实连通性须在 VPS 检查。</p><p class="note">对照功能只提取你选择的脚本中的变量声明与帮助条目，不执行、不上传。它能提示变量清单差异，不能代替调用逻辑审查。</p><div class="tools" style="margin-top:14px"><label class="file-label">选择 airgosbx.sh 对照<input id="source-file" class="visually-hidden" type="file" accept=".sh,text/plain"></label><button id="clear-compare" type="button" class="text-button">清除对照</button></div><p id="sync-result" class="sync-result" role="status">配套版本：V26.09.27.7；XHTTP 默认参数版本：V26.09.08.1。尚未读取其他文件。</p></section>
     </main>
 
     <aside class="output" id="command" aria-labelledby="command-title">
@@ -321,7 +321,7 @@
 <script>
 /* 配置清单集中在这里，避免表单、架构图与命令生成各自维护一套名称。 */
 'use strict';
-const BUILD = {version:'V26.09.27.6',presetVersion:'V26.09.08.1',remoteAligned:true, source:'https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/main/airgosbx.sh', schema:'通用字段基线：Xray v26.3.27；XDNS/XICMP：v26.7.28'};
+const BUILD = {version:'V26.09.27.7',presetVersion:'V26.09.08.1',remoteAligned:true, source:'https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/main/airgosbx.sh', schema:'通用字段基线：Xray v26.3.27；XDNS/XICMP：v26.7.28'};
 const OPERATIONS = [
   ['install','安装 / 创建节点'],['rep','重建协议配置（rep）'],['restore-ip','恢复原 IP 策略'],['list','显示节点（list）'],['status','资源与流量（status）'],['update','更新脚本（update）'],['res','重启代理与隧道（res）'],['start','启动核心（start）'],['stop','停止核心（stop）'],['restart','重启核心（restart）'],['reload','重载配置（reload）'],['upx','升级 Xray（upx）'],['ups','升级 Sing-box（ups）'],['downx','降级 Xray（downx）'],['downs','降级 Sing-box（downs）'],['del','卸载（del）'],['vars','查看变量（vars）'],['cmds','查看命令（cmds）'],['help','完整帮助（help）']
 ];
@@ -586,8 +586,10 @@ const FIELDS = {
   CF_Zone_ID:{label:'Cloudflare Zone ID',placeholder:'可选'},
   CF_Key:{label:'旧版 Cloudflare Global API Key',type:'password',help:'仅兼容旧账户配置，与 CF_Email 配对；优先使用权限受限的 DNS Token。'},
   CF_Email:{label:'旧版 Cloudflare 账户邮箱',type:'email',placeholder:'与 CF_Key 配对'},
-  acmem:{label:'ACME / Caddy 邮箱',type:'email',placeholder:'可选'},
+  acmem:{label:'ACME 注册邮箱 / Caddy 邮箱',type:'email',placeholder:'ZeroSSL 自动获取 EAB 时需要',help:'ZeroSSL 首次注册若没有手填或已保存的 EAB，需填写此邮箱自动获取；完整手填 EAB 时邮箱可留空。SSL.com 首次注册也使用此邮箱。Naive/Caddy 在独立证书流程中复用此邮箱，下面的 EAB 不配置 Caddy。'},
   acmetimeout:{label:'单家 CA 超时（秒）',placeholder:'5 至 600，留空使用默认值'},
+  zerossl_eab_kid:{label:'ZeroSSL EAB Key ID',type:'password',maxLength:512,help:'可选，与 HMAC 成对填写；留空可由上方注册邮箱自动获取 EAB。仅用于脚本 HTTP-01 / DNS-01 的 ZeroSSL 备用签发。'},
+  zerossl_eab_hmac:{label:'ZeroSSL EAB HMAC',type:'password',maxLength:1024,help:'与 Key ID 配对，粘贴时不要添加空格。完整手填后无需另外填写注册邮箱；不用于 Caddy、IP 证书、TLS-ALPN-01 或外部证书。'},
   sslcom_eab_kid:{label:'SSL.com EAB Key ID',type:'password',help:'可选，仅 SSL.com 备用签发使用。'},
   sslcom_eab_hmac:{label:'SSL.com EAB HMAC',type:'password',help:'与 EAB Key ID 配对。'},
   certdns:{label:'旧证书变量兼容',options:[['','不额外设置'],['cf','certdns=cf']],help:'仅用于对照旧命令，选择 DNS-01 时不必重复设置。'},
@@ -622,7 +624,7 @@ for(let id=1;id<=SECONDARY_LIMIT;id++){
   FIELDS['secuot'+id]={...FIELDS.secuot};
   SECONDARY_KEYS.push('secp'+id,'securl'+id,'secuot'+id);
 }
-const PRIVATE_KEYS = new Set(['agk','uuid','naivepass','mierupass','securl','CF_Token','CF_Key','sslcom_eab_kid','sslcom_eab_hmac','obfs_pass','subid','subpass','fmpass','fmheader',...SECONDARY_KEYS.filter(key=>key.startsWith('securl'))]);
+const PRIVATE_KEYS = new Set(['agk','uuid','naivepass','mierupass','securl','CF_Token','CF_Key','zerossl_eab_kid','zerossl_eab_hmac','sslcom_eab_kid','sslcom_eab_hmac','obfs_pass','subid','subpass','fmpass','fmheader',...SECONDARY_KEYS.filter(key=>key.startsWith('securl'))]);
 PRIVATE_KEYS.add('xheaders64');
 for(const profile of Object.values(XRAY_PROFILES))for(const base of profile.keys)if(['fmpass','fmheader','xheaders64'].includes(base))PRIVATE_KEYS.add(profile.prefix+'_'+base);
 const UI_ONLY = new Set(['operation','scriptSource','scriptPath','scriptURL','target','version','cdnEnabled','argoEnabled','argoKind','warpEnabled','secondaryEnabled','certMode']);
@@ -1139,7 +1141,7 @@ function initialize(){
   subscriptionNotes.append(node('p','note','clmi.yaml 与 jhsub.txt 使用 HTTP Basic 认证。密码留空时，每次安装或 rep 都由 VPS 独立生成新的 64 位十六进制随机密码，不复用旧订阅或其他协议密码。部署后与订阅链接一起输出，可用 agsbx list 查看；rep 后请更新客户端密码。手填密码会写入完整部署命令，默认预览隐藏；页面不自动保存。客户端须支持订阅 HTTP Basic 认证，仅有名为 Password 的输入框不能确认兼容。请分别保存链接与密码；把凭据嵌入 URL 后，完整链接泄漏也会泄漏密码。'));
   subscriptionNotes.append(node('p','note','订阅只描述客户端连接 A 的入站，不包含 B 的地址、密码或出站映射。订阅生成不读取二级出站配置；节点、DNS 和代理组不会因二级出站开关或 B 分配而改变。Mihomo YAML 收录所有已启用且可完整导出的入站，没有符合条件的入站时不生成 YAML。Mieru 可导出 YAML；Naive 仅导出原生及 Shadowrocket 链接。SS/SOCKS5 仍只在终端输出 URL。'));
   subscriptionNotes.append(node('p','note','已有订阅可在更新脚本后运行 res 加入认证；未完成的订阅发布也可由 res 使用已保存的文件和密码继续校验，恢复不会轮换密码。update 本身不修改运行配置或重建订阅内容。已有 Naive 二级链路不支持用 rep 原地迁移。'));$('subscription-specific').append(subscriptionNotes);
-  mount('advanced-fields',['acmem','acmetimeout','CF_Account_ID','CF_Zone_ID','CF_Key','CF_Email','sslcom_eab_kid','sslcom_eab_hmac','certdns','hyjpt','agsbxurl']);
+  mount('advanced-fields',['acmem','acmetimeout','zerossl_eab_kid','zerossl_eab_hmac','CF_Account_ID','CF_Zone_ID','CF_Key','CF_Email','sslcom_eab_kid','sslcom_eab_hmac','certdns','hyjpt','agsbxurl']);
   for(const [core,label,description] of CORE_INFO){
     const group=node('details','core-group');group.dataset.core=core;group.open=false;group.id='core-'+core;
     const heading=node('summary','core-heading'),arrow=node('span','core-arrow');arrow.setAttribute('aria-hidden','true');
@@ -1279,6 +1281,15 @@ function plannedEgress(p,protocols){
   return match[1]?'WARP IPv'+match[1]+' 出站 / 其余直连':'WARP 出站';
 }
 function setFieldVisibility(key,visible){$(key).closest('[data-field]').hidden=!visible;}
+function zeroSSLEabApplicable(operation,cert,sub){
+  return ['install','rep'].includes(operation)&&(operation!=='rep'||sub)&&(['http','dns','interactive'].includes(cert)||cert==='auto'&&sub);
+}
+function zeroSSLEabProblem(kid,hmac){
+  if(Boolean(kid)!==Boolean(hmac))return {message:'ZeroSSL EAB Key ID 与 HMAC 应成对填写。',id:'zerossl_eab_kid'};
+  if(kid&&(kid.length>512||/[^A-Za-z0-9_-]/.test(kid)))return {message:'ZeroSSL EAB Key ID 应为 1 至 512 位字母、数字、下划线或短横线，不含空格或换行。',id:'zerossl_eab_kid'};
+  if(hmac&&(hmac.length>1024||/[^A-Za-z0-9_=-]/.test(hmac)||!/^[A-Za-z0-9_-]+={0,2}$/.test(hmac)))return {message:'ZeroSSL EAB HMAC 应为 1 至 1024 位字母、数字、下划线或短横线，末尾可含最多两个等号，不含空格或换行。',id:'zerossl_eab_hmac'};
+  return null;
+}
 function updateVisibility(deploy,protocols){
   $('deployment').hidden=!deploy;
   setFieldVisibility('scriptPath',value('scriptSource')==='local');setFieldVisibility('scriptURL',value('scriptSource')==='custom');
@@ -1310,6 +1321,11 @@ function updateVisibility(deploy,protocols){
   for(const key of ['acmem','acmetimeout','CF_Account_ID','CF_Zone_ID','CF_Key','CF_Email','sslcom_eab_kid','sslcom_eab_hmac','certdns'])$(key).disabled=certLocked;
   for(const key of ['CF_Account_ID','CF_Zone_ID','CF_Key','CF_Email','certdns'])$(key).disabled=certLocked||cert!=='dns';
   for(const key of ['acmetimeout','sslcom_eab_kid','sslcom_eab_hmac'])$(key).disabled=certLocked||cert==='external'||cert==='auto'&&!value('sub');
+  for(const key of ['zerossl_eab_kid','zerossl_eab_hmac']){
+    const applicable=zeroSSLEabApplicable(value('operation'),cert,value('sub'));
+    $(key).disabled=!applicable&&!value(key);
+    text('help-'+key,FIELDS[key].help+(applicable?'':' 当前方案不使用此凭据；如已填写，可在这里清空，或切换至 HTTP-01 / DNS-01 或交互选择。'));
+  }
   updateExtensions(protocols);
   const streamOne=[...$('vxmode').options].find(option=>option.value==='stream-one');streamOne.disabled=value('cdnEnabled');
   $('argo-origin-hint').hidden=!(value('argoEnabled')&&value('argo')==='xvargopt');
@@ -1388,6 +1404,7 @@ function collect(deploy,protocols){
       if(cert==='dns'){if(value('certwild'))add('certwild','y');for(const key of ['CF_Token','CF_Account_ID','CF_Zone_ID','CF_Key','CF_Email','certdns'])add(key,value(key));}
       if(cert==='external'){add('certcrt',value('certcrt'));add('certkey',value('certkey'));add('certym',value('certym').trim());}
       if(cert!=='external'&&(cert!=='auto'||value('sub'))){for(const key of ['acmetimeout','sslcom_eab_kid','sslcom_eab_hmac'])add(key,value(key));}
+      if(zeroSSLEabApplicable(value('operation'),cert,value('sub')))for(const key of ['zerossl_eab_kid','zerossl_eab_hmac'])add(key,value(key));
       add('acmem',value('acmem'));
     }
   }else if(value('operation')==='list')add('ippz',value('ippz'));
@@ -1523,6 +1540,8 @@ function parseSavedCommand(raw){
 
 function savedCommandPlan(parsed){
   const {pairs}=parsed;
+  const zeroSSLProblem=zeroSSLEabProblem(pairs.get('zerossl_eab_kid')||'',pairs.get('zerossl_eab_hmac')||'');
+  if(zeroSSLProblem)throw new Error(zeroSSLProblem.message+' 未还原，凭据未作改写。');
   const selected=new Set(),ports=new Map(),masks=new Map(),notes=[];
   const legacySecondary=['secp','securl','secuot'].some(key=>pairs.has(key));
   if(legacySecondary){
@@ -1591,6 +1610,7 @@ function savedCommandPlan(parsed){
   if(pairs.get('certym')&&fields.certMode==='auto')throw new Error('命令提供了 certym，但未说明 ACME 模式；请补充 acmemode 后再还原。');
   if(fields.certMode==='external'&&(pairs.get('acmemode')||pairs.get('certdns')))throw new Error('命令同时指定了导入证书与 ACME 方式，当前表单无法完整表示。');
   if(fields.certMode==='interactive'&&pairs.get('certym'))throw new Error('交互式证书命令同时指定了域名，请补充明确的 acmemode 以保留全部信息。');
+  if((fields.zerossl_eab_kid||fields.zerossl_eab_hmac)&&!zeroSSLEabApplicable(fields.operation,fields.certMode,fields.sub))throw new Error('命令提供了 ZeroSSL EAB，但当前操作或证书方案不会使用它；请明确选择 HTTP-01 / DNS-01 或交互申请。未还原，避免丢失凭据。');
   if(pairs.get('cfgver')==='V26.09.07')notes.push('已按旧版本保留模式选择；如需采用新的直连默认，请将 XHTTP 模式改为 auto。重新生成时使用新版本标记。');
   let legacy=false;
   for(const [id,profile] of Object.entries(XRAY_PROFILES)){
@@ -2136,6 +2156,11 @@ function validate(deploy,protocols,pairs){
   if(value('sub')&&value('subpass')&&!/^[A-Za-z0-9._~-]{16,128}$/.test(value('subpass')))error('订阅密码使用 16 至 128 位字母、数字、点、下划线、波浪线或短横线，不含空格。','subpass');
   if(value('sub')&&value('subpass')&&value('subid')&&value('subpass')===value('subid'))error('订阅密码必须与路径 Token 不同。','subpass');
   const cert=value('certMode');
+  const zeroSSLKid=value('zerossl_eab_kid'),zeroSSLHmac=value('zerossl_eab_hmac');
+  if(zeroSSLKid||zeroSSLHmac){
+    if(!zeroSSLEabApplicable(value('operation'),cert,value('sub')))error('当前操作或证书方案不使用 ZeroSSL EAB。请选择 HTTP-01 / DNS-01 或交互申请，或清空这两项凭据。','certMode');
+    const problem=zeroSSLEabProblem(zeroSSLKid,zeroSSLHmac);if(problem)error(problem.message,problem.id);
+  }
   if(value('operation')!=='rep'||value('sub')){
     if(value('sub')&&cert==='auto')warn('订阅优先复用已有公信 CA；没有时在 VPS 申请。无人值守执行请明确选择 IP 或域名证书方案。','certMode');
     if(value('sub')&&value('operation')==='rep')warn('此次 rep 可能把共享 TLS 证书从自签升级为 CA，完成后请重新导入 TLS 节点和订阅地址。','certMode');

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-AIRGOSBX_VERSION='V26.09.27.6'
+AIRGOSBX_VERSION='V26.09.27.7'
 # 仅在内置 XHTTP 默认参数改变时更新此标记，普通脚本版本更新不使旧命令失效。
 XHTTP_DEFAULTS_VERSION='V26.09.08.1'
 agsbxurl="${agsbxurl:-https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/main/airgosbx.sh}"
-# SSL.com EAB 仅在 ACME 注册步骤按需读取，禁止无关子进程继承敏感凭据。
-export -n sslcom_eab_kid sslcom_eab_hmac fmpass fmheader \
+# EAB 仅在对应 CA 的 ACME 注册步骤按需读取，禁止无关子进程继承敏感凭据。
+export -n zerossl_eab_kid zerossl_eab_hmac sslcom_eab_kid sslcom_eab_hmac fmpass fmheader \
   vl_fmpass xh_fmpass vx_fmpass vw_fmpass vm_fmpass hy_fmpass \
   vx_fmheader vw_fmheader vm_fmheader hy_fmheader 2>/dev/null || true
 export -n xheaders64 xh_xheaders64 vx_xheaders64 xvd_xheaders64 xva_xheaders64 2>/dev/null || true
@@ -1192,8 +1192,11 @@ vrow "certym"   "域名；兼容旧用法：单独设置时默认 HTTP-01"
 vrow "certwild" "DNS-01 时填 y，同时申请根域名与泛域名"
 vrow "certcrt"  "外部导入：证书(fullchain)文件路径"
 vrow "certkey"  "外部导入：私钥文件路径"
-vrow "acmem"    "ACME 注册邮箱（ZeroSSL 备用签发需要）"
+vrow "acmem"    "ACME / Caddy 邮箱（ZeroSSL 无 EAB 时用于自动获取；已有 EAB 可留空）"
 vrow "acmetimeout" "单家 CA 签发超时秒数（默认 HTTP/IP/ALPN 60、DNS 120；范围 5-600）"
+vrow "zerossl_eab_kid" "ZeroSSL 备用 CA 的 EAB Key ID（可选，与 HMAC 成对）"
+vrow "zerossl_eab_hmac" "ZeroSSL 备用 CA 的 EAB HMAC Key（可选，填写后无需邮箱自动获取）"
+echo "             ZeroSSL EAB 仅供 acme.sh 的 HTTP-01/DNS-01 备用流程，不配置 Caddy 自动证书。"
 vrow "sslcom_eab_kid" "SSL.com 第三备用 CA 的 EAB Key ID（可选）"
 vrow "sslcom_eab_hmac" "SSL.com 第三备用 CA 的 EAB HMAC Key（可选）"
 vrow "certdns"  "兼容旧用法：填 cf 走 Cloudflare DNS-01（免占用80/443端口）"
@@ -1962,6 +1965,27 @@ valid_plain_text(){
   [[ ! "$value" =~ [[:cntrl:]] ]]
 }
 
+validate_zerossl_eab_inputs(){
+  local LC_ALL=C requested
+  [ -n "${zerossl_eab_kid:-}${zerossl_eab_hmac:-}" ] || return 0
+  [[ "${zerossl_eab_kid:-}" =~ ^[A-Za-z0-9_-]{1,512}$ ]] \
+    && [ "${#zerossl_eab_hmac}" -le 1024 ] \
+    && [[ "${zerossl_eab_hmac:-}" =~ ^[A-Za-z0-9_-]+={0,2}$ ]] || {
+    echo "错误：ZeroSSL EAB 必须成对填写；Key ID 为 1-512 位安全字符，HMAC 为最长 1024 位 Base64URL 字符串。"
+    return 1
+  }
+  requested=$(printf '%s' "${acmemode:-}" | tr -d '[:space:]' | tr A-Z a-z)
+  if [ -z "$requested" ]; then
+    case "$(printf '%s' "${certdns:-}" | tr -d '[:space:]' | tr A-Z a-z)" in cf|cloudflare) requested=dns ;; esac
+    [ -z "$requested" ] && [ -n "${certip:-}" ] && requested=ip
+  fi
+  case "$requested" in 1|ip-http) requested=ip ;; 3|tls-alpn) requested=alpn ;; esac
+  if [ -n "${certcrt:-}${certkey:-}" ] || [ "$requested" = ip ] || [ "$requested" = alpn ]; then
+    echo "错误：ZeroSSL EAB 只用于 HTTP-01/DNS-01 的备用签发，不适用于当前证书方式。"
+    return 1
+  fi
+}
+
 deployment_port_specs(){
   printf '%s\n' \
     'vlp:port_vl_re:port_vl_re:tcp' 'xhp:port_xh:port_xh:tcp' 'vxp:port_vx:port_vx:tcp' \
@@ -1975,6 +1999,7 @@ deployment_port_specs(){
 
 validate_deployment_inputs(){
   local flag variable file network value key has_link_protocol=no
+  validate_zerossl_eab_inputs || return 1
   while IFS=: read -r flag variable file network; do
     [ "${!flag}" = yes ] || continue
     value=${!variable}
@@ -2491,6 +2516,8 @@ export certcrt=${certcrt:-''}
 export certkey=${certkey:-''}
 export acmem=${acmem:-''}
 export acmetimeout=${acmetimeout:-''}
+zerossl_eab_kid=${zerossl_eab_kid:-''}
+zerossl_eab_hmac=${zerossl_eab_hmac:-''}
 sslcom_eab_kid=${sslcom_eab_kid:-''}
 sslcom_eab_hmac=${sslcom_eab_hmac:-''}
 export certdns=${certdns:-''}
@@ -5541,6 +5568,31 @@ case "$requested" in
     ;;
 esac
 }
+# 只更新 ZeroSSL 自己的 EAB 字段，保留既有账户记录；不把密钥放进外部进程参数或环境。
+persist_zerossl_eab(){
+  local directory="$HOME/agsbx" part path temporary
+  validate_zerossl_eab_inputs || return 1
+  [ -n "$zerossl_eab_kid" ] && [ -n "$zerossl_eab_hmac" ] || return 1
+  for part in acme ca acme.zerossl.com v2 DV90; do
+    directory="$directory/$part"
+    [ ! -L "$directory" ] || { echo "错误：ZeroSSL 账户目录不能是符号链接。"; return 1; }
+    if [ -e "$directory" ]; then
+      [ -d "$directory" ] && [ "$(stat -c '%u' "$directory")" = 0 ] || return 1
+    else mkdir -m 700 "$directory" || return 1; fi
+    chmod 700 "$directory" || return 1
+  done
+  path="$directory/ca.conf"
+  [ ! -L "$path" ] && { [ ! -e "$path" ] || { [ -f "$path" ] && [ "$(stat -c '%u' "$path")" = 0 ]; }; } || return 1
+  temporary=$(mktemp "$directory/.agsbx-eab.XXXXXX") || return 1
+  if [ -f "$path" ] && ! sed '/^CA_EAB_KEY_ID=/d; /^CA_EAB_HMAC_KEY=/d' "$path" > "$temporary"; then
+    rm -f -- "$temporary"; return 1
+  fi
+  if ! printf "\nCA_EAB_KEY_ID='%s'\nCA_EAB_HMAC_KEY='%s'\n" "$zerossl_eab_kid" "$zerossl_eab_hmac" >> "$temporary" \
+    || ! chmod 600 "$temporary" || ! mv -f -- "$temporary" "$path"; then
+    rm -f -- "$temporary"; return 1
+  fi
+}
+
 setup_acme_certificate(){
 local mode="$1"
 local acme_script="$HOME/agsbx/acme.sh"
@@ -5552,6 +5604,10 @@ local input identifier source required_port reload_cmd cf_prompted=no index
 local ca_index ca_server ca_label ca_status
 local ca_timeout register_timeout=15 selected_ca="" default_ca_server zerossl_ca_conf sslcom_ca_conf ca_succeeded=no
 local -a identifiers issue_args register_args ca_servers ca_labels
+validate_zerossl_eab_inputs || return 1
+if [ -n "${zerossl_eab_kid:-}" ]; then
+  case "$mode" in http|dns) ;; *) echo "错误：当前 ACME 方式不使用 ZeroSSL，未处理 EAB 凭据。"; return 1 ;; esac
+fi
 mkdir -p "$HOME/agsbx/acmecer" "$acme_home"
 chmod 700 "$acme_home" 2>/dev/null
 case "$mode" in
@@ -5709,7 +5765,7 @@ case "$mode" in
     ca_labels=("Let's Encrypt" "ZeroSSL" "SSL.com")
     echo "ACME CA优先级：Let's Encrypt → ZeroSSL → SSL.com；注册上限 ${register_timeout} 秒，签发上限 ${ca_timeout} 秒。"
     if [ -z "$acmem" ] && [ -t 0 ]; then
-      printf "请输入 ACME 注册邮箱（ZeroSSL/SSL.com 备用需要；回车则缺少凭据时跳过）：" >&2
+      printf "请输入 ACME 注册邮箱（ZeroSSL 自动获取 EAB、SSL.com 备用使用；已提供 ZeroSSL EAB 可回车）：" >&2
       read -r acmem
       acmem=$(printf '%s' "$acmem" | tr -d '[:space:]')
     fi
@@ -5723,9 +5779,15 @@ for ca_index in "${!ca_servers[@]}"; do
 
   if [ "$ca_server" = zerossl ]; then
     zerossl_ca_conf="$acme_home/ca/acme.zerossl.com/v2/DV90/ca.conf"
-    if [ -z "$acmem" ] && ! grep -q '^CA_EAB_KEY_ID=' "$zerossl_ca_conf" 2>/dev/null; then
-      echo "跳过 ZeroSSL：首次注册未提供 acmem，无法自动获取 EAB 凭据。"
-      printf '\n===== 跳过 ZeroSSL：首次注册缺少 acmem =====\n' >> "$acme_log"
+    if [ -n "${zerossl_eab_kid:-}" ]; then
+      persist_zerossl_eab || { echo "错误：无法安全保存 ZeroSSL EAB 凭据。"; return 1; }
+      unset zerossl_eab_kid zerossl_eab_hmac
+      echo "ZeroSSL：使用手动提供的 EAB 凭据（不回显）。"
+    fi
+    if [ -z "$acmem" ] && ! { grep -Eq "^CA_EAB_KEY_ID='[^']+'$" "$zerossl_ca_conf" 2>/dev/null \
+      && grep -Eq "^CA_EAB_HMAC_KEY='[^']+'$" "$zerossl_ca_conf" 2>/dev/null; }; then
+      echo "跳过 ZeroSSL：没有完整 EAB 凭据，也未提供 acmem 用于自动获取。"
+      printf '\n===== 跳过 ZeroSSL：缺少 EAB 凭据与注册邮箱 =====\n' >> "$acme_log"
       continue
     fi
   fi
@@ -5833,6 +5895,7 @@ for ca_index in "${!ca_servers[@]}"; do
     echo "$ca_label 签发失败，切换下一家 CA。"
   fi
 done
+unset zerossl_eab_kid zerossl_eab_hmac
 chmod 600 "$acme_home/account.conf" 2>/dev/null
 if [ "$ca_succeeded" != yes ]; then
   echo "错误：所有可用 ACME CA 均未完成签发，详情见 $acme_log"
@@ -11422,7 +11485,7 @@ rep_validate_preserved_scope(){
   local option value
   rep_manage_certificate=no
   [ "$sub" != yes ] || rep_manage_certificate=yes
-  for option in naive naiveuser naivepass naivebuild naivesite alns acmemode certip certym certwild certcrt certkey acmem acmetimeout certdns CF_Token CF_Key CF_Email CF_Account_ID CF_Zone_ID sslcom_eab_kid sslcom_eab_hmac; do
+  for option in naive naiveuser naivepass naivebuild naivesite alns acmemode certip certym certwild certcrt certkey acmem acmetimeout certdns CF_Token CF_Key CF_Email CF_Account_ID CF_Zone_ID zerossl_eab_kid zerossl_eab_hmac sslcom_eab_kid sslcom_eab_hmac; do
     if [ "$rep_manage_certificate" = yes ]; then
       case "$option" in naive|naiveuser|naivepass|naivebuild|naivesite) ;; *) continue ;; esac
     fi
