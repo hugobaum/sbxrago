@@ -10,7 +10,7 @@
     与 airgosbx.sh 配套维护、同版本提交和发布。无外部资源、请求、遥测或自动持久化。
     与 airgosbx.sh 配套维护：修改 showvars、协议归属、secp、warp、rep 或 URL 生成规则时，
     同时核对 PROTOCOLS、XRAY_PROFILES、FIELDS、collect、savedCommandPlan 和 validate。
-    配套版本：V26.09.26.1。XHTTP_DEFAULTS_VERSION 与 BUILD.presetVersion 仅在默认参数变化时更新。
+    配套版本：V26.09.27.1。XHTTP_DEFAULTS_VERSION 与 BUILD.presetVersion 仅在默认参数变化时更新。
     发布前须核对配套脚本是否已同步到 GitHub main；存在未发布接口变更时 remoteAligned 保持 false。
     页面只生成文本，不执行命令。选择“对照脚本”时只读取用户明确选择的文件。
   -->
@@ -237,14 +237,14 @@
 <div class="page">
   <header class="masthead">
     <div class="brand"><div class="brand-mark" aria-hidden="true">A</div><div><div class="eyebrow">AIRGOSBX / WORKBENCH</div><h1>配置工作台</h1><p class="meta">配置连接，生成 VPS 命令。</p></div></div>
-    <div class="tools"><span id="build-version" class="meta">V26.09.26.1 · 离线单文件</span><button id="reset" type="button">重置表单</button></div>
+    <div class="tools"><span id="build-version" class="meta">V26.09.27.1 · 离线单文件</span><button id="reset" type="button">重置表单</button></div>
   </header>
   <noscript><p class="notice warning">此页面需要浏览器 JavaScript 才能生成命令。所有逻辑都在当前 HTML 内，不加载外部资源。</p></noscript>
 
   <section id="architecture" class="architecture" aria-labelledby="architecture-title">
-    <div class="section-kicker"><h2 id="architecture-title">连接概览</h2><p>接入、核心与出站，随配置同步更新。</p></div>
+    <div class="section-kicker"><h2 id="architecture-title">连接概览</h2><p>入站、核心与出站，随配置同步更新。</p></div>
     <div class="flow">
-      <div class="flow-cell"><h3 class="flow-label"><span class="flow-index">01</span> 接入</h3><p class="flow-subtitle">客户端连接 VPS</p><div class="chips"><span id="flow-direct" class="chip">直连</span><span id="flow-cdn" class="chip">CDN</span><span id="flow-argo" class="chip">Cloudflare Argo Tunnel</span></div><p id="access-detail" class="flow-detail"></p></div>
+      <div class="flow-cell"><h3 class="flow-label"><span class="flow-index">01</span> 入站</h3><p class="flow-subtitle">客户端连接 VPS</p><div class="chips"><span id="flow-direct" class="chip">直连</span><span id="flow-cdn" class="chip">CDN</span><span id="flow-argo" class="chip">Cloudflare Argo Tunnel</span></div><p id="access-detail" class="flow-detail"></p></div>
       <div class="flow-arrow" aria-hidden="true"></div>
       <div class="flow-cell"><h3 class="flow-label"><span class="flow-index">02</span> 核心</h3><p class="flow-subtitle">按协议自动配置</p><div id="core-chips" class="chips"></div><p id="core-detail" class="flow-detail"></p></div>
       <div class="flow-arrow" aria-hidden="true"></div>
@@ -256,11 +256,11 @@
   <form id="builder" autocomplete="off" novalidate>
   <div class="layout">
     <main class="editor">
-      <nav class="nav" aria-label="配置区域"><a href="#task"><span aria-hidden="true">00</span>操作</a><a href="#protocols"><span aria-hidden="true">01</span>协议与接入</a><a href="#outbound"><span aria-hidden="true">02</span>出站</a><a href="#certificates"><span aria-hidden="true">03</span>证书与系统</a><a href="#command">生成命令</a><a href="#reference">维护对照</a></nav>
+      <nav class="nav" aria-label="配置区域"><a href="#task"><span aria-hidden="true">00</span>操作</a><a href="#protocols"><span aria-hidden="true">01</span>协议与入站</a><a href="#outbound"><span aria-hidden="true">02</span>出站</a><a href="#certificates"><span aria-hidden="true">03</span>证书与系统</a><a href="#command">生成命令</a><a href="#reference">维护对照</a></nav>
       <section class="panel" id="task"><div class="panel-heading"><div><h2 class="step"><span class="section-index">00</span>操作</h2><p class="section-description">这条命令要做什么</p></div></div><div id="task-fields" class="form-grid"></div><div id="source-fields" class="form-grid" style="margin-top:16px"></div><p id="source-hint" class="notice"></p><div id="management-fields" class="form-grid" style="margin-top:16px" hidden></div><p id="operation-hint" class="note"></p></section>
 
       <div id="deployment">
-      <section class="panel" id="protocols"><div class="panel-heading"><div><h2 class="step"><span class="section-index">01</span>协议与接入</h2><p class="section-description">选择协议与接入方式</p><p class="intro">可以组合多种协议。端口留空使用脚本默认的随机分配。</p></div><span id="selected-count" class="chip active">0 个已选</span></div>
+      <section class="panel" id="protocols"><div class="panel-heading"><div><h2 class="step"><span class="section-index">01</span>协议与入站</h2><p class="section-description">选择协议与入站方式</p><p class="intro">可以组合多种协议。端口留空使用脚本默认的随机分配。</p></div><span id="selected-count" class="chip active">0 个已选</span></div>
         <div id="access-fields" class="form-grid"></div><div id="cdn-fields" class="form-grid" style="margin-top:14px" hidden></div><div id="argo-fields" class="form-grid" style="margin-top:14px" hidden></div>
         <details><summary>这三个接入入口有什么区别</summary><p class="intro">直连直接访问 VPS 的协议监听端口。CDN 在前面代理 HTTP 流量，多个受支持协议共用 cdnym。Argo 由 cloudflared 主动建立隧道，本脚本一次绑定 vmpt、vwpt 或 xvargopt 中的一种。CDN 与 Argo 可以和其他直连节点并存。</p></details>
         <div class="search-row" style="margin-top:20px"><input id="search" type="search" aria-label="搜索协议、核心或变量" placeholder="搜索协议、核心或变量"><div class="filters" role="group" aria-label="按接入能力筛选"><button type="button" data-filter="all" aria-pressed="true">全部</button><button type="button" data-filter="direct" aria-pressed="false">直连</button><button type="button" data-filter="cdn" aria-pressed="false">CDN</button><button type="button" data-filter="argo" aria-pressed="false">Argo</button></div></div>
@@ -271,12 +271,12 @@
         <p id="argo-origin-hint" class="notice" hidden></p>
       </section>
 
-      <section class="panel" id="outbound"><div class="panel-heading"><div><h2 class="step"><span class="section-index">02</span>出站</h2><p class="section-description">选择 A → B 的出站路径</p><p class="intro">客户端 → A 的入口协议与 A → B 的代理协议分别配置。默认直连；WARP 可与二级代理并用，选入 secp 的流量优先走 B。</p></div></div><div id="outbound-fields" class="form-grid"></div><div id="warp-fields" class="form-grid" style="margin-top:14px" hidden></div><div id="secondary-panel" hidden><div id="secondary-fields" class="form-grid" style="margin-top:14px"></div><div class="routing-choice"><span class="meta">A 的哪些入站走 B</span><button type="button" class="small-button" data-secp="all">全部可用</button><button type="button" class="small-button" data-secp="xray">Xray</button><button type="button" class="small-button" data-secp="singbox">Sing-box</button><button type="button" class="small-button" data-secp="none">清空</button></div><div id="secondary-list" class="secondary-list"></div><p class="note">B 可为自建或购买的代理，其完整链接填入 securl。A 的当前核心优先原生连接 B；需要时经 A 本机 Sing-box 转接，最终由 VPS 校验实际核心能力。Naive 的 Caddy 经本机 Sing-box 转交，仍只承载目标 TCP。B 地址保留域名动态解析；普通代理把目标域名交给 B，WireGuard 的目标域名则需要在 A 解析。第三方节点的 DNS、UDP 支持和访问限制由供应商决定，链接本身不能证明。SOCKS 的 udp=0 仅转发目标 TCP，udp=1 允许尝试 UDP；SS UoT 需要 B 支持 v2。现有部署不会随脚本更新自动迁移。</p></div></section>
+      <section class="panel" id="outbound"><div class="panel-heading"><div><h2 class="step"><span class="section-index">02</span>出站</h2><p class="section-description">选择 A → B 的出站路径</p><p class="intro">客户端 → A 的入口协议与 A → B 的代理协议分别配置。默认直连；WARP 可与二级代理并用，选入 secp 的流量优先走 B。</p></div></div><div id="outbound-fields" class="form-grid"></div><div id="warp-fields" class="form-grid" style="margin-top:14px" hidden></div><div id="secondary-panel" hidden><div id="secondary-fields" class="form-grid" style="margin-top:14px"></div><div class="routing-choice"><span class="meta">A 的哪些入站走 B</span><button type="button" class="small-button" data-secp="all">全部可用</button><button type="button" class="small-button" data-secp="xray">Xray</button><button type="button" class="small-button" data-secp="singbox">Sing-box</button><button type="button" class="small-button" data-secp="none">清空</button></div><div id="secondary-list" class="secondary-list"></div><p class="note">B 可为自建或购买的代理，其完整链接填入 securl。普通代理把目标域名交给 B 解析；WireGuard 的目标 DNS 经隧道。目标解析失败不回退到 A 直连查询。B 自身域名保留动态解析，其连接所需的引导查询独立留在 A。A 的核心能够完整承载参数时优先原生连接 B，否则经本机 Sing-box 转接，最终由 VPS 校验。Mita 对允许目标 UDP 的 SOCKS5 上游优先原生连接，其他情况经本机 Sing-box；Naive 的 Caddy 仍经本机 Sing-box，仅承载目标 TCP。第三方节点的 DNS、UDP 支持和访问限制由供应商决定。SOCKS 的 udp=0 仅转发目标 TCP；SS UoT 需要 B 支持 v2。现有部署不会随脚本更新自动迁移。</p></div></section>
 
       <section class="panel" id="certificates"><div class="panel-heading"><div><h2 class="step"><span class="section-index">03</span>证书与订阅</h2><p class="section-description">证书、地址与订阅</p><p class="intro">统一配置节点证书、系统 IP 策略与 HTTPS 订阅。</p></div></div><div class="policy-summary" aria-label="证书使用规则"><p><strong>REALITY</strong><span>无需申请 CA 证书。</span></p><p><strong>HTTPS 订阅</strong><span>必须使用 CA，优先复用；没有则申请。</span></p><p><strong>NaiveProxy</strong><span>Caddy 自动申请并管理域名证书。</span></p></div><div id="common-fields" class="form-grid"></div><div id="certificate-fields" class="form-grid" style="margin-top:16px"></div><div id="certificate-specific" class="form-grid" style="margin-top:16px"></div><p class="note">自签证书只用于未开启订阅的普通 TLS 节点，需要客户端建立信任或固定指纹；HTTPS 订阅不接受自签证书。SS / SOCKS5 入口仅在终端输出完整 URL，不加入订阅。VLESS Encryption 节点请使用完整 URL 或聚合订阅，脚本不会生成缺失加密参数的 Clash 节点。</p><div id="subscription-fields" class="form-grid" style="margin-top:16px"></div><div id="subscription-specific" class="form-grid" style="margin-top:16px" hidden></div><details><summary>更多变量：证书账户、跳跃端口与源地址</summary><div id="advanced-fields" class="form-grid"></div></details></section>
       </div>
 
-      <section class="panel" id="reference"><div class="panel-heading"><div><h2 class="step">维护对照</h2><p class="section-description">脚本与 GUI 的维护对照</p><p class="intro">页面以当前工作区脚本为依据；HTML 不会自动读取磁盘或远端代码。</p></div></div><div class="table-wrap"><table class="help-table"><thead><tr><th>功能位置</th><th>脚本入口</th><th>GUI 同步点</th></tr></thead><tbody><tr><td>协议及所属核心</td><td><code>showvars / ins</code></td><td>协议清单、能力标记、核心推导</td></tr><tr><td>Xray 扩展</td><td><code>各入口的 extra / mode / fm 变量</code></td><td>按协议默认方案、FM 组合与独立调参</td></tr><tr><td>CDN / Argo</td><td><code>cdnym / argo / agn / agk</code></td><td>接入条件、端口、隧道绑定</td></tr><tr><td>出站</td><td><code>warp / secp / securl / secuot</code></td><td>WARP 规则、二级代理目标及范围</td></tr><tr><td>命令生成与还原</td><td><code>环境变量与管理命令</code></td><td>字段映射、引用转义、旧版通用参数继承</td></tr><tr><td>生命周期</td><td><code>rep / del / upx / ups …</code></td><td>操作清单、参数过滤、影响说明</td></tr></tbody></table></div><p class="note">覆盖范围：常用部署、证书、订阅、出站和管理入口。XDNS / XICMP 使用 Xray ≥26.7.28 的专用配置与完整客户端 JSON，不加入通用链接订阅；目录中标为不可配置的核心字段未接入脚本，内部证书续期和跳跃规则恢复命令由脚本管理。端口占用、服务归属、证书和真实连通性须在 VPS 检查。</p><p class="note">对照功能只提取你选择的脚本中的变量声明与帮助条目，不执行、不上传。它能提示变量清单差异，不能代替调用逻辑审查。</p><div class="tools" style="margin-top:14px"><label class="file-label">选择 airgosbx.sh 对照<input id="source-file" class="visually-hidden" type="file" accept=".sh,text/plain"></label><button id="clear-compare" type="button" class="text-button">清除对照</button></div><p id="sync-result" class="sync-result" role="status">配套版本：V26.09.26.1；XHTTP 默认参数版本：V26.09.08.1。尚未读取其他文件。</p></section>
+      <section class="panel" id="reference"><div class="panel-heading"><div><h2 class="step">维护对照</h2><p class="section-description">脚本与 GUI 的维护对照</p><p class="intro">页面以当前工作区脚本为依据；HTML 不会自动读取磁盘或远端代码。</p></div></div><div class="table-wrap"><table class="help-table"><thead><tr><th>功能位置</th><th>脚本入口</th><th>GUI 同步点</th></tr></thead><tbody><tr><td>协议及所属核心</td><td><code>showvars / ins</code></td><td>协议清单、能力标记、核心推导</td></tr><tr><td>Xray 扩展</td><td><code>各入口的 extra / mode / fm 变量</code></td><td>按协议默认方案、FM 组合与独立调参</td></tr><tr><td>CDN / Argo</td><td><code>cdnym / argo / agn / agk</code></td><td>接入条件、端口、隧道绑定</td></tr><tr><td>出站</td><td><code>warp / secp / securl / secuot</code></td><td>WARP 规则、二级代理目标及范围</td></tr><tr><td>命令生成与还原</td><td><code>环境变量与管理命令</code></td><td>字段映射、引用转义、旧版通用参数继承</td></tr><tr><td>生命周期</td><td><code>rep / del / upx / ups …</code></td><td>操作清单、参数过滤、影响说明</td></tr></tbody></table></div><p class="note">覆盖范围：常用部署、证书、订阅、出站和管理入口。XDNS / XICMP 使用 Xray ≥26.7.28 的专用配置与完整客户端 JSON，不加入通用链接订阅；目录中标为不可配置的核心字段未接入脚本，内部证书续期和跳跃规则恢复命令由脚本管理。端口占用、服务归属、证书和真实连通性须在 VPS 检查。</p><p class="note">对照功能只提取你选择的脚本中的变量声明与帮助条目，不执行、不上传。它能提示变量清单差异，不能代替调用逻辑审查。</p><div class="tools" style="margin-top:14px"><label class="file-label">选择 airgosbx.sh 对照<input id="source-file" class="visually-hidden" type="file" accept=".sh,text/plain"></label><button id="clear-compare" type="button" class="text-button">清除对照</button></div><p id="sync-result" class="sync-result" role="status">配套版本：V26.09.27.1；XHTTP 默认参数版本：V26.09.08.1。尚未读取其他文件。</p></section>
     </main>
 
     <aside class="output" id="command" aria-labelledby="command-title">
@@ -312,7 +312,7 @@
 <script>
 /* 配置清单集中在这里，避免表单、架构图与命令生成各自维护一套名称。 */
 'use strict';
-const BUILD = {version:'V26.09.26.1',presetVersion:'V26.09.08.1',remoteAligned:true, source:'https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/main/airgosbx.sh', schema:'通用字段基线：Xray v26.3.27；XDNS/XICMP：v26.7.28'};
+const BUILD = {version:'V26.09.27.1',presetVersion:'V26.09.08.1',remoteAligned:true, source:'https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/main/airgosbx.sh', schema:'通用字段基线：Xray v26.3.27；XDNS/XICMP：v26.7.28'};
 const OPERATIONS = [
   ['install','安装 / 创建节点'],['rep','重建协议配置（rep）'],['restore-ip','恢复原 IP 策略'],['list','显示节点（list）'],['status','资源与流量（status）'],['update','更新脚本（update）'],['res','重启代理与隧道（res）'],['start','启动核心（start）'],['stop','停止核心（stop）'],['restart','重启核心（restart）'],['reload','重载配置（reload）'],['upx','升级 Xray（upx）'],['ups','升级 Sing-box（ups）'],['downx','降级 Xray（downx）'],['downs','降级 Sing-box（downs）'],['del','卸载（del）'],['vars','查看变量（vars）'],['cmds','查看命令（cmds）'],['help','完整帮助（help）']
 ];
@@ -560,7 +560,7 @@ const FIELDS = {
   warpEnabled:{label:'经 Cloudflare WARP 出站',type:'checkbox'},
   warp:{label:'WARP 作用范围',options:WARP_RULES,value:'sx',help:'s 表示 Sing-box，x 表示 Xray；4/6 在这些规则中选择目标 IP 族。'},
   secondaryEnabled:{label:'配置 A：经 B 服务器二级代理',type:'checkbox',help:'只选择 A 接受客户端连接的协议。B 可使用本脚本部署，也可使用服务商提供的代理；将完整链接粘贴到 securl。'},
-  securl:{label:'A → B 完整代理 URL',type:'password',placeholder:'SS、SOCKS、HTTP(S)、VLESS、Trojan、Hysteria2 或 WireGuard 链接',help:'此链接决定 A → B 的协议，与客户端 → A 的入口协议分别配置。支持 IP、域名、SOCKS 的 Base64 / Base64URL 和百分号编码、remarks 备注；最多 4096 字符，留空在 VPS 隐藏输入。Base64 是编码，不是加密。A 保留 B 域名并在运行时解析；这里的 B 地址与 Naive 客户端连接 A 的入口域名不同。第三方节点的目标 DNS 和访问限制由供应商决定。页面只在本地解析文本，不查询 DNS 或连接代理。'},
+  securl:{label:'A → B 完整代理 URL',type:'password',placeholder:'SS、SOCKS、HTTP(S)、VLESS、Trojan、Hysteria2 或 WireGuard 链接',help:'此链接决定 A → B 的协议，与客户端 → A 的入口协议分别配置。支持 IP、域名、SOCKS 的 Base64 / Base64URL 和百分号编码、remarks 备注；最多 4096 字符，留空在 VPS 隐藏输入。Base64 是编码，不是加密。普通代理将目标域名交给 B 解析；WireGuard 的目标 DNS 经隧道，失败不回退到 A 直连解析目标。B 自身域名的引导查询独立留在 A；这与 Naive 客户端连接 A 的入口域名不同。第三方节点的访问限制由供应商决定。页面只在本地解析文本，不查询 DNS 或连接代理。'},
   secuot:{label:'SS 的 UDP over TCP',options:[['off','关闭（默认，使用原生 UDP）'],['on','开启 UoT v2']],value:'off',help:'仅适用于 SS 上游，B 须支持 UoT v2。需要时由 A 本机 Sing-box 承载；Xray 入站可经本机转接使用。Naive 的 Caddy 只转交目标 TCP。'},
   name:{label:'节点名称前缀',placeholder:'例如：东京-',help:'只影响生成的节点名称。'},
   uuid:{label:'UUID / 通用密码',type:'password',placeholder:'留空自动生成',help:'VLESS / VMess 请用有效 UUID；部分协议仍复用它作密码。SOCKS 凭据、传输路径和订阅 Token 独立生成。'},
@@ -582,7 +582,7 @@ const FIELDS = {
   sslcom_eab_kid:{label:'SSL.com EAB Key ID',type:'password',help:'可选，仅 SSL.com 备用签发使用。'},
   sslcom_eab_hmac:{label:'SSL.com EAB HMAC',type:'password',help:'与 EAB Key ID 配对。'},
   certdns:{label:'旧证书变量兼容',options:[['','不额外设置'],['cf','certdns=cf']],help:'仅用于对照旧命令，选择 DNS-01 时不必重复设置。'},
-  sub:{label:'启用 HTTPS 订阅分享（必须使用 CA 证书）',type:'checkbox',help:'SS/SOCKS5 仅在终端输出完整 URL，不加入聚合或 Clash/Mihomo 订阅。clmi.yaml 导出可完整表示的 Mihomo 节点（含 Mieru，不含 Naive）；jhsub.txt 包含 Naive 原生及 Shadowrocket 链接。域名证书输出域名链接，IP 证书输出 IP 链接；CDN 域名仅在证书覆盖时使用。已有订阅不会因更新脚本自动改变，须在 VPS 重新发布；已有 Naive 二级链路不支持 rep，不能用它原地迁移。'},
+  sub:{label:'启用 HTTPS 订阅分享（必须使用 CA 证书）',type:'checkbox',help:'启用二级代理时，完整 Mihomo 订阅 clmi.yaml 仅包含 secp 选中且可完整导出的入口，目标 DNS 经同一代理组；没有符合条件的入口时不生成 YAML。单独节点 URL 和 jhsub.txt 聚合链接不携带客户端全局 DNS 策略。Mieru 可导出 YAML；Naive 仅导出原生及 Shadowrocket 链接。SS/SOCKS5 仍只在终端输出 URL。已有订阅须在 VPS 重新发布；已有 Naive 二级链路不支持用 rep 原地迁移。'},
   subpt:{label:'订阅 HTTPS 端口',placeholder:'无 CDN 时可留空随机',help:'启用 CDN 时须填写 443、2053、2083、2087、2096 或 8443，并避开其他 TCP 入口。'},
   subid:{label:'订阅访问 Token',type:'password',placeholder:'留空生成独立随机 Token',help:'自定义值须为 16–128 位字母、数字、下划线或短横线。已有 Token 可复用；换 Token 后旧订阅地址失效。'},
   hyjpt:{label:'通用 Hysteria2 跳跃范围',placeholder:'20000-30000',help:'支持单端口或连续范围；shyjpt / xhyjpt 已填写时优先，两核心的有效跳跃范围不能重叠。'},
@@ -1869,7 +1869,7 @@ function updateSecondarySummary(deploy){
   try{
     const end=secondaryEndpoint(value('securl').trim()),address=isIPv6(end.host)?'['+end.host+']':end.host;
     const routes=secondaryExpectedRoutes(selectedProtocols(),end);
-    summary.textContent='已解析：'+end.scheme.toUpperCase()+' · '+address+':'+(end.portSet||end.port)+' · '+(end.hasAuth?'有认证':'无认证')+' · '+end.encoding+(end.network==='tcp'?' · 仅转发目标 TCP':'')+(end.transport?' · '+end.transport.toUpperCase():'')+(routes.length?'。A → B 预期：'+routes.join('；')+'。最终按 VPS 实际核心能力校验。':'')+(end.scheme==='wireguard'?' WireGuard 转发 IP，目标域名需要在 A 解析。':'');summary.hidden=false;
+    summary.textContent='已解析：'+end.scheme.toUpperCase()+' · '+address+':'+(end.portSet||end.port)+' · '+(end.hasAuth?'有认证':'无认证')+' · '+end.encoding+(end.network==='tcp'?' · 仅转发目标 TCP':'')+(end.transport?' · '+end.transport.toUpperCase():'')+(routes.length?'。本次部署 A → B 预期：'+routes.join('；')+'。目标 DNS 与目标连接都经 B；最终由 VPS 校验已部署入口与实际核心能力。':'')+(end.scheme==='wireguard'?' WireGuard 的目标 DNS 经隧道。':'');summary.hidden=false;
   }catch{}
 }
 

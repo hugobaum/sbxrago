@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-AIRGOSBX_VERSION='V26.09.26.1'
+AIRGOSBX_VERSION='V26.09.27.1'
 # 仅在内置 XHTTP 默认参数改变时更新此标记，普通脚本版本更新不使旧命令失效。
 XHTTP_DEFAULTS_VERSION='V26.09.08.1'
 agsbxurl="${agsbxurl:-https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/main/airgosbx.sh}"
@@ -900,10 +900,11 @@ vrow "secp"     "选择 A 的入站协议，或 xr / sb；Naive/Mieru 显式用 
 vrow "securl"   "A→B 分享链接：SS/SOCKS5/HTTP(S)/VLESS/Trojan/Hysteria2/WireGuard（留空隐藏输入）"
 vrow "secuot"   "SS UoT v2：off（默认）或 on；需要时经 A 本机 Sing-box 承载，B 须支持"
 echo "             B 可自建或购买，支持 IP/域名；SOCKS 支持明文、整段或认证信息 Base64，以及 remarks 备注、udp=0/1、method=auto。"
-echo "             Base64 是编码；SOCKS/HTTP 本身不加密。客户端仍连接 A，目标域名交给 B 解析。"
+echo "             Base64 是编码；SOCKS/HTTP 本身不加密。客户端仍连接 A，选中流量的目标 DNS 与目标连接都经 B。"
 echo "             B 域名保留到内核配置，运行时解析；Naive 经 A 本机 Sing-box 连接 B，不固定 B 的 IP。"
-echo "             A 内核原生支持则连接 B，否则转接本机 Sing-box；WireGuard 的目标 DNS 经隧道发送。"
-echo "             自建配套 B 会执行目标 DNS 回退和私网拦截；第三方 B 的 DNS、UDP 与访问限制由供应商决定。"
+echo "             A 内核原生支持则连接 B，否则转接本机 Sing-box；目标域名交给 B，WireGuard 的目标 DNS 经隧道发送。"
+echo "             B 自身域名的引导查询独立留在 A；这与访问网站的目标 DNS 不同。"
+echo "             第三方 B 内部的 DNS、UDP 与访问限制由供应商决定；完整 Mihomo 二级订阅只包含选入 secp 的入口。"
 
 vg "⑤ Cloudflare Argo 隧道（纯出站，VPS无需开放端口）"
 vrow "argo"     "指定哪个协议走隧道：vmpt / vwpt / xvargopt"
@@ -8129,7 +8130,7 @@ secondary_finalize_backends(){
     fi
   fi
   if secondary_protocol_is_selected mieru; then
-    # Mita 的客户端出站只支持 SOCKS5；TCP-only 需要交给桥的路由规则拒绝目标 UDP。
+    # Mita 原生 SOCKS5 把目标域名交给 B；其他协议或 TCP-only 要由本机桥承载。
     if [ "$sec_scheme" = socks5 ] && [ "$sec_network" = tcp_udp ]; then
       secondary_mita_backend=native
     else
@@ -8208,6 +8209,8 @@ secondary_ensure_bridge(){
 
 show_secondary_backend_status(){
   local source mode bridge_port
+  [ -s "$HOME/agsbx/secondary_secp" ] || return 0
+  show_secondary_dns_policy_status
   [ -f "$HOME/agsbx/secondary_backends" ] || return 0
   bridge_port=$(cat "$HOME/agsbx/secondary_bridge_port" 2>/dev/null)
   for source in xray mita; do
@@ -8224,6 +8227,20 @@ show_secondary_backend_status(){
       *) printf '  A 的 %s → B：保存的客户端模式无效\n' "$source" ;;
     esac
   done
+}
+
+show_secondary_dns_policy_status(){
+  [ -s "$HOME/agsbx/secondary_secp" ] || return 0
+  if grep -Fxq 'dns=remote-forward-v1' "$HOME/agsbx/secondary_backends" 2>/dev/null; then
+    echo "  二级 DNS：配置生成时采用域名转交 B / WireGuard 隧道 DNS 策略（未做在线泄漏检测）。"
+  else
+    echo "  二级 DNS：现有配置未带本轮检查版本标记；update/重启不会应用配置与订阅修正。"
+    if secondary_saved_protocol_is_selected naive; then
+      echo "  现有 Naive 二级链路不支持 rep；应用本轮配置修正需按原参数重新部署，不能只更新脚本。"
+    else
+      echo "  应用本轮配置修正需带完整部署参数执行 rep，并更新所用订阅；rep 会重建协议配置。"
+    fi
+  fi
 }
 
 prepare_secondary_proxy(){
@@ -8277,7 +8294,7 @@ persist_secondary_proxy_state(){
   if [ "$secondary_prepared" = yes ]; then
     atomic_text_file "$HOME/agsbx/secondary_secp" "$secp" && \
       atomic_text_file "$HOME/agsbx/secondary_meta" "$(printf '%s\n%s\n%s\n%s' "$sec_scheme" "$sec_server" "$sec_port" "$secuot")" && \
-      atomic_text_file "$HOME/agsbx/secondary_backends" "$(printf 'xray=%s\nmita=%s' "${secondary_xray_backend:-none}" "${secondary_mita_backend:-none}")" || return 1
+      atomic_text_file "$HOME/agsbx/secondary_backends" "$(printf 'xray=%s\nmita=%s\ndns=remote-forward-v1' "${secondary_xray_backend:-none}" "${secondary_mita_backend:-none}")" || return 1
   fi
 }
 
@@ -8339,7 +8356,7 @@ secondary_build_runtime_tags(){
       return 1
     }
     secondary_append_runtime_tag "$core" "$tag"
-    # 普通入站在 A 本地解析前直接送往 B；Naive 另用 TCP 专用规则转交同样的目标域名。
+    # 普通入站与本机桥使用统一的二级路由；Naive 另用 TCP 专用规则。
     if [ "$core" = sb ] && [ "$protocol" != naive ]; then
       current="$secondary_singbox_remote_dns_tags"
       case ",$current," in
@@ -8895,7 +8912,8 @@ EOF
         fi
         [ $? -eq 0 ] || return 1
       done
-      printf '      {"inbound":[%s],"action":"reject"}' "$secondary_singbox_tags" >> "$HOME/agsbx/sb.json" || return 1
+      # 1.12 的默认 DNS reject 返回空结果但不带错误；drop 才会令 resolve 明确失败并终止连接。
+      printf '      {"inbound":[%s],"action":"reject","method":"drop"}' "$secondary_singbox_tags" >> "$HOME/agsbx/sb.json" || return 1
       if [ -n "$tags" ]; then printf ',\n' >> "$HOME/agsbx/sb.json" || return 1; else printf '\n' >> "$HOME/agsbx/sb.json" || return 1; fi
     fi
     if [ -n "$tags" ]; then
@@ -9208,7 +9226,7 @@ cat >> "$HOME/agsbx/sb.json" <<EOF
         "action": "sniff"
       },
 EOF
-# 所有二级入站在本地解析前转交目标域名；Naive 另用 TCP 专用规则，B 负责解析与私网检查。
+# 普通二级入站在本地解析前把目标域名转交 B；Naive 另用 TCP 专用规则。
 if [ -n "$secondary_singbox_tags" ] && [ "$sec_network" = tcp ]; then
 cat >> "$HOME/agsbx/sb.json" <<EOF
       {
@@ -9219,7 +9237,7 @@ cat >> "$HOME/agsbx/sb.json" <<EOF
 EOF
 fi
 if [ -n "$secondary_singbox_tags" ] && [ "$sec_outbound_type" = wireguard ]; then
-  # WG 传送 IP 包：先在 A 通过 WG 隧道查询目标 DNS，再把同一地址交给 WG 端点拨号。
+  # WG 传送 IP 包：先通过 WG 隧道查询目标 DNS；查询失败终止连接，不回落本机 DNS。
   cat >> "$HOME/agsbx/sb.json" <<EOF
       {"inbound":[$secondary_singbox_tags],"action":"resolve","strategy":"${ip_policy_sing_strategy:-prefer_ipv4}"},
 EOF
@@ -9948,6 +9966,7 @@ valid_ipv6 "$secondary_saved_server" && secondary_saved_display="[$secondary_sav
 node_title "💣【 二级代理出站 】A VPS 经 B VPS 访问目标服务器："
 echo "生效范围（A VPS 入站协议）：$secondary_saved_secp"
 echo "上游端点（B VPS 入站）：$secondary_saved_scheme://$secondary_saved_display:$secondary_saved_port（认证信息已隐藏）"
+show_secondary_dns_policy_status
 if [ "$secondary_saved_scheme" = ss ]; then echo "SS UDP over TCP：${secondary_saved_uot:-off}（Naive 仅转交目标 TCP）"; fi
 echo
 fi
@@ -10116,8 +10135,12 @@ ss_link=$(secondary_share_link "$ss_link" "${sxname}Shadowsocks-2022-$hostname")
 echo "在 A VPS 配置 secp 时粘贴下一行完整 URL；此入口不加入聚合或 Clash/Mihomo 订阅。"
 echo "$ss_link"
 echo "默认使用原生 TCP/UDP；需要 UoT 时在 A 显式选择 secuot=on，仅支持 Sing-box 出站与兼容的 B。"
-echo "配套新配置中的最终 SS 入口负责 DNS 回退与私网拦截：Google DoH → 本机系统 DNS。"
-echo "此入口部署在 B，不属于 A 的 secp 选择；更新脚本不会自动迁移已有配置。"
+if secondary_saved_protocol_is_selected sspt; then
+  echo "此 SS 入口已选入二级出站；目标 DNS 与目标连接经 B，A 不使用本机 DNS 回退解析目标。"
+else
+  echo "配套新配置中的最终 SS 入口负责 DNS 回退与私网拦截：Google DoH → 本机系统 DNS。"
+fi
+echo "用作 B 入口时，将此 URL 填入 A 的 securl；用作 A 入口时也可选入 secp。更新脚本不会迁移已有配置。"
 echo
 fi
 if grep -q vmess-xr "$HOME/agsbx/xr.json" 2>/dev/null || grep -q vmess-sb "$HOME/agsbx/sb.json" 2>/dev/null; then
@@ -10376,8 +10399,12 @@ echo "客户端用户名：$socks_user"
 echo "客户端密码：$socks_pass"
 echo "分享链接：$socks_link"
 echo "在 A VPS 配置 secp 时粘贴完整 URL；此入口不加入聚合或 Clash/Mihomo 订阅。"
-echo "配套新配置中的最终 SOCKS5 入口负责 DNS 回退与私网拦截：Google DoH → 本机系统 DNS。"
-echo "此入口部署在 B，不属于 A 的 secp 选择；更新脚本不会自动迁移已有配置。"
+if secondary_saved_protocol_is_selected sopt; then
+  echo "此 SOCKS5 入口已选入二级出站；目标 DNS 与目标连接经 B，A 不使用本机 DNS 回退解析目标。"
+else
+  echo "配套新配置中的最终 SOCKS5 入口负责 DNS 回退与私网拦截：Google DoH → 本机系统 DNS。"
+fi
+echo "用作 B 入口时，将此 URL 填入 A 的 securl；用作 A 入口时也可选入 secp。更新脚本不会迁移已有配置。"
 echo
 fi
 # NaiveProxy 同时提供原生与 Shadowrocket URI；Mihomo 没有 Naive 类型，不伪装成普通 HTTP 代理。
@@ -10580,16 +10607,39 @@ fi
 if [ "$sub" = yes ] && [ "$cip_mode" = publish ]; then
 get_func() {
   local f=$1
-  if declare -F "$f" >/dev/null 2>&1; then
-    local out
-    out=$("$f") || return 1
-    [ -n "$out" ] && printf "%s\n" "$out"
-  fi
+  declare -F "$f" >/dev/null 2>&1 || return 1
+  local out
+  out=$("$f") || return 1
+  [ -n "$out" ] && printf "%s\n" "$out"
 }
 # 当前 Mihomo 已有 ENC/XHTTP 能力，但本脚本尚未建立其完整 extra/FM 版本映射。
 # 这类节点暂只导出完整 URL，不能生成遗漏 ENC 或掩码参数的 YAML。
-clxy="$(get_func clvlpt; get_func clvmpt; get_func clvmcdnpt; get_func clhypt; get_func clxhypt; get_func cltupt; get_func clvmargopt; get_func clmierupt)"
-clgz="$({ get_func clvlpt1; get_func clvmpt1; get_func clvmcdnpt1; get_func clhypt1; get_func clxhypt1; get_func cltupt1; get_func clvmargopt1; get_func clmierupt1; } | sed '2,$s/^/    /')"
+local clash_secondary_only=no clash_spec clash_protocol clash_renderers clash_node clash_name clash_names=''
+local clash_dns_route='' clash_direct_choice='    - DIRECT' clash_direct_rules=$'  - GEOIP,LAN,DIRECT\n  - GEOIP,CN,DIRECT'
+[ ! -s "$HOME/agsbx/secondary_secp" ] || clash_secondary_only=yes
+clxy=''
+for clash_spec in vlpt:clvlpt:clvlpt1 vmpt:clvmpt:clvmpt1 vmpt:clvmcdnpt:clvmcdnpt1 \
+  shypt:clhypt:clhypt1 xhypt:clxhypt:clxhypt1 tupt:cltupt:cltupt1 \
+  vmpt:clvmargopt:clvmargopt1 mieru:clmierupt:clmierupt1; do
+  clash_protocol=${clash_spec%%:*}; clash_renderers=${clash_spec#*:}
+  if [ "$clash_secondary_only" = yes ]; then
+    secondary_saved_protocol_is_selected "$clash_protocol" || continue
+  fi
+  clash_node=$(get_func "${clash_renderers%%:*}") && clash_name=$(get_func "${clash_renderers#*:}") || continue
+  clxy="${clxy}${clash_node}"$'\n'
+  clash_names="${clash_names}${clash_name}"$'\n'
+done
+clgz=$(printf '%s' "$clash_names" | sed '2,$s/^/    /')
+if [ "$clash_secondary_only" = yes ]; then
+  # DNS 和网页不能被轮询到不同出口策略；二级订阅仅收录确实选入 secp 的入口。
+  clash_dns_route='#🌍选择代理节点'
+  clash_direct_choice=''; clash_direct_rules=''
+  if [ -z "$clgz" ]; then
+    echo "提示：本次没有可完整导出为 Mihomo 的经 B 入口，未发布会退回其他出口的 clmi.yaml。"
+  else
+    echo "Mihomo 二级订阅仅包含经 B 的入口，DNS 与目标连接使用同一代理组，不含 DIRECT 旁路。"
+  fi
+fi
 if [ -n "$clxy" ] && [ -n "$clgz" ]; then
 clash_config=$(cat <<EOF
 port: 7890
@@ -10622,8 +10672,8 @@ dns:
     - "localhost.work.weixin.qq.com"
   default-nameserver: ["1.1.1.1", "8.8.8.8"]
   nameserver:
-    - "https://1.1.1.1/dns-query"
-    - "https://8.8.8.8/dns-query"
+    - "https://1.1.1.1/dns-query${clash_dns_route}"
+    - "https://8.8.8.8/dns-query${clash_dns_route}"
   proxy-server-nameserver:
     - "https://1.1.1.1/dns-query"
     - "https://8.8.8.8/dns-query"
@@ -10650,11 +10700,10 @@ proxy-groups:
   proxies:
     - 负载均衡
     - 自动选择
-    - DIRECT
+$clash_direct_choice
     $clgz
 rules:
-  - GEOIP,LAN,DIRECT
-  - GEOIP,CN,DIRECT
+$clash_direct_rules
   - MATCH,🌍选择代理节点
 EOF
 )
@@ -11733,6 +11782,7 @@ exit $?
 elif [ "$1" = "update" ]; then
 install_script_shortcut update || exit 1
 echo "脚本已更新；配置与运行内核保持原样。"
+show_secondary_dns_policy_status
 exit 0
 elif [ "$1" = "start" ] || [ "$1" = "stop" ] || [ "$1" = "restart" ] || [ "$1" = "reload" ]; then
 # 内核生命周期：agsbx <动作> [内核]，内核省略=all；已配置 Naive 时按依赖顺序一并处理 Caddy，Mita 仍显式操作。
