@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-AIRGOSBX_VERSION='V26.09.27.3'
+AIRGOSBX_VERSION='V26.09.27.4'
 # 仅在内置 XHTTP 默认参数改变时更新此标记，普通脚本版本更新不使旧命令失效。
 XHTTP_DEFAULTS_VERSION='V26.09.08.1'
 agsbxurl="${agsbxurl:-https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/main/airgosbx.sh}"
@@ -237,8 +237,15 @@ wait_component_listeners(){
   specs=$(component_listener_specs "$core") || return 1
   while IFS=: read -r tag file network; do
     grep -Fq "\"$tag\"" "$HOME/agsbx/$config" 2>/dev/null || continue
-    IFS= read -r port < "$HOME/agsbx/$file" || return 1
-    valid_port "$port" || return 1
+    # atomic_text_file 写出的端口不带末尾换行；读取完整内容，不能把 read 的 EOF 当作失败。
+    port=$(cat "$HOME/agsbx/$file" 2>/dev/null) || {
+      echo "错误：无法读取 $core 入站 $tag 的端口状态文件 $file。"
+      return 1
+    }
+    valid_port "$port" || {
+      echo "错误：$core 入站 $tag 的端口状态文件 $file 格式无效。"
+      return 1
+    }
     planned_ports+=("$port:$network")
   done <<< "$specs"
   for attempt in {1..5}; do
@@ -858,17 +865,32 @@ restart_managed_subscription_http(){
 
 verify_install_required_components(){
   local include_subscription="${1:-no}" failed=no
-  if [ "$install_required_xray" = yes ] && ! { wait_agsbx_component xray && wait_component_listeners xray; }; then
-    echo "错误：本轮要求的 Xray 进程未运行。"
-    failed=yes
+  if [ "$install_required_xray" = yes ]; then
+    if ! wait_agsbx_component xray; then
+      echo "错误：本轮要求的 Xray 进程未运行。"
+      failed=yes
+    elif ! wait_component_listeners xray; then
+      echo "错误：本轮要求的 Xray 监听检查未通过，请查看上方端口状态或监听错误。"
+      failed=yes
+    fi
   fi
-  if [ "$install_required_singbox" = yes ] && ! { wait_agsbx_component sing-box && wait_component_listeners sing-box; }; then
-    echo "错误：本轮要求的 Sing-box 进程未运行。"
-    failed=yes
+  if [ "$install_required_singbox" = yes ]; then
+    if ! wait_agsbx_component sing-box; then
+      echo "错误：本轮要求的 Sing-box 进程未运行。"
+      failed=yes
+    elif ! wait_component_listeners sing-box; then
+      echo "错误：本轮要求的 Sing-box 监听检查未通过，请查看上方端口状态或监听错误。"
+      failed=yes
+    fi
   fi
-  if [ "$install_required_caddy" = yes ] && ! { wait_agsbx_component caddy && wait_component_listeners caddy; }; then
-    echo "错误：本轮要求的 Caddy 进程未运行。"
-    failed=yes
+  if [ "$install_required_caddy" = yes ]; then
+    if ! wait_agsbx_component caddy; then
+      echo "错误：本轮要求的 Caddy 进程未运行。"
+      failed=yes
+    elif ! wait_component_listeners caddy; then
+      echo "错误：本轮要求的 Caddy 监听检查未通过。"
+      failed=yes
+    fi
   fi
   if secondary_protocol_is_selected naive && ! port_is_listening "$naive_secondary_port"; then
     echo "错误：Naive 二级链路的 Sing-box 回环转交端口未监听。"
