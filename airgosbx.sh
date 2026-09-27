@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-AIRGOSBX_VERSION='V26.09.27.5'
+AIRGOSBX_VERSION='V26.09.27.6'
 # 仅在内置 XHTTP 默认参数改变时更新此标记，普通脚本版本更新不使旧命令失效。
 XHTTP_DEFAULTS_VERSION='V26.09.08.1'
 agsbxurl="${agsbxurl:-https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/main/airgosbx.sh}"
@@ -574,6 +574,7 @@ subscription_startup_owned(){
 neutralize_subscription_persistent_startup(){
   local cron_tmp filtered_tmp
   if command -v apk >/dev/null 2>&1; then
+    [ -e /etc/local.d/alpinesubsbx.start ] || [ -L /etc/local.d/alpinesubsbx.start ] || return 0
     subscription_startup_owned /etc/local.d/alpinesubsbx.start || { echo "错误：保留归属不明的 Alpine 订阅启动项。"; return 1; }
     cat > /etc/local.d/alpinesubsbx.start <<'EOF'
 #!/bin/bash
@@ -689,6 +690,89 @@ prepare_subscription_http_tree(){
   atomic_text_file "$HOME/websbx/.airgosbx-subscription" AIRGOSBX_SUBSCRIPTION_V1
 }
 
+# 仅接受受管的订阅文件；旧部署的两个固定符号链接仍可读取，其他链接和额外文件拒绝恢复。
+subscription_payload_valid(){
+  local token="$1" directory="$HOME/websbx/$1" file target
+  [[ "$token" =~ ^[A-Za-z0-9_-]{16,128}$ ]] && subscription_tree_is_owned || return 1
+  [ -d "$directory" ] && [ ! -L "$directory" ] && [ -s "$directory/jhsub.txt" ] || return 1
+  for file in "$directory"/* "$directory"/.[!.]* "$directory"/..?*; do
+    [ -e "$file" ] || [ -L "$file" ] || continue
+    case "${file##*/}" in jhsub.txt|clmi.yaml|httpd.conf) ;; *) return 1 ;; esac
+    if [ -L "$file" ]; then
+      target=$(readlink "$file") || return 1
+      case "${file##*/}:$target" in
+        "jhsub.txt:$HOME/agsbx/jh.txt"|"clmi.yaml:$HOME/agsbx/clmi.yaml") ;;
+        *) return 1 ;;
+      esac
+    fi
+    [ -f "$file" ] && [ -s "$file" ] || return 1
+  done
+}
+
+# 返回 0=可恢复且输出 token，1=未配置订阅，2=状态异常。不得把失败发布当作未启用。
+subscription_recovery_token(){
+  local state token='' entry candidate
+  for state in sub_publish_pending subtoken.log; do
+    if [ -e "$HOME/agsbx/$state" ] || [ -L "$HOME/agsbx/$state" ]; then
+      [ -f "$HOME/agsbx/$state" ] && [ ! -L "$HOME/agsbx/$state" ] || return 2
+      token=$(cat "$HOME/agsbx/$state") || return 2
+      subscription_payload_valid "$token" || return 2
+      printf '%s' "$token"; return 0
+    fi
+  done
+  [ -e "$HOME/websbx" ] || [ -L "$HOME/websbx" ] || return 1
+  subscription_tree_is_owned || return 2
+  # 兼容旧版在写 subtoken.log 前失败的部署；只能收养唯一、完整且没有额外内容的订阅目录。
+  for entry in "$HOME/websbx"/* "$HOME/websbx"/.[!.]* "$HOME/websbx"/..?*; do
+    [ -e "$entry" ] || [ -L "$entry" ] || continue
+    if [ "${entry##*/}" = .airgosbx-subscription ]; then
+      [ -f "$entry" ] && [ ! -L "$entry" ] || return 2
+      continue
+    fi
+    candidate=${entry##*/}
+    [ -z "$token" ] && subscription_payload_valid "$candidate" || return 2
+    token="$candidate"
+  done
+  [ -n "$token" ] || return 2
+  printf '%s' "$token"
+}
+
+# 初装与 res 共用发布收尾；只使用已有文件和证书，不重新生成协议、轮换密码或申请证书。
+complete_subscription_publish(){
+  local token="$1" port file
+  subscription_payload_valid "$token" && load_subscription_auth || return 1
+  port=$(cat "$HOME/agsbx/subport_real.log") && valid_port "$port" || return 1
+  atomic_text_file "$HOME/agsbx/sub_publish_pending" "$token" || return 1
+  stop_subscription_http && neutralize_subscription_persistent_startup || return 1
+  if ! start_subscription_http "$port" || ! verify_subscription_https "$token"; then
+    stop_subscription_http || true
+    echo "错误：订阅发布尚未完成，已保持关闭；保留原文件和密码，可用 agsbx res 重试。"
+    return 1
+  fi
+  # 原样保存正文（包括末尾换行），避免改动已通过 HTTPS 检查的内容。
+  for file in jh.txt clmi.yaml; do
+    if [ -L "$HOME/agsbx/$file" ] || { [ -e "$HOME/agsbx/$file" ] && [ ! -f "$HOME/agsbx/$file" ]; }; then
+      stop_subscription_http || true; return 1
+    fi
+  done
+  if ! ip_policy_atomic_write "$HOME/agsbx/jh.txt" 600 < "$HOME/websbx/$token/jhsub.txt"; then
+    stop_subscription_http || true; return 1
+  fi
+  if [ -s "$HOME/websbx/$token/clmi.yaml" ]; then
+    ip_policy_atomic_write "$HOME/agsbx/clmi.yaml" 600 < "$HOME/websbx/$token/clmi.yaml" \
+      || { stop_subscription_http || true; return 1; }
+  else
+    rm -f -- "$HOME/agsbx/clmi.yaml" || { stop_subscription_http || true; return 1; }
+  fi
+  if ! atomic_text_file "$HOME/agsbx/subtoken.log" "$token" \
+    || ! write_subscription_http_autostart "$port" yes \
+    || ! rm -f -- "$HOME/agsbx/sub_publish_pending"; then
+    stop_subscription_http || true
+    neutralize_subscription_persistent_startup || true
+    return 1
+  fi
+}
+
 subscription_http_status(){
   local port="$1" path="$2" authorization="${3:-}" status
   export -n authorization 2>/dev/null || true
@@ -775,6 +859,11 @@ binary='$binary'
 EOF
   cat <<'EOF'
 export -n password 2>/dev/null || true
+[ ! -e "$state/sub_publish_pending" ] && [ ! -L "$state/sub_publish_pending" ] || exit 1
+[ -f "$state/subtoken.log" ] && [ ! -L "$state/subtoken.log" ] || exit 1
+token=$(cat "$state/subtoken.log")
+[[ "$token" =~ ^[A-Za-z0-9_-]{16,128}$ ]] || exit 1
+[ -d "$root/$token" ] && [ ! -L "$root/$token" ] && [ -s "$root/$token/jhsub.txt" ] || exit 1
 for path in "$state/sub_password" "$state/sub_httpd.conf"; do
   [ -f "$path" ] && [ ! -L "$path" ] && [ "$(stat -c '%u:%a' "$path")" = '0:600' ] || exit 1
 done
@@ -822,60 +911,59 @@ EOF
 }
 
 migrate_subscription_persistent_startup(){
-  local port query_status
+  local mode="${1:-restart}" port query_status token was_persistent=no was_pending=no
+  case "$mode" in restart|restore) ;; *) return 1 ;; esac
   subscription_persistent_present=no
+  if [ -e "$HOME/agsbx/sub_publish_pending" ] || [ -L "$HOME/agsbx/sub_publish_pending" ]; then was_pending=yes; fi
   if command -v apk >/dev/null 2>&1; then
-    [ -e /etc/local.d/alpinesubsbx.start ] || return 0
-  else
-    command -v crontab >/dev/null 2>&1 || return 0
+    if [ -e /etc/local.d/alpinesubsbx.start ] || [ -L /etc/local.d/alpinesubsbx.start ]; then was_persistent=yes; fi
+  elif command -v crontab >/dev/null 2>&1; then
     if subscription_cron_has_managed_startup; then
-      :
+      was_persistent=yes
     else
       query_status=$?
-      [ "$query_status" -eq 1 ] && return 0
-      echo "错误：无法确认旧订阅启动项状态，拒绝跳过迁移。"
-      return 1
+      [ "$query_status" -eq 1 ] || { echo "错误：无法确认旧订阅启动项状态。"; return 1; }
     fi
   fi
+  if token=$(subscription_recovery_token); then :
+  else
+    query_status=$?
+    if [ "$query_status" = 1 ] && [ "$was_persistent" = no ] && ! subscription_http_managed_is_running; then return 0; fi
+    echo "错误：订阅保存状态不完整或目录存在歧义，未将它当作未启用订阅。"
+    return 1
+  fi
   subscription_persistent_present=yes
+  if [ "$mode" = restart ] || [ ! -s "$HOME/agsbx/subtoken.log" ]; then
+    atomic_text_file "$HOME/agsbx/sub_publish_pending" "$token" || return 1
+  fi
   stop_subscription_http || return 1
   neutralize_subscription_persistent_startup || {
     echo "错误：订阅 HTTP 已停止，但无法禁用旧启动项；修复启动项前请勿重启 VPS。"
     return 1
   }
-  # 旧服务可能仍在匿名分发：先停止，再建立密码与启动守卫；失败时保持关闭。
+  # 待发布状态必须保留当时的密码；缺失时明确失败，不能在恢复中擅自替换手填密码。
+  if [ "$was_pending" = yes ] || [ ! -s "$HOME/agsbx/subtoken.log" ]; then
+    load_subscription_auth || { echo "错误：待发布订阅的认证状态缺失或异常。"; return 1; }
+  fi
   prepare_subscription_http_tree || return 1
   port=$(cat "$HOME/agsbx/subport_real.log" 2>/dev/null)
-  write_subscription_http_autostart "$port" no || {
-    echo "错误：无法把旧订阅启动项迁移到带密码认证的回环服务。"
-    return 1
-  }
+  # 回滚只保留旧的、已经发布的持久启动意图；res 的启动项由完成 HTTPS 校验后统一登记。
+  if [ "$mode" = restore ] && [ "$was_persistent" = yes ] \
+    && [ ! -e "$HOME/agsbx/sub_publish_pending" ] && [ ! -L "$HOME/agsbx/sub_publish_pending" ]; then
+    write_subscription_http_autostart "$port" no || return 1
+  fi
+  return 0
 }
 
 restart_managed_subscription_http(){
-  local port pids pid attempt
-  pids=$(subscription_http_managed_pids 2>/dev/null) || pids=""
-  if [ -z "$pids" ] && [ "$subscription_persistent_present" != yes ]; then return 0; fi
-  port=$(cat "$HOME/agsbx/subport_real.log" 2>/dev/null)
-  valid_port "$port" || { echo "错误：订阅端口状态无效，未停止现有进程。"; return 1; }
-  if [ -n "$pids" ]; then
-    for pid in $pids; do
-      kill -15 "$pid" >/dev/null 2>&1 || return 1
-    done
-    for attempt in {1..5}; do
-      subscription_http_managed_is_running || break
-      sleep 1
-    done
-    subscription_http_managed_is_running && {
-      echo "错误：旧订阅 HTTP 进程未能停止，拒绝启动新的回环实例。"
-      return 1
-    }
-  elif [ "$subscription_persistent_present" != yes ]; then
-    return 0
+  local token query_status
+  if token=$(subscription_recovery_token); then :
+  else
+    query_status=$?
+    [ "$query_status" = 1 ] && [ "$subscription_persistent_present" != yes ] && return 0
+    echo "错误：订阅发布状态不完整，无法恢复。"; return 1
   fi
-  port=$(cat "$HOME/agsbx/subport_real.log" 2>/dev/null)
-  prepare_subscription_http_tree || return 1
-  start_subscription_http "$port"
+  complete_subscription_publish "$token"
 }
 
 verify_install_required_components(){
@@ -1079,7 +1167,7 @@ echo "             Base64 是编码；SOCKS/HTTP 本身不加密。客户端仍�
 echo "             B 域名保留到内核配置，运行时解析；Naive 经 A 本机 Sing-box 连接 B，不固定 B 的 IP。"
 echo "             A 内核原生支持则连接 B，否则转接本机 Sing-box；目标域名交给 B，WireGuard 的目标 DNS 经隧道发送。"
 echo "             B 自身域名的引导查询独立留在 A；这与访问网站的目标 DNS 不同。"
-echo "             第三方 B 内部的 DNS、UDP 与访问限制由供应商决定；完整 Mihomo 二级订阅只包含选入 secp 的入口。"
+echo "             第三方 B 内部的 DNS、UDP 与访问限制由供应商决定；客户端订阅只描述 A 的入站，与二级出站无关。"
 
 vg "⑤ Cloudflare Argo 隧道（纯出站，VPS无需开放端口）"
 vrow "argo"     "指定哪个协议走隧道：vmpt / vwpt / xvargopt"
@@ -1264,6 +1352,7 @@ vrow "restart"  "重启内核"
 vrow "reload"   "重载配置（Caddy/Mita 原生重载；Xray/Sing-box 经检查重启，会短暂断连）"
 vrow "res"      "重启 Xray/Sing-box/Argo，并在已配置 Naive 时重启 Caddy（不含 Mita）"
 echo "             同步重启订阅服务；旧订阅迁移为独立 HTTP Basic 密码，随后用 agsbx list 查看凭据。"
+echo "             未完成的订阅发布会使用已保存文件、密码和证书继续校验；状态不完整会明确报错。"
 
 vg "④ 内核版本"
 vrow "upx"      "升级 Xray（upx [版本]，不带版本=最新）"
@@ -3473,21 +3562,21 @@ publish_node_outputs(){
     printf '%s\n' AIRGOSBX_SUBSCRIPTION_V1 > "$stage/.airgosbx-subscription" \
       && printf '%s' "$node_links" > "$stage/$token/jhsub.txt" || { rm -rf -- "$stage"; return 1; }
     if [ -n "$clash_config" ]; then printf '%s\n' "$clash_config" > "$stage/$token/clmi.yaml" || { rm -rf -- "$stage"; return 1; }; fi
-    # 只在安装/rep 事务中发布；目录整体替换，同时撤销旧令牌和旧文件。
-    if ! stop_subscription_http || ! remove_subscription_tree || ! mv -- "$stage" "$HOME/websbx"; then
+    # 在替换前持久化待发布状态；失败后 res 可以恢复，开机助手不会启动未完成发布的服务。
+    if ! stop_subscription_http || ! neutralize_subscription_persistent_startup \
+      || ! atomic_text_file "$HOME/agsbx/sub_publish_pending" "$token" \
+      || ! remove_subscription_tree || ! mv -- "$stage" "$HOME/websbx"; then
       rm -rf -- "$stage"; return 1
     fi
     prepare_subscription_http_tree publish "$token" || return 1
-    if ! start_subscription_http "$subport_real" || ! write_subscription_http_autostart "$subport_real" yes \
-      || ! verify_subscription_https "$token"; then
-      stop_subscription_http || true
-      return 1
-    fi
-    atomic_text_file "$HOME/agsbx/subtoken.log" "$token" || return 1
+    complete_subscription_publish "$token"
+    return $?
   fi
   atomic_text_file "$HOME/agsbx/jh.txt" "$node_links" || return 1
   if [ -n "$clash_config" ]; then atomic_text_file "$HOME/agsbx/clmi.yaml" "$clash_config" || return 1
   else rm -f -- "$HOME/agsbx/clmi.yaml" || return 1; fi
+  # 本次明确不启用订阅，清除旧发布意图；rep 快照仍能在后续失败时恢复旧记录。
+  rm -f -- "$HOME/agsbx/sub_publish_pending" "$HOME/agsbx/subtoken.log"
 }
 
 insuuid(){
@@ -7758,8 +7847,8 @@ secondary_server_is_local_address(){
 # RFC1918/ULA 不在此一刀切禁止，保留 A/B 通过受信私网互联的部署能力。
 secondary_validate_naive_server(){
   secondary_protocol_is_selected naive || return 0
-  valid_domain "$sec_server" && return 0
   local first second normalized_v4 normalized_v6
+  # 数字 IPv4 也可能匹配宽松的域名格式，必须先走 IP 校验，再处理真正的域名。
   if valid_ipv4 "$sec_server"; then
     sec_server=$(secondary_normalize_ipv4 "$sec_server") || return 1
     IFS='.' read -r first second _ _ <<< "$sec_server"
@@ -7779,6 +7868,8 @@ secondary_validate_naive_server(){
         return 1
         ;;
     esac
+  elif valid_domain "$sec_server"; then
+    return 0
   else
     secondary_error "secp=naive 的 B 地址必须是 IPv4 或 [IPv6]。"
     return 1
@@ -10349,7 +10440,9 @@ if [ "$cip_mode" = publish ]; then
   [ "$sub" != yes ] || setup_tls_certificate || return 1
 else
   sub=''
-  if [ -s "$HOME/agsbx/subtoken.log" ] && [ -d "$HOME/websbx" ]; then sub=yes; fi
+  if [ -e "$HOME/agsbx/sub_publish_pending" ] || [ -L "$HOME/agsbx/sub_publish_pending" ]; then
+    echo "订阅发布尚未完成，未输出分享链接；agsbx res 可使用已保存的文件、密码和证书继续校验。"
+  elif [ -s "$HOME/agsbx/subtoken.log" ] && [ -d "$HOME/websbx" ]; then sub=yes; fi
 fi
 render_cert_hash=$(certificate_fingerprint 2>/dev/null)
 local direct_xh_options='' direct_xh_title='' direct_vl_options='' direct_vl_title='' direct_vl_export_yaml=no
@@ -11079,32 +11172,17 @@ get_func() {
 }
 # 当前 Mihomo 已有 ENC/XHTTP 能力，但本脚本尚未建立其完整 extra/FM 版本映射。
 # 这类节点暂只导出完整 URL，不能生成遗漏 ENC 或掩码参数的 YAML。
-local clash_secondary_only=no clash_spec clash_protocol clash_renderers clash_node clash_name clash_names=''
-local clash_dns_route='' clash_direct_choice='    - DIRECT' clash_direct_rules=$'  - GEOIP,LAN,DIRECT\n  - GEOIP,CN,DIRECT'
-[ ! -s "$HOME/agsbx/secondary_secp" ] || clash_secondary_only=yes
+# 订阅仅描述客户端连接 A 的入站；A 上的二级出站不改变节点、DNS 或代理组。
+local clash_renderers clash_node clash_name clash_names=''
 clxy=''
-for clash_spec in vlpt:clvlpt:clvlpt1 vmpt:clvmpt:clvmpt1 vmpt:clvmcdnpt:clvmcdnpt1 \
-  shypt:clhypt:clhypt1 xhypt:clxhypt:clxhypt1 tupt:cltupt:cltupt1 \
-  vmpt:clvmargopt:clvmargopt1 mieru:clmierupt:clmierupt1; do
-  clash_protocol=${clash_spec%%:*}; clash_renderers=${clash_spec#*:}
-  if [ "$clash_secondary_only" = yes ]; then
-    secondary_saved_protocol_is_selected "$clash_protocol" || continue
-  fi
+for clash_renderers in clvlpt:clvlpt1 clvmpt:clvmpt1 clvmcdnpt:clvmcdnpt1 \
+  clhypt:clhypt1 clxhypt:clxhypt1 cltupt:cltupt1 \
+  clvmargopt:clvmargopt1 clmierupt:clmierupt1; do
   clash_node=$(get_func "${clash_renderers%%:*}") && clash_name=$(get_func "${clash_renderers#*:}") || continue
   clxy="${clxy}${clash_node}"$'\n'
   clash_names="${clash_names}${clash_name}"$'\n'
 done
 clgz=$(printf '%s' "$clash_names" | sed '2,$s/^/    /')
-if [ "$clash_secondary_only" = yes ]; then
-  # DNS 和网页不能被轮询到不同出口策略；二级订阅仅收录确实选入 secp 的入口。
-  clash_dns_route='#🌍选择代理节点'
-  clash_direct_choice=''; clash_direct_rules=''
-  if [ -z "$clgz" ]; then
-    echo "提示：本次没有可完整导出为 Mihomo 的经 B 入口，未发布会退回其他出口的 clmi.yaml。"
-  else
-    echo "Mihomo 二级订阅仅包含经 B 的入口，DNS 与目标连接使用同一代理组，不含 DIRECT 旁路。"
-  fi
-fi
 if [ -n "$clxy" ] && [ -n "$clgz" ]; then
 clash_config=$(cat <<EOF
 port: 7890
@@ -11137,8 +11215,8 @@ dns:
     - "localhost.work.weixin.qq.com"
   default-nameserver: ["1.1.1.1", "8.8.8.8"]
   nameserver:
-    - "https://1.1.1.1/dns-query${clash_dns_route}"
-    - "https://8.8.8.8/dns-query${clash_dns_route}"
+    - "https://1.1.1.1/dns-query"
+    - "https://8.8.8.8/dns-query"
   proxy-server-nameserver:
     - "https://1.1.1.1/dns-query"
     - "https://8.8.8.8/dns-query"
@@ -11165,10 +11243,11 @@ proxy-groups:
   proxies:
     - 负载均衡
     - 自动选择
-$clash_direct_choice
+    - DIRECT
     $clgz
 rules:
-$clash_direct_rules
+  - GEOIP,LAN,DIRECT
+  - GEOIP,CN,DIRECT
   - MATCH,🌍选择代理节点
 EOF
 )
@@ -11602,7 +11681,7 @@ rep_restore_snapshot_files(){
   rep_argo_persistence_ready=yes
   rep_subscription_persistence_ready=yes
   migrate_argo_persistent_startup || rep_argo_persistence_ready=no
-  migrate_subscription_persistent_startup || rep_subscription_persistence_ready=no
+  migrate_subscription_persistent_startup restore || rep_subscription_persistence_ready=no
   migrate_certificate_jobs || return 1
 }
 
@@ -11714,8 +11793,13 @@ rep_restore_runtime(){
 
   if [ "$rep_old_subscription_running" = yes ]; then
     if [ "$rep_subscription_persistence_ready" = yes ]; then
-      restored_port=$(cat "$HOME/agsbx/subport_real.log" 2>/dev/null)
-      { prepare_subscription_http_tree && start_subscription_http "$restored_port"; } || failed=yes
+      if [ -e "$HOME/agsbx/sub_publish_pending" ] || [ -L "$HOME/agsbx/sub_publish_pending" ]; then
+        echo "恢复的订阅仍处于待发布状态，保持关闭；可用 agsbx res 继续校验。"
+        failed=yes
+      else
+        restored_port=$(cat "$HOME/agsbx/subport_real.log" 2>/dev/null)
+        { prepare_subscription_http_tree && start_subscription_http "$restored_port"; } || failed=yes
+      fi
     else
       failed=yes
     fi
@@ -12242,13 +12326,14 @@ elif [ "$1" = "res" ]; then
 res_failed=0
 migrate_argo_persistent_startup || res_failed=1
 migrate_subscription_persistent_startup || res_failed=1
-if [ "$res_failed" = 0 ]; then
-  restart_managed_subscription_http || res_failed=1
-fi
 for component in sing-box xray caddy; do
   case "$component" in xray) cfg=xr.json; target=xray ;; sing-box) cfg=sb.json; target=sb ;; caddy) cfg=Caddyfile; target=caddy ;; esac
   [ ! -s "$HOME/agsbx/$cfg" ] || kctl restart "$target" || res_failed=1
 done
+# HTTPS 订阅验证依赖上面的 TLS 内核就绪；订阅收尾只校验已有证书，不调用证书申请函数。
+if [ "$res_failed" = 0 ]; then
+  restart_managed_subscription_http || res_failed=1
+fi
 if [ "$argo_persistent_mode" != none ] && [ "$res_failed" = 0 ]; then
   stop_managed_service cloudflared || res_failed=1
   [ "$res_failed" != 0 ] || rep_restore_argo_runtime || res_failed=1
