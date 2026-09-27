@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-AIRGOSBX_VERSION='V26.09.27.7'
+AIRGOSBX_VERSION='V26.09.27.8'
 # 仅在内置 XHTTP 默认参数改变时更新此标记，普通脚本版本更新不使旧命令失效。
 XHTTP_DEFAULTS_VERSION='V26.09.08.1'
 agsbxurl="${agsbxurl:-https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/main/airgosbx.sh}"
@@ -8,7 +8,7 @@ export -n zerossl_eab_kid zerossl_eab_hmac sslcom_eab_kid sslcom_eab_hmac fmpass
   vl_fmpass xh_fmpass vx_fmpass vw_fmpass vm_fmpass hy_fmpass \
   vx_fmheader vw_fmheader vm_fmheader hy_fmheader 2>/dev/null || true
 export -n xheaders64 xh_xheaders64 vx_xheaders64 xvd_xheaders64 xva_xheaders64 2>/dev/null || true
-export -n uuid obfs_pass subid subpass securl naiveuser naivepass mieruuser mierupass agk ARGO_AUTH \
+export -n uuid obfs_pass subid subauth subpass securl naiveuser naivepass mieruuser mierupass agk ARGO_AUTH \
   CF_Token CF_Key CF_Email CF_Account_ID CF_Zone_ID 2>/dev/null || true
 # 编号 URL 与旧 securl 具有同等敏感性，任何子进程启动前移除 export 属性。
 for secondary_input_name in ${!securl@}; do export -n "$secondary_input_name" 2>/dev/null || true; done
@@ -444,24 +444,199 @@ filter_component_cron(){
   done < "$source"
 }
 
-# 新目录有归属标记；旧目录只接受脚本曾生成的两种订阅符号链接。
+# 页面不含部署数据；Token 留在 URL fragment，密码仅在同源 HTTPS 请求头中发送。
+subscription_browser_page(){
+  cat <<'AIRGOSBX_SUBSCRIPTION_PAGE'
+<!doctype html>
+<!-- AIRGOSBX_SUBSCRIPTION_BROWSER_V1 -->
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'none'; base-uri 'none'; form-action 'none'">
+<title>订阅文件</title><style>
+:root{font:16px/1.6 system-ui,sans-serif;color:#19372f;background:#f4f5f0}body{margin:0;padding:32px 20px}main{max-width:780px;margin:6vh auto;background:#fff;border:1px solid #d4ded5;border-radius:20px;padding:32px}h1{margin:0 0 12px;font-size:28px}p{color:#50645c}.form-row{display:flex;gap:12px;flex-wrap:wrap}label{display:block;margin:24px 0 8px}input{box-sizing:border-box;flex:1;min-width:200px;border:1px solid #aabbb0;border-radius:8px;padding:12px;font:inherit}button,a.download{background:#235e49;color:white;border:0;border-radius:8px;padding:12px 18px;font:inherit}button:disabled,input:disabled{opacity:.5}a.download{display:inline-block;text-decoration:none;margin-top:12px}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f4f5f0;padding:16px;border-radius:8px;font-size:13px}#status{min-height:26px}[hidden]{display:none!important}
+</style></head><body><main><h1>查看订阅文件</h1><p>页面加载完成后，输入独立订阅密码。密码只用于本次 HTTPS 请求。</p>
+<p>如浏览器提示证书错误或“不安全”，请停止输入并核对证书；本页不能判断你是否曾绕过证书警告。</p>
+<form id="access" autocomplete="off"><label for="password">订阅密码</label><div class="form-row"><input id="password" type="password" autocomplete="off" spellcheck="false" autocapitalize="off" maxlength="128" required disabled><button id="submit" type="submit" disabled>查看订阅</button></div></form>
+<p id="status" role="status" aria-live="polite">正在加载页面…</p><a id="download" class="download" hidden>下载订阅文件</a><pre id="content" hidden></pre><noscript><p>请启用 JavaScript 后使用此页面。</p></noscript></main>
+<script>
+(() => {
+  'use strict';
+  const form = document.getElementById('access');
+  const password = document.getElementById('password');
+  const submit = document.getElementById('submit');
+  const status = document.getElementById('status');
+  const content = document.getElementById('content');
+  const download = document.getElementById('download');
+  let resource = null;
+  let objectUrl = null;
+  let activeController = null;
+  let requestGeneration = 0;
+  let pageActive = true;
+  let pageLoaded = false;
+  const clearOutput = () => {
+    content.textContent = '';
+    content.hidden = true;
+    download.hidden = true;
+    download.removeAttribute('href');
+    if (objectUrl) URL.revokeObjectURL(objectUrl);
+    objectUrl = null;
+  };
+  const resetRequest = () => {
+    ++requestGeneration;
+    if (activeController) activeController.abort();
+    activeController = null;
+    resource = null;
+    password.value = '';
+    password.disabled = true;
+    submit.disabled = true;
+    clearOutput();
+  };
+  const parseCurrentHash = () => {
+    resource = null;
+    password.disabled = true;
+    submit.disabled = true;
+    if (location.protocol !== 'https:') {
+      status.textContent = '仅允许通过 HTTPS 访问；密码输入已禁用。';
+      return;
+    }
+    const match = /^#([A-Za-z0-9_-]{16,128})\/(jhsub\.txt|clmi\.yaml)$/.exec(location.hash);
+    if (!match) {
+      status.textContent = '此地址缺少有效的订阅路径，请使用脚本输出的“浏览器查看”链接。';
+      return;
+    }
+    resource = {path: '/cgi-bin/sub/' + match[1] + '/' + match[2], name: match[2]};
+    password.disabled = false;
+    submit.disabled = false;
+    status.textContent = '页面已加载。请确认浏览器没有证书警告，再输入密码。';
+  };
+  window.addEventListener('load', () => {
+    pageLoaded = true;
+    if (pageActive) parseCurrentHash();
+  }, {once: true});
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (!pageActive || !resource || location.protocol !== 'https:' || submit.disabled) return;
+    clearOutput();
+    if (!/^[A-Za-z0-9._~-]{16,128}$/.test(password.value)) {
+      status.textContent = '请输入脚本提供的订阅密码（16–128 位）。';
+      return;
+    }
+    let requestPassword = password.value;
+    password.value = '';
+    password.disabled = true;
+    submit.disabled = true;
+    status.textContent = '正在获取订阅文件…';
+    const controller = new AbortController();
+    activeController = controller;
+    const generation = ++requestGeneration;
+    const timer = setTimeout(() => controller.abort(), 15000);
+    try {
+      const response = await fetch(resource.path, {
+        method: 'POST', headers: {'Content-Type': 'text/plain'}, body: requestPassword, credentials: 'omit',
+        cache: 'no-store', redirect: 'error', referrerPolicy: 'no-referrer', signal: controller.signal
+      });
+      requestPassword = '';
+      if (!pageActive || generation !== requestGeneration) return;
+      if (response.status === 403) throw new Error('密码错误，请重新输入。');
+      if (response.status === 401) throw new Error('服务器仍要求旧版认证，请确认部署了配套版本的脚本。');
+      if (response.status !== 200) throw new Error('订阅文件暂不可用，请核对部署状态。');
+      const text = await response.text();
+      if (!pageActive || generation !== requestGeneration) return;
+      if (!text.trim()) throw new Error('订阅文件为空，请核对部署状态。');
+      content.textContent = text;
+      content.hidden = false;
+      objectUrl = URL.createObjectURL(new Blob([text], {type: 'text/plain;charset=utf-8'}));
+      download.href = objectUrl;
+      download.download = resource.name;
+      download.textContent = '下载 ' + resource.name;
+      download.hidden = false;
+      status.textContent = '已获取 ' + resource.name + '。关闭页面将清除本页显示的内容。';
+    } catch (error) {
+      if (!pageActive || generation !== requestGeneration) return;
+      status.textContent = error.name === 'AbortError' ? '请求超时，请稍后重试。' :
+        error instanceof TypeError ? '请求失败，请检查 HTTPS 连接和订阅服务。' : error.message;
+    } finally {
+      requestPassword = '';
+      clearTimeout(timer);
+      if (activeController === controller) activeController = null;
+      if (pageActive && generation === requestGeneration) {
+        password.disabled = false;
+        submit.disabled = false;
+      }
+    }
+  });
+  window.addEventListener('pagehide', () => {
+    pageActive = false;
+    resetRequest();
+  });
+  window.addEventListener('pageshow', () => {
+    pageActive = true;
+    resetRequest();
+    if (pageLoaded) parseCurrentHash();
+  });
+  window.addEventListener('hashchange', () => {
+    resetRequest();
+    if (pageLoaded && pageActive) parseCurrentHash();
+  });
+})();
+</script></body></html>
+AIRGOSBX_SUBSCRIPTION_PAGE
+}
+
+subscription_browser_page_owned(){
+  local page="$HOME/websbx/index.html"
+  [ -f "$page" ] && [ ! -L "$page" ] && [ "$(stat -c '%u:%a' "$page" 2>/dev/null)" = '0:600' ] || return 1
+  [ "$(head -n 2 "$page")" = $'<!doctype html>\n<!-- AIRGOSBX_SUBSCRIPTION_BROWSER_V1 -->' ]
+}
+
+subscription_browser_page_valid(){
+  local page="$HOME/websbx/index.html" expected actual
+  subscription_browser_page_owned || return 1
+  expected=$(subscription_browser_page | sha256sum) && actual=$(sha256sum < "$page") || return 1
+  [ "${actual%% *}" = "${expected%% *}" ]
+}
+
+# 公开根目录前严格限制内容；归属标记不能为额外文件、链接或 CGI 目录提供放行。
 subscription_tree_is_owned(){
-  local root="$HOME/websbx" directory file target
+  local root="$HOME/websbx" directory file target marked=no token
   [ ! -L "$root" ] && [ -d "$root" ] || return 1
   [ "$(stat -c '%u' "$root" 2>/dev/null)" = 0 ] || return 1
-  if [ -f "$root/.airgosbx-subscription" ] && [ ! -L "$root/.airgosbx-subscription" ] \
-    && [ "$(cat "$root/.airgosbx-subscription")" = AIRGOSBX_SUBSCRIPTION_V1 ]; then return 0; fi
+  if [ -e "$root/.airgosbx-subscription" ] || [ -L "$root/.airgosbx-subscription" ]; then
+    [ -f "$root/.airgosbx-subscription" ] && [ ! -L "$root/.airgosbx-subscription" ] \
+      && [ "$(cat "$root/.airgosbx-subscription")" = AIRGOSBX_SUBSCRIPTION_V1 ] || return 1
+    marked=yes
+  fi
   for directory in "$root"/* "$root"/.[!.]* "$root"/..?*; do
     [ -e "$directory" ] || [ -L "$directory" ] || continue
+    if [ "${directory##*/}" = .airgosbx-subscription ]; then continue; fi
+    if [ "${directory##*/}" = index.html ]; then
+      [ "$marked" = yes ] && subscription_browser_page_owned || return 1
+      continue
+    fi
+    if [ "${directory##*/}" = cgi-bin ]; then
+      [ "$marked" = yes ] && subscription_cgi_tree_owned || return 1
+      continue
+    fi
     [ -d "$directory" ] && [ ! -L "$directory" ] || return 1
+    token=${directory##*/}
+    if [ "$marked" = yes ]; then
+      [[ "$token" =~ ^[A-Za-z0-9_-]{16,128}$ ]] || return 1
+    else
+      # 旧版短 Token 仅可凭固定符号链接确认归属并清理，不能据此启动订阅服务。
+      [[ "$token" =~ ^[A-Za-z0-9_-]{1,128}$ ]] || return 1
+    fi
     for file in "$directory"/* "$directory"/.[!.]* "$directory"/..?*; do
       [ -e "$file" ] || [ -L "$file" ] || continue
-      [ -L "$file" ] || return 1
-      target=$(readlink "$file") || return 1
-      case "${file##*/}:$target" in
-        "clmi.yaml:$HOME/agsbx/clmi.yaml"|"jhsub.txt:$HOME/agsbx/jh.txt") ;;
-        *) return 1 ;;
-      esac
+      case "${file##*/}" in clmi.yaml|jhsub.txt|httpd.conf) ;; *) return 1 ;; esac
+      if [ -L "$file" ]; then
+        target=$(readlink "$file") || return 1
+        case "${file##*/}:$target" in
+          "clmi.yaml:$HOME/agsbx/clmi.yaml"|"jhsub.txt:$HOME/agsbx/jh.txt") ;;
+          *) return 1 ;;
+        esac
+      else
+        [ "$marked" = yes ] && [ -f "$file" ] || return 1
+      fi
     done
   done
 }
@@ -626,30 +801,74 @@ valid_subscription_password(){
   [[ "$1" =~ ^[A-Za-z0-9._~-]{16,128}$ ]]
 }
 
-# 密码与 URL 路径令牌独立，主状态保存于 HTTP 根目录之外；读取不会隐式生成或修复状态。
+# 主状态保存于 HTTP 根目录之外；缺少模式只兼容旧版完整密码状态，绝不推断为公开。
 load_subscription_auth(){
-  local path
-  export -n subscription_password 2>/dev/null || true
+  local path config
+  export -n config 2>/dev/null || true
+  export -n subscription_password subscription_auth_mode 2>/dev/null || true
   subscription_password=''
-  for path in "$HOME/agsbx/sub_password" "$HOME/agsbx/sub_httpd.conf"; do
+  subscription_auth_mode=''
+  subscription_format=''
+  if [ -e "$HOME/agsbx/sub_auth_mode" ] || [ -L "$HOME/agsbx/sub_auth_mode" ]; then
+    path="$HOME/agsbx/sub_auth_mode"
     [ -f "$path" ] && [ ! -L "$path" ] \
       && [ "$(stat -c '%u:%a' "$path" 2>/dev/null)" = '0:600' ] || return 1
-  done
+    subscription_auth_mode=$(cat "$path") || return 1
+    case "$subscription_auth_mode" in yes|no) ;; *) return 1 ;; esac
+  else
+    subscription_auth_mode=yes
+  fi
+  path="$HOME/agsbx/sub_httpd.conf"
+  [ -f "$path" ] && [ ! -L "$path" ] \
+    && [ "$(stat -c '%u:%a' "$path" 2>/dev/null)" = '0:600' ] || return 1
+  if [ -e "$HOME/agsbx/sub_format" ] || [ -L "$HOME/agsbx/sub_format" ]; then
+    path="$HOME/agsbx/sub_format"
+    [ -f "$path" ] && [ ! -L "$path" ] && [ "$(stat -c '%u:%a' "$path" 2>/dev/null)" = '0:600' ] || return 1
+    subscription_format=$(cat "$path") || return 1
+  fi
+  config=$(cat "$HOME/agsbx/sub_httpd.conf") || return 1
+  if [ "$subscription_auth_mode" = no ]; then
+    [ ! -e "$HOME/agsbx/sub_password" ] && [ ! -L "$HOME/agsbx/sub_password" ] || return 1
+    [ -z "$subscription_format" ] || [ "$subscription_format" = plain-v1 ] || return 1
+    [ "$config" = '# AIRGOSBX_SUBSCRIPTION_AUTH_DISABLED' ]
+    return $?
+  fi
+  path="$HOME/agsbx/sub_password"
+  [ -f "$path" ] && [ ! -L "$path" ] \
+    && [ "$(stat -c '%u:%a' "$path" 2>/dev/null)" = '0:600' ] || return 1
   subscription_password=$(cat "$HOME/agsbx/sub_password") || return 1
   valid_subscription_password "$subscription_password" || return 1
-  [ "$(cat "$HOME/agsbx/sub_httpd.conf")" = "/:agsbx:$subscription_password" ]
+  case "$subscription_format" in
+    aes-v1) [ "$config" = '# AIRGOSBX_SUBSCRIPTION_CIPHER_V1' ] ;;
+    aes-preparing-v1|plain-pending-v1)
+      [ "$config" = '# AIRGOSBX_SUBSCRIPTION_CIPHER_V1' ] || [ "$config" = "/:agsbx:$subscription_password" ] \
+        || [ "$config" = "/.airgosbx-subscription:agsbx:$subscription_password" ] ;;
+    '')
+      subscription_format=basic-v1
+      [ "$config" = "/:agsbx:$subscription_password" ] || [ "$config" = "/.airgosbx-subscription:agsbx:$subscription_password" ] ;;
+    *) return 1 ;;
+  esac
 }
 
 prepare_subscription_auth(){
-  local mode="${1:-reuse}" token="${2:-}" path password
+  local mode="${1:-reuse}" token="${2:-}" path password selected_mode
   export -n password 2>/dev/null || true
   case "$mode" in reuse|publish) ;; *) return 1 ;; esac
-  for path in "$HOME/agsbx/sub_password" "$HOME/agsbx/sub_httpd.conf"; do
+  for path in "$HOME/agsbx/sub_auth_mode" "$HOME/agsbx/sub_password" "$HOME/agsbx/sub_httpd.conf" "$HOME/agsbx/sub_format"; do
     [ ! -L "$path" ] && { [ ! -e "$path" ] || [ -f "$path" ]; } || return 1
   done
-  # 只有新发布接受 subpass；res、开机和 rep 回滚只读取已保存的订阅凭据。
-  # 新发布留空时独立生成随机值，不复用任何协议凭据或上一次的订阅密码。
-  if [ "$mode" = publish ]; then
+  # res、开机和 rep 回滚只读取保存状态；不能因文件丢失而关闭认证或轮换密码。
+  if [ "$mode" = reuse ]; then
+    load_subscription_auth || { echo "错误：订阅密码保护状态缺失或不完整，拒绝自动改为免密码访问。"; return 1; }
+    if [ ! -e "$HOME/agsbx/sub_auth_mode" ]; then
+      atomic_text_file "$HOME/agsbx/sub_auth_mode" "$subscription_auth_mode" || return 1
+    fi
+    return 0
+  fi
+  selected_mode="${subauth:-no}"
+  case "$selected_mode" in yes|no) ;; *) return 1 ;; esac
+  # 新发布启用保护且留空时独立随机生成，不复用协议凭据或上一次订阅密码。
+  if [ "$selected_mode" = yes ]; then
     if [ -n "${subpass:-}" ]; then password="$subpass"
     else
       password=$(openssl rand -hex 32) || return 1
@@ -658,36 +877,266 @@ prepare_subscription_auth(){
     valid_subscription_password "$password" || return 1
     [ "$password" != "$token" ] || { echo "错误：订阅密码必须与订阅路径 Token 不同。"; return 1; }
     atomic_text_file "$HOME/agsbx/sub_password" "$password" || return 1
-    unset subpass
-  elif [ -e "$HOME/agsbx/sub_password" ]; then
-    [ "$(stat -c '%u:%a' "$HOME/agsbx/sub_password" 2>/dev/null)" = '0:600' ] || return 1
-    password=$(cat "$HOME/agsbx/sub_password") || return 1
-    valid_subscription_password "$password" || return 1
+    atomic_text_file "$HOME/agsbx/sub_httpd.conf" "/:agsbx:$password" \
+      && atomic_text_file "$HOME/agsbx/sub_format" plain-pending-v1 || return 1
   else
-    password=$(openssl rand -hex 32) || return 1
-    [[ "$password" =~ ^[0-9a-f]{64}$ ]] || return 1
-    atomic_text_file "$HOME/agsbx/sub_password" "$password" || return 1
-    echo "已生成独立订阅访问密码；请使用 agsbx list 查看用户名、密码和订阅链接。"
+    [ -z "${subpass:-}" ] || return 1
+    atomic_text_file "$HOME/agsbx/sub_httpd.conf" '# AIRGOSBX_SUBSCRIPTION_AUTH_DISABLED' || return 1
+    rm -f -- "$HOME/agsbx/sub_password" || return 1
+    atomic_text_file "$HOME/agsbx/sub_format" plain-v1 || return 1
   fi
-  atomic_text_file "$HOME/agsbx/sub_httpd.conf" "/:agsbx:$password" || return 1
+  atomic_text_file "$HOME/agsbx/sub_auth_mode" "$selected_mode" || return 1
+  unset subpass
   load_subscription_auth
 }
 
-# 仅供已停止 HTTP 的发布、旧部署迁移及回滚使用；普通启动仍严格要求既有认证完整。
+subscription_gateway_wrapper(){
+  printf '#!/bin/sh\n# AIRGOSBX_SUBSCRIPTION_CGI_V1\nunset BASH_ENV ENV\nexec env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin REQUEST_METHOD="${REQUEST_METHOD-}" PATH_INFO="${PATH_INFO-}" CONTENT_TYPE="${CONTENT_TYPE-}" CONTENT_LENGTH="${CONTENT_LENGTH-}" /bin/bash --noprofile --norc "%s/agsbx/sub_gateway.sh"\n' "$HOME"
+}
+
+subscription_gateway_handler(){
+  printf '#!/bin/bash\n# AIRGOSBX_SUBSCRIPTION_GATEWAY_V1\nstate=%q\nroot=%q\n' "$HOME/agsbx" "$HOME/websbx"
+  cat <<'AIRGOSBX_GATEWAY'
+set -eu
+export -n supplied expected 2>/dev/null || true
+LC_ALL=C
+fail(){ printf 'Status: %s\r\nContent-Type: text/plain; charset=utf-8\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nContent-Length: 0\r\n\r\n' "$1"; exit 0; }
+[[ "${PATH_INFO:-}" =~ ^/([A-Za-z0-9_-]{16,128})/(jhsub\.txt|clmi\.yaml)$ ]] || fail '404 Not Found'
+token=${BASH_REMATCH[1]}; file=${BASH_REMATCH[2]}
+for saved in sub_auth_mode sub_format; do
+  [ -f "$state/$saved" ] && [ ! -L "$state/$saved" ] && [ "$(stat -c '%u:%a' "$state/$saved")" = '0:600' ] || fail '503 Service Unavailable'
+done
+mode=$(cat "$state/sub_auth_mode"); format=$(cat "$state/sub_format")
+published=''
+for saved in sub_publish_pending subtoken.log; do
+  if [ -e "$state/$saved" ] || [ -L "$state/$saved" ]; then
+    [ -f "$state/$saved" ] && [ ! -L "$state/$saved" ] || fail '503 Service Unavailable'
+    published=$(cat "$state/$saved"); break
+  fi
+done
+[ "$published" = "$token" ] || fail '404 Not Found'
+payload="$root/$token/$file"
+[ -d "$root/$token" ] && [ ! -L "$root/$token" ] && [ -f "$payload" ] && [ ! -L "$payload" ] || fail '404 Not Found'
+encrypted=no
+if [ "$mode" = yes ]; then
+  [ "$format" = aes-v1 ] || fail '503 Service Unavailable'
+  encrypted=yes
+elif [ "$mode" = no ]; then
+  [ "$format" = plain-v1 ] || fail '503 Service Unavailable'
+else fail '503 Service Unavailable'; fi
+method=${REQUEST_METHOD:-}
+if [ "$method" = POST ]; then
+  [ "$mode" = yes ] || fail '405 Method Not Allowed'
+  [ "${CONTENT_TYPE:-}" = text/plain ] || [ "${CONTENT_TYPE:-}" = 'text/plain;charset=UTF-8' ] || [ "${CONTENT_TYPE:-}" = 'text/plain; charset=UTF-8' ] || fail '415 Unsupported Media Type'
+  length=${CONTENT_LENGTH:-}
+  [[ "$length" =~ ^[0-9]{1,3}$ ]] && [ "$((10#$length))" -ge 16 ] && [ "$((10#$length))" -le 128 ] || fail '400 Bad Request'
+  supplied=''
+  IFS= read -r -N "$((10#$length))" -t 5 supplied || fail '400 Bad Request'
+  [[ "$supplied" =~ ^[A-Za-z0-9._~-]{16,128}$ ]] || fail '403 Forbidden'
+  [ -f "$state/sub_password" ] && [ ! -L "$state/sub_password" ] && [ "$(stat -c '%u:%a' "$state/sub_password")" = '0:600' ] || fail '503 Service Unavailable'
+  expected=$(cat "$state/sub_password")
+  [[ "$expected" =~ ^[A-Za-z0-9._~-]{16,128}$ ]] && [ "$supplied" = "$expected" ] || fail '403 Forbidden'
+  unset supplied expected
+  payload="$state/sub_plain/$token/$file"
+  [ -d "$state/sub_plain" ] && [ ! -L "$state/sub_plain" ] && [ -d "$state/sub_plain/$token" ] && [ ! -L "$state/sub_plain/$token" ] \
+    && [ -f "$payload" ] && [ ! -L "$payload" ] && [ "$(stat -c '%u:%a' "$payload")" = '0:600' ] || fail '503 Service Unavailable'
+  encrypted=no
+elif [ "$method" != GET ] && [ "$method" != HEAD ]; then fail '405 Method Not Allowed'; fi
+size=$(wc -c < "$payload"); size=${size//[[:space:]]/}
+printf 'Status: 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nContent-Length: %s\r\n' "$size"
+[ "$encrypted" != yes ] || printf 'subscription-encryption: true\r\n'
+printf '\r\n'
+[ "$method" = HEAD ] || cat "$payload"
+AIRGOSBX_GATEWAY
+}
+
+subscription_managed_script_valid(){
+  local path="$1" generator="$2" mode="${3:-700}" wanted actual
+  [ -f "$path" ] && [ ! -L "$path" ] && [ "$(stat -c '%u:%a' "$path" 2>/dev/null)" = "0:$mode" ] || return 1
+  wanted=$("$generator" | sha256sum) && actual=$(sha256sum < "$path") || return 1
+  [ "${wanted%% *}" = "${actual%% *}" ]
+}
+
+subscription_cgi_tree_owned(){
+  local root="$HOME/websbx/cgi-bin" file first
+  [ -d "$root" ] && [ ! -L "$root" ] && [ "$(stat -c '%u:%a' "$root" 2>/dev/null)" = '0:700' ] || return 1
+  for file in "$root"/* "$root"/.[!.]* "$root"/..?*; do
+    [ -e "$file" ] || [ -L "$file" ] || continue
+    [ "${file##*/}" = sub ] && [ -f "$file" ] && [ ! -L "$file" ] \
+      && [ "$(stat -c '%u:%a' "$file" 2>/dev/null)" = '0:700' ] || return 1
+    first=$(head -n 2 "$file") || return 1
+    [ "$first" = $'#!/bin/sh\n# AIRGOSBX_SUBSCRIPTION_CGI_V1' ] || return 1
+  done
+  # 创建目录后写包装器可能中断；空目录可确认归属供恢复/清理，启动另行严格校验包装器。
+  return 0
+}
+
+subscription_plain_valid(){
+  local token="$1" directory="$HOME/agsbx/sub_plain/$1" verify="${2:-yes}" file hash wanted entry
+  [ -d "$HOME/agsbx/sub_plain" ] && [ ! -L "$HOME/agsbx/sub_plain" ] \
+    && [ "$(stat -c '%u:%a' "$HOME/agsbx/sub_plain" 2>/dev/null)" = '0:700' ] \
+    && [ -d "$directory" ] && [ ! -L "$directory" ] && [ "$(stat -c '%u:%a' "$directory" 2>/dev/null)" = '0:700' ] || return 1
+  for entry in "$directory"/* "$directory"/.[!.]* "$directory"/..?*; do
+    [ -e "$entry" ] || [ -L "$entry" ] || continue
+    case "${entry##*/}" in .complete|password.sha256|jhsub.txt|clmi.yaml|jhsub.txt.sha256|clmi.yaml.sha256|jhsub.txt.cipher.sha256|clmi.yaml.cipher.sha256) ;; *) return 1 ;; esac
+    [ -f "$entry" ] && [ ! -L "$entry" ] && [ "$(stat -c '%u:%a' "$entry" 2>/dev/null)" = '0:600' ] || return 1
+  done
+  [ "$(cat "$directory/.complete" 2>/dev/null)" = AIRGOSBX_SUBSCRIPTION_PLAIN_V1 ] && [ -s "$directory/jhsub.txt" ] || return 1
+  [ "$verify" != no ] || return 0
+  hash=$(printf '%s' "$subscription_password" | sha256sum) || return 1
+  [ "$(cat "$directory/password.sha256")" = "${hash%% *}" ] || return 1
+  for file in jhsub.txt clmi.yaml; do
+    [ "$file" != clmi.yaml ] || [ -e "$directory/$file" ] || continue
+    [ -s "$directory/$file" ] || return 1
+    hash=$(sha256sum < "$directory/$file") && wanted=$(cat "$directory/$file.sha256") || return 1
+    [ "${hash%% *}" = "$wanted" ] || return 1
+  done
+}
+
+# 完整快照原子就位后才允许改写 Web 文件；中断后只从此快照继续，绝不二次加密。
+prepare_subscription_plain(){
+  local token="$1" directory="$HOME/agsbx/sub_plain/$1" stage file hash
+  case "$subscription_format" in
+    aes-preparing-v1|aes-v1) subscription_plain_valid "$token"; return $? ;;
+    basic-v1|plain-pending-v1) ;;
+    *) return 1 ;;
+  esac
+  # 此阶段 Web 仍是本轮原文；即使 Token/密码相同，也不能复用上一轮的私有快照。
+  if [ -e "$directory" ] || [ -L "$directory" ]; then
+    subscription_plain_valid "$token" no || return 1
+  fi
+  [ ! -L "$HOME/agsbx/sub_plain" ] || return 1
+  mkdir -p -m 700 "$HOME/agsbx/sub_plain" || return 1
+  [ "$(stat -c '%u:%a' "$HOME/agsbx/sub_plain")" = '0:700' ] || return 1
+  stage=$(mktemp -d "$HOME/agsbx/.subscription-plain.XXXXXX") || return 1
+  chmod 700 "$stage" || return 1
+  for file in jhsub.txt clmi.yaml; do
+    [ "$file" != clmi.yaml ] || [ -e "$HOME/websbx/$token/$file" ] || continue
+    [ -s "$HOME/websbx/$token/$file" ] \
+      && ip_policy_atomic_write "$stage/$file" 600 < "$HOME/websbx/$token/$file" \
+      && hash=$(sha256sum < "$stage/$file") \
+      && atomic_text_file "$stage/$file.sha256" "${hash%% *}" || { rm -rf -- "$stage"; return 1; }
+  done
+  hash=$(printf '%s' "$subscription_password" | sha256sum) \
+    && atomic_text_file "$stage/password.sha256" "${hash%% *}" \
+    && atomic_text_file "$stage/.complete" AIRGOSBX_SUBSCRIPTION_PLAIN_V1 || { rm -rf -- "$stage"; return 1; }
+  # 新快照完整后才替换旧目录；此时格式仍标记 Web 为原文，中断后可再次从本轮 Web 重建。
+  if [ -e "$directory" ] || [ -L "$directory" ]; then
+    subscription_plain_valid "$token" no && rm -rf -- "$directory" || { rm -rf -- "$stage"; return 1; }
+  fi
+  mv -- "$stage" "$directory" || { rm -rf -- "$stage"; return 1; }
+  subscription_plain_valid "$token"
+}
+
+encrypt_subscription_file(){
+  local source="$1" destination="$2" stage iv_hex hash
+  stage=$(mktemp -d "$HOME/agsbx/.subscription-cipher.XXXXXX") || return 1
+  chmod 700 "$stage" || return 1
+  # EVP_BytesToKey(MD5, no salt, count=1) 的 AES-128 key 即 MD5(password)；显式 IV 覆盖派生 IV。
+  if ! openssl rand 16 > "$stage/iv" \
+    || ! iv_hex=$(od -An -v -tx1 "$stage/iv" | tr -d '[:space:]') \
+    || ! [[ "$iv_hex" =~ ^[0-9a-f]{32}$ ]] \
+    || ! openssl enc -aes-128-cbc -nosalt -md md5 -iv "$iv_hex" -pass fd:3 \
+      -in "$source" -out "$stage/cipher" 3< <(printf '%s\n' "$subscription_password") 2>/dev/null \
+    || ! cat "$stage/iv" "$stage/cipher" > "$stage/packed" \
+    || ! openssl base64 -A -in "$stage/packed" -out "$stage/encoded" \
+    || ! openssl base64 -d -A -in "$stage/encoded" -out "$stage/decoded" \
+    || ! cmp -s "$stage/decoded" "$stage/packed" \
+    || ! dd if="$stage/decoded" of="$stage/check-cipher" bs=1 skip=16 2>/dev/null \
+    || ! openssl enc -d -aes-128-cbc -nosalt -md md5 -iv "$iv_hex" -pass fd:3 \
+      -in "$stage/check-cipher" -out "$stage/plain" 3< <(printf '%s\n' "$subscription_password") 2>/dev/null \
+    || ! cmp -s "$stage/plain" "$source" \
+    || ! chmod 600 "$stage/encoded" || ! mv -f -- "$stage/encoded" "$destination" \
+    || ! hash=$(sha256sum < "$destination") \
+    || ! atomic_text_file "$source.cipher.sha256" "${hash%% *}"; then
+    rm -rf -- "$stage"; return 1
+  fi
+  rm -rf -- "$stage"
+}
+
+# 仅供已停止 HTTP 的发布、旧部署迁移及回滚使用；普通启动仍严格要求既有状态完整。
 prepare_subscription_http_tree(){
-  local mode="${1:-reuse}" published_token="${2:-}" directory token
-  subscription_tree_is_owned && prepare_subscription_auth "$mode" "$published_token" || return 1
+  local mode="${1:-reuse}" token="${2:-}" directory candidate file
+  subscription_tree_is_owned || return 1
+  [ -n "$token" ] || token=$(subscription_recovery_token) || return 1
+  [[ "$token" =~ ^[A-Za-z0-9_-]{16,128}$ ]] || return 1
+  prepare_subscription_auth "$mode" "$token" || return 1
   chmod 700 "$HOME/websbx" || return 1
   for directory in "$HOME/websbx"/*; do
     [ -d "$directory" ] && [ ! -L "$directory" ] || continue
-    token=${directory##*/}
-    [[ "$token" =~ ^[A-Za-z0-9_-]{16,128}$ ]] || return 1
-    chmod 700 "$directory" || return 1
-    # BusyBox 逐请求加载子目录 httpd.conf，且禁止下载该保留文件名。
-    # 即使 rep 回滚后的旧脚本以不带 -c 的 httpd 重启，两种订阅仍要求密码。
-    atomic_text_file "$directory/httpd.conf" "/:agsbx:$subscription_password" || return 1
+    candidate=${directory##*/}
+    [ "$candidate" != cgi-bin ] || continue
+    [ "$candidate" = "$token" ] || { echo "错误：订阅目录含多个 Token，拒绝猜测迁移范围。"; return 1; }
   done
-  atomic_text_file "$HOME/websbx/.airgosbx-subscription" AIRGOSBX_SUBSCRIPTION_V1
+  directory="$HOME/websbx/$token"
+  chmod 700 "$directory" || return 1
+  if [ "$subscription_auth_mode" = yes ]; then
+    prepare_subscription_plain "$token" || return 1
+    atomic_text_file "$HOME/agsbx/sub_format" aes-preparing-v1 || return 1
+    for file in jhsub.txt clmi.yaml; do
+      [ "$file" != clmi.yaml ] || [ -e "$HOME/agsbx/sub_plain/$token/$file" ] || continue
+      encrypt_subscription_file "$HOME/agsbx/sub_plain/$token/$file" "$directory/$file" || return 1
+    done
+    atomic_text_file "$directory/httpd.conf" '# AIRGOSBX_SUBSCRIPTION_CIPHER_V1' \
+      && atomic_text_file "$HOME/agsbx/sub_httpd.conf" '# AIRGOSBX_SUBSCRIPTION_CIPHER_V1' || return 1
+  else
+    atomic_text_file "$directory/httpd.conf" '# AIRGOSBX_SUBSCRIPTION_AUTH_DISABLED' \
+      && atomic_text_file "$HOME/agsbx/sub_format" plain-v1 || return 1
+  fi
+  atomic_text_file "$HOME/websbx/.airgosbx-subscription" AIRGOSBX_SUBSCRIPTION_V1 || return 1
+  [ ! -L "$HOME/websbx/cgi-bin" ] || return 1
+  mkdir -p -m 700 "$HOME/websbx/cgi-bin" || return 1
+  subscription_gateway_wrapper | ip_policy_atomic_write "$HOME/websbx/cgi-bin/sub" 700 || return 1
+  subscription_gateway_handler | ip_policy_atomic_write "$HOME/agsbx/sub_gateway.sh" 600 || return 1
+  if [ "$subscription_auth_mode" = yes ]; then
+    subscription_browser_page | ip_policy_atomic_write "$HOME/websbx/index.html" 600 || return 1
+    atomic_text_file "$HOME/agsbx/sub_format" aes-v1 || return 1
+  else
+    rm -f -- "$HOME/websbx/index.html" || return 1
+  fi
+  subscription_http_tree_valid
+}
+
+# 不允许“公开根配置 + 缺失或过期子目录规则”成为可启动状态。
+subscription_http_tree_valid(){
+  local directory config token file hash
+  subscription_tree_is_owned && load_subscription_auth || return 1
+  [ "$(stat -c '%u:%a' "$HOME/websbx")" = '0:700' ] || return 1
+  if [ -e "$HOME/websbx/index.html" ]; then subscription_browser_page_valid || return 1; fi
+  if [ "$subscription_auth_mode" = yes ]; then
+    config='# AIRGOSBX_SUBSCRIPTION_CIPHER_V1'
+    [ "$subscription_format" = aes-v1 ] \
+      && subscription_browser_page_valid || return 1
+  else
+    config='# AIRGOSBX_SUBSCRIPTION_AUTH_DISABLED'
+  fi
+  subscription_cgi_tree_owned \
+    && subscription_managed_script_valid "$HOME/websbx/cgi-bin/sub" subscription_gateway_wrapper \
+    && subscription_managed_script_valid "$HOME/agsbx/sub_gateway.sh" subscription_gateway_handler 600 || return 1
+  for directory in "$HOME/websbx"/*; do
+    [ -d "$directory" ] && [ ! -L "$directory" ] || continue
+    token=${directory##*/}
+    [ "$token" != cgi-bin ] || continue
+    [[ "$token" =~ ^[A-Za-z0-9_-]{16,128}$ ]] || return 1
+    [ "$(stat -c '%u:%a' "$directory" 2>/dev/null)" = '0:700' ] \
+      && [ -s "$directory/jhsub.txt" ] \
+      && [ -f "$directory/httpd.conf" ] && [ ! -L "$directory/httpd.conf" ] \
+      && [ "$(stat -c '%u:%a' "$directory/httpd.conf" 2>/dev/null)" = '0:600' ] \
+      && [ "$(cat "$directory/httpd.conf")" = "$config" ] || return 1
+    if [ "$subscription_auth_mode" = yes ]; then
+      subscription_plain_valid "$token" || return 1
+      for file in jhsub.txt clmi.yaml; do
+        if [ ! -e "$HOME/agsbx/sub_plain/$token/$file" ]; then
+          [ ! -e "$directory/$file" ] && [ ! -L "$directory/$file" ] || return 1
+          continue
+        fi
+        [ -f "$directory/$file" ] && [ ! -L "$directory/$file" ] \
+          && [ "$(stat -c '%u:%a' "$directory/$file")" = '0:600' ] || return 1
+        hash=$(sha256sum < "$directory/$file") || return 1
+        [ "${hash%% *}" = "$(cat "$HOME/agsbx/sub_plain/$token/$file.cipher.sha256")" ] || return 1
+      done
+    fi
+  done
 }
 
 # 仅接受受管的订阅文件；旧部署的两个固定符号链接仍可读取，其他链接和额外文件拒绝恢复。
@@ -725,8 +1174,7 @@ subscription_recovery_token(){
   # 兼容旧版在写 subtoken.log 前失败的部署；只能收养唯一、完整且没有额外内容的订阅目录。
   for entry in "$HOME/websbx"/* "$HOME/websbx"/.[!.]* "$HOME/websbx"/..?*; do
     [ -e "$entry" ] || [ -L "$entry" ] || continue
-    if [ "${entry##*/}" = .airgosbx-subscription ]; then
-      [ -f "$entry" ] && [ ! -L "$entry" ] || return 2
+    if [ "${entry##*/}" = .airgosbx-subscription ] || [ "${entry##*/}" = index.html ] || [ "${entry##*/}" = cgi-bin ]; then
       continue
     fi
     candidate=${entry##*/}
@@ -739,14 +1187,14 @@ subscription_recovery_token(){
 
 # 初装与 res 共用发布收尾；只使用已有文件和证书，不重新生成协议、轮换密码或申请证书。
 complete_subscription_publish(){
-  local token="$1" port file
+  local token="$1" port file source_root
   subscription_payload_valid "$token" && load_subscription_auth || return 1
   port=$(cat "$HOME/agsbx/subport_real.log") && valid_port "$port" || return 1
   atomic_text_file "$HOME/agsbx/sub_publish_pending" "$token" || return 1
   stop_subscription_http && neutralize_subscription_persistent_startup || return 1
   if ! start_subscription_http "$port" || ! verify_subscription_https "$token"; then
     stop_subscription_http || true
-    echo "错误：订阅发布尚未完成，已保持关闭；保留原文件和密码，可用 agsbx res 重试。"
+    echo "错误：订阅发布尚未完成，已保持关闭；保留原文件及密码保护状态，可用 agsbx res 重试。"
     return 1
   fi
   # 原样保存正文（包括末尾换行），避免改动已通过 HTTPS 检查的内容。
@@ -755,11 +1203,13 @@ complete_subscription_publish(){
       stop_subscription_http || true; return 1
     fi
   done
-  if ! ip_policy_atomic_write "$HOME/agsbx/jh.txt" 600 < "$HOME/websbx/$token/jhsub.txt"; then
+  source_root="$HOME/websbx/$token"
+  [ "$subscription_auth_mode" != yes ] || source_root="$HOME/agsbx/sub_plain/$token"
+  if ! ip_policy_atomic_write "$HOME/agsbx/jh.txt" 600 < "$source_root/jhsub.txt"; then
     stop_subscription_http || true; return 1
   fi
-  if [ -s "$HOME/websbx/$token/clmi.yaml" ]; then
-    ip_policy_atomic_write "$HOME/agsbx/clmi.yaml" 600 < "$HOME/websbx/$token/clmi.yaml" \
+  if [ -s "$source_root/clmi.yaml" ]; then
+    ip_policy_atomic_write "$HOME/agsbx/clmi.yaml" 600 < "$source_root/clmi.yaml" \
       || { stop_subscription_http || true; return 1; }
   else
     rm -f -- "$HOME/agsbx/clmi.yaml" || { stop_subscription_http || true; return 1; }
@@ -774,11 +1224,9 @@ complete_subscription_publish(){
 }
 
 subscription_http_status(){
-  local port="$1" path="$2" authorization="${3:-}" status
-  export -n authorization 2>/dev/null || true
+  local port="$1" path="$2" status
   exec 9<>"/dev/tcp/127.0.0.1/$port" 2>/dev/null || return 1
   printf 'GET %s HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n' "$path" >&9
-  [ -z "$authorization" ] || printf 'Authorization: Basic %s\r\n' "$authorization" >&9
   printf '\r\n' >&9
   IFS= read -r -t 2 status <&9 || { exec 9>&-; return 1; }
   exec 9>&-
@@ -787,30 +1235,24 @@ subscription_http_status(){
 }
 
 subscription_http_responds(){
-  local port="$1" authorization probe_path='/.airgosbx-subscription' anonymous_status wrong_status authenticated_status
-  export -n authorization 2>/dev/null || true
+  local port="$1" probe_path='/.airgosbx-subscription' anonymous_status
   subscription_http_error=''
-  load_subscription_auth || { subscription_http_error='认证状态文件无效'; return 1; }
+  load_subscription_auth || { subscription_http_error='密码保护状态文件无效'; return 1; }
   [ -f "$HOME/websbx$probe_path" ] && [ -s "$HOME/websbx$probe_path" ] && [ ! -L "$HOME/websbx$probe_path" ] || {
     subscription_http_error='认证探测文件缺失或类型异常'; return 1;
   }
-  authorization=$(printf 'agsbx:%s' "$subscription_password" | safe_base64) || {
-    subscription_http_error='无法准备认证请求'; return 1;
-  }
-  # 根目录没有 index.html，BusyBox 可能先返回 404；三种凭据必须检查同一个实际存在的受保护文件。
+  # 仅探测固定标记；密文、POST 密码及正文在 HTTPS 发布检查中逐一验证。
   anonymous_status=$(subscription_http_status "$port" "$probe_path") || anonymous_status='无有效响应'
-  wrong_status=$(subscription_http_status "$port" "$probe_path" YWdzYng6aW52YWxpZA==) || wrong_status='无有效响应'
-  authenticated_status=$(subscription_http_status "$port" "$probe_path" "$authorization") || authenticated_status='无有效响应'
-  if [ "$anonymous_status" = 401 ] && [ "$wrong_status" = 401 ] && [ "$authenticated_status" = 200 ]; then return 0; fi
-  subscription_http_error="同一文件的 HTTP 状态：无密码=$anonymous_status、错误密码=$wrong_status、正确密码=$authenticated_status；预期为 401/401/200"
+  [ "$anonymous_status" != 200 ] || return 0
+  subscription_http_error="订阅 HTTP 状态：$anonymous_status；预期为 200"
   return 1
 }
 
 start_subscription_http(){
   local port="$1" binary pid attempt failure='' subscription_http_error=''
   valid_port "$port" || { echo "错误：订阅监听端口无效。"; return 1; }
-  load_subscription_auth || { echo "错误：订阅认证状态缺失或异常，拒绝启动无密码服务；请执行 agsbx res 迁移。"; return 1; }
-  subscription_tree_is_owned || return 1
+  load_subscription_auth || { echo "错误：订阅密码保护状态缺失或异常，拒绝启动；请核对保存状态或用完整参数执行 rep 并明确指定 subauth。"; return 1; }
+  subscription_http_tree_valid || return 1
   if subscription_http_managed_is_running; then
     subscription_http_is_running "$port" && subscription_http_responds "$port" && return 0
     stop_subscription_http || return 1
@@ -819,8 +1261,7 @@ start_subscription_http(){
     echo "错误：系统中的 BusyBox 不包含 httpd applet，无法启动订阅服务。"
     return 1
   }
-  # -r 在不含 Basic Auth 的 BusyBox 构建上会失败；显式 -c 禁止退回无认证默认配置。
-  "$binary" httpd -f -r Airgosbx-subscription -c "$HOME/agsbx/sub_httpd.conf" \
+  "$binary" httpd -f -c "$HOME/agsbx/sub_httpd.conf" \
     -p "127.0.0.1:$port" -h "$HOME/websbx" 8>&- >/dev/null 2>&1 &
   pid=$!
   for attempt in {1..5}; do
@@ -845,40 +1286,30 @@ start_subscription_http(){
 write_subscription_http_autostart(){
   local port="$1" enable_local="${2:-yes}" script binary helper cron_tmp filtered_tmp
   case "$port" in ''|*[!0-9]*) echo "错误：订阅回源端口无效，拒绝写入启动项。"; return 1 ;; esac
-  load_subscription_auth || return 1
+  subscription_http_tree_valid || return 1
   binary=$(subscription_http_binary) || return 1
   script="$HOME/agsbx/sub_http_start.sh"
-  # 自包含守卫，不依赖 rep 回滚后可能恢复的旧版 agsbx 命令分派。
-  helper=$(cat <<EOF
-#!/bin/bash
-# AIRGOSBX_SUBSCRIPTION_HTTP_AUTH_V1
-set -eu
-state='$HOME/agsbx'
-root='$HOME/websbx'
-binary='$binary'
-EOF
-  cat <<'EOF'
-export -n password 2>/dev/null || true
+  # 将当前验证函数完整写入助手；开机不依赖快捷命令版本，也不会读取脚本环境中的密码。
+  helper=$(
+    printf '#!/bin/bash\n# AIRGOSBX_SUBSCRIPTION_HTTP_AUTH_V1\nset -eu\nHOME=%q\nbinary=%q\n' "$HOME" "$binary"
+    declare -f valid_subscription_password load_subscription_auth subscription_browser_page \
+      subscription_browser_page_owned subscription_browser_page_valid subscription_gateway_wrapper \
+      subscription_gateway_handler subscription_managed_script_valid subscription_cgi_tree_owned \
+      subscription_tree_is_owned subscription_plain_valid subscription_http_tree_valid || exit 1
+    cat <<'AIRGOSBX_HTTP_START'
+state="$HOME/agsbx"
+root="$HOME/websbx"
 [ ! -e "$state/sub_publish_pending" ] && [ ! -L "$state/sub_publish_pending" ] || exit 1
 [ -f "$state/subtoken.log" ] && [ ! -L "$state/subtoken.log" ] || exit 1
 token=$(cat "$state/subtoken.log")
 [[ "$token" =~ ^[A-Za-z0-9_-]{16,128}$ ]] || exit 1
-[ -d "$root/$token" ] && [ ! -L "$root/$token" ] && [ -s "$root/$token/jhsub.txt" ] || exit 1
-for path in "$state/sub_password" "$state/sub_httpd.conf"; do
-  [ -f "$path" ] && [ ! -L "$path" ] && [ "$(stat -c '%u:%a' "$path")" = '0:600' ] || exit 1
-done
-password=$(cat "$state/sub_password")
-LC_ALL=C
-[[ "$password" =~ ^[A-Za-z0-9._~-]{16,128}$ ]] || exit 1
-[ "$(cat "$state/sub_httpd.conf")" = "/:agsbx:$password" ] || exit 1
-[ -d "$root" ] && [ ! -L "$root" ] && [ "$(stat -c '%u:%a' "$root")" = '0:700' ] || exit 1
-[ -f "$root/.airgosbx-subscription" ] && [ ! -L "$root/.airgosbx-subscription" ] || exit 1
-[ "$(cat "$root/.airgosbx-subscription")" = AIRGOSBX_SUBSCRIPTION_V1 ] || exit 1
+[ -s "$root/$token/jhsub.txt" ] || exit 1
+subscription_http_tree_valid || exit 1
 port=$(cat "$state/subport_real.log")
 [[ "$port" =~ ^[0-9]{1,5}$ ]] && [ "$((10#$port))" -ge 1 ] && [ "$((10#$port))" -le 65535 ] || exit 1
-unset password
-exec "$binary" httpd -f -r Airgosbx-subscription -c "$state/sub_httpd.conf" -p "127.0.0.1:$port" -h "$root"
-EOF
+unset subscription_password
+exec "$binary" httpd -f -c "$state/sub_httpd.conf" -p "127.0.0.1:$port" -h "$root"
+AIRGOSBX_HTTP_START
   ) || return 1
   atomic_text_file "$script" "$helper" || return 1
   if command -v apk >/dev/null 2>&1; then
@@ -910,6 +1341,43 @@ EOF
   fi
 }
 
+# 回滚只信任事务快照中的原助手，不能让旧管理入口配上新格式订阅状态。
+restored_subscription_helper_valid(){
+  local helper="$HOME/agsbx/sub_http_start.sh" saved path identity
+  case "${rep_backup_dir:-}" in "$HOME"/.agsbx-rep-rollback.*) ;; *) return 1 ;; esac
+  [ -d "$rep_backup_dir" ] && [ ! -L "$rep_backup_dir" ] \
+    && [ "$(stat -c '%u:%a' "$rep_backup_dir" 2>/dev/null)" = '0:700' ] || return 1
+  [ -d "$rep_backup_dir/agsbx" ] && [ ! -L "$rep_backup_dir/agsbx" ] \
+    && [ "$(stat -c '%u:%a' "$rep_backup_dir/agsbx" 2>/dev/null)" = '0:700' ] || return 1
+  saved="$rep_backup_dir/agsbx/sub_http_start.sh"
+  for path in "$helper" "$saved"; do
+    [ -f "$path" ] && [ ! -L "$path" ] || return 1
+    identity=$(stat -c '%u:%a' "$path" 2>/dev/null) || return 1
+    case "$identity" in 0:600|0:700) ;; *) return 1 ;; esac
+    [ "$(head -n 2 "$path")" = $'#!/bin/bash\n# AIRGOSBX_SUBSCRIPTION_HTTP_AUTH_V1' ] || return 1
+  done
+  cmp -s "$helper" "$saved"
+}
+
+start_restored_subscription_http(){
+  local port helper="$HOME/agsbx/sub_http_start.sh" pid attempt
+  restored_subscription_helper_valid || { echo "错误：原订阅启动助手无法与受管快照匹配，保持订阅关闭。"; return 1; }
+  [ ! -e "$HOME/agsbx/sub_publish_pending" ] && [ ! -L "$HOME/agsbx/sub_publish_pending" ] || return 1
+  [ -f "$HOME/agsbx/subport_real.log" ] && [ ! -L "$HOME/agsbx/subport_real.log" ] || return 1
+  port=$(cat "$HOME/agsbx/subport_real.log") && valid_port "$port" || return 1
+  stop_subscription_http || return 1
+  env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin HOME="$HOME" /bin/bash --noprofile --norc "$helper" 8>&- >/dev/null 2>&1 &
+  pid=$!
+  for attempt in {1..5}; do
+    kill -0 "$pid" >/dev/null 2>&1 || break
+    if subscription_http_is_running "$port" && subscription_http_is_listening "$port"; then return 0; fi
+    sleep 1
+  done
+  stop_subscription_http || true
+  echo "错误：原订阅助手未能恢复预期监听；订阅格式未改动，保持关闭。"
+  return 1
+}
+
 migrate_subscription_persistent_startup(){
   local mode="${1:-restart}" port query_status token was_persistent=no was_pending=no
   case "$mode" in restart|restore) ;; *) return 1 ;; esac
@@ -924,6 +1392,21 @@ migrate_subscription_persistent_startup(){
       query_status=$?
       [ "$query_status" -eq 1 ] || { echo "错误：无法确认旧订阅启动项状态。"; return 1; }
     fi
+  fi
+  if [ "$mode" = restore ]; then
+    if [ "$was_persistent" = no ] && [ "${rep_old_subscription_running:-no}" != yes ] \
+      && [ ! -e "$HOME/websbx" ] && [ ! -L "$HOME/websbx" ]; then return 0; fi
+    subscription_persistent_present=yes
+    if restored_subscription_helper_valid; then
+      # cron/local.d 已按快照原样恢复；原助手自行读取原格式，不能在这里执行迁移。
+      return 0
+    fi
+    stop_subscription_http || true
+    neutralize_subscription_persistent_startup || {
+      echo "错误：原订阅助手不可信，且无法禁用旧启动项；修复前请勿重启 VPS。"; return 1;
+    }
+    echo "错误：快照中缺少可验证的原订阅启动助手；保留原订阅数据，保持服务关闭，未猜测迁移格式。"
+    return 1
   fi
   if token=$(subscription_recovery_token); then :
   else
@@ -947,11 +1430,6 @@ migrate_subscription_persistent_startup(){
   fi
   prepare_subscription_http_tree || return 1
   port=$(cat "$HOME/agsbx/subport_real.log" 2>/dev/null)
-  # 回滚只保留旧的、已经发布的持久启动意图；res 的启动项由完成 HTTPS 校验后统一登记。
-  if [ "$mode" = restore ] && [ "$was_persistent" = yes ] \
-    && [ ! -e "$HOME/agsbx/sub_publish_pending" ] && [ ! -L "$HOME/agsbx/sub_publish_pending" ]; then
-    write_subscription_http_autostart "$port" no || return 1
-  fi
   return 0
 }
 
@@ -1205,13 +1683,17 @@ vrow "CF_Account_ID" "Cloudflare 账户 ID（可选，用于缩小 Zone 查询�
 vrow "CF_Zone_ID" "Cloudflare Zone ID（可选，已知时可直接指定）"
 
 vg "⑧ Web 订阅分发（Clash/聚合，强制TLS加密）"
-vrow "sub"      "订阅分发开关（sub=y 启用；亦可设 subpt/subid 或非空 subpass）；必须使用公信 CA"
+vrow "sub"      "订阅分发开关（sub=y 启用；亦可设 subpt/subid、subauth=y 或非空 subpass）；必须使用公信 CA"
 vrow "subpt"    "订阅服务对外端口（留空自动分配）"
 vrow "subid"    "独立订阅 token（16-128 位安全字符；留空自动生成并保存）"
-vrow "subpass"  "订阅密码（可选，16-128 位字母、数字或 . _ ~ -；不能与 subid 相同）"
-echo "             每次发布留空时由 VPS 独立随机生成密码，不复用任何协议密码；res 重启沿用已保存值。"
-echo "             YAML/TXT 均需 HTTP Basic 认证：固定用户名 agsbx，密码随链接输出。"
-echo "             密码不拼入普通订阅 URL；客户端须支持 HTTP Basic（与订阅内容解密密码不同）。"
+vrow "subauth"  "订阅密码保护（y/yes/1 开启；n/no/0 关闭；新部署默认关闭）"
+vrow "subpass"  "开启保护时的密码（16-128 位字母、数字或 . _ ~ -；不能与 subid 相同）"
+echo "             subauth 关闭时 YAML/TXT 可直接通过 HTTPS 链接订阅，不生成或输出密码。"
+echo "             开启保护且发布时密码留空，由 VPS 独立随机生成；非空 subpass 未设 subauth 时自动启用。"
+echo "             rep 未指定 subauth/subpass 时沿用已保存的保护开关；res 沿用开关和密码，不轮换。"
+echo "             开启时输出 ClashMi 格式加密订阅，客户端在解密密码栏填同一密码，不需要用户名。"
+echo "             浏览器使用单独的查看链接：HTTPS 页面加载后只需输入密码。密码不拼入 URL。"
+echo "             Shadowrocket 按相同解密逻辑的兼容假设处理，仍待实机验证；不等于所有 Clash 客户端均支持。"
 
 vg "⑨ Hysteria2 端口跳跃（抗QoS限速）"
 vrow "hyjpt"    "全局跳跃端口，自动分配给激活的hy2核"
@@ -1354,8 +1836,8 @@ vrow "stop"     "停止内核（释放其占用的端口）"
 vrow "restart"  "重启内核"
 vrow "reload"   "重载配置（Caddy/Mita 原生重载；Xray/Sing-box 经检查重启，会短暂断连）"
 vrow "res"      "重启 Xray/Sing-box/Argo，并在已配置 Naive 时重启 Caddy（不含 Mita）"
-echo "             同步重启订阅服务；旧订阅迁移为独立 HTTP Basic 密码，随后用 agsbx list 查看凭据。"
-echo "             未完成的订阅发布会使用已保存文件、密码和证书继续校验；状态不完整会明确报错。"
+echo "             同步重启订阅服务，沿用已保存的密码保护开关及密码；随后用 agsbx list 查看链接。"
+echo "             未完成的订阅发布会使用已保存文件、保护状态和证书继续校验；状态不完整会明确报错。"
 
 vg "④ 内核版本"
 vrow "upx"      "升级 Xray（upx [版本]，不带版本=最新）"
@@ -2012,6 +2494,7 @@ validate_deployment_inputs(){
   [ -z "$subid" ] || [[ "$subid" =~ ^[A-Za-z0-9_-]{16,128}$ ]] \
     || { echo "错误：subid 仅支持 16-128 位字母、数字、短横线和下划线。"; return 1; }
   if [ -n "${subpass:-}" ]; then
+    [ "$subauth" = yes ] || { echo "错误：subauth 关闭时不能同时指定 subpass。"; return 1; }
     valid_subscription_password "$subpass" || { echo "错误：subpass 仅支持 16-128 位字母、数字或 . _ ~ -。"; return 1; }
     [ "$subpass" != "$subid" ] || { echo "错误：订阅密码必须与订阅路径 Token 不同。"; return 1; }
   fi
@@ -2450,20 +2933,49 @@ case "$1" in
   *) echo "错误：未知命令 $1，请使用 agsbx help。"; exit 1 ;;
 esac
 # 布尔开关 sub 归一化：仅 sub=y/yes/1 视为显式启用，其余值或空/未设一律=关闭，统一规范（禁用 sub=on 之类写法）。
-# subpt/subid 一旦设值仍视为启用；非空 subpass 也启用订阅。naive/argo 在各自入口处理。
+# subpt/subid 一旦设值仍视为启用；subauth=yes 或非空 subpass 也启用订阅。
 case "${sub:-}" in y|yes|1) sub=yes ;; *) sub='' ;; esac
 [ -z "${subpt+x}" ] || sub=yes
 [ -z "${subid+x}" ] || sub=yes
+subauth_requested=no
+if [ "${subauth+x}" = x ]; then
+  subauth_requested=yes
+  case "$1" in ''|rep) ;; *) echo "错误：subauth 仅用于初次部署或 rep；管理操作只使用已保存的密码保护开关。"; exit 1 ;; esac
+  case "$subauth" in
+    y|yes|1) subauth=yes ;;
+    n|no|0) subauth=no ;;
+    *) echo "错误：subauth 仅支持 y/yes/1 或 n/no/0，不可为空。"; exit 1 ;;
+  esac
+else
+  subauth=no
+fi
 subpass=${subpass:-''}
 if [ -n "$subpass" ]; then
   case "$1" in ''|rep) ;; *) echo "错误：subpass 仅用于初次部署或 rep 发布订阅；管理操作不会替换订阅密码。"; exit 1 ;; esac
+  if [ "$subauth_requested" = yes ] && [ "$subauth" = no ]; then
+    echo "错误：subauth 关闭时不能同时指定 subpass。"; exit 1
+  fi
   valid_subscription_password "$subpass" || { echo "错误：subpass 仅支持 16-128 位字母、数字或 . _ ~ -。"; exit 1; }
   [ "$subpass" != "${subid:-}" ] || { echo "错误：订阅密码必须与订阅路径 Token 不同。"; exit 1; }
-  sub=yes
+  subauth=yes
+fi
+[ "$subauth" != yes ] || sub=yes
+# rep 清理旧目录前只继承可信的保护开关；发布时启用且密码留空仍重新随机生成。
+if [ "$1" = rep ] && [ "$sub" = yes ] && [ "$subauth_requested" = no ] && [ -z "$subpass" ]; then
+  for subscription_state_path in "$HOME/agsbx/sub_auth_mode" "$HOME/agsbx/sub_password" "$HOME/agsbx/sub_httpd.conf" \
+    "$HOME/agsbx/subtoken.log" "$HOME/agsbx/sub_publish_pending" "$HOME/websbx"; do
+    if [ -e "$subscription_state_path" ] || [ -L "$subscription_state_path" ]; then
+      load_subscription_auth || { echo "错误：旧订阅保护状态不完整；请用完整部署参数执行 rep，并明确指定 subauth=y 或 subauth=n。"; exit 1; }
+      subauth="$subscription_auth_mode"
+      unset subscription_password
+      break
+    fi
+  done
+  unset subscription_state_path
 fi
 if agsbx_installed || agsbx_running; then
-if [ -z "$1" ] && [ -n "$subpass" ]; then
-  echo "错误：已有部署的无参数调用仅展示状态，不会修改订阅密码；请带完整部署参数使用 agsbx rep。"
+if [ -z "$1" ] && { [ -n "$subpass" ] || [ "$subauth_requested" = yes ]; }; then
+  echo "错误：已有部署的无参数调用仅展示状态，不会修改订阅密码保护；请带完整部署参数使用 agsbx rep。"
   exit 1
 fi
 if [ "$1" = "rep" ]; then
@@ -5201,28 +5713,49 @@ subscription_response_matches(){
   } < "$response"
 }
 
-subscription_response_requires_auth(){
-  local status line challenge=no
+subscription_response_headers(){
+  local response="$1" expected_status="$2" encrypted="$3" status line lower found=no
   {
     IFS= read -r status || return 1
     status=${status%$'\r'}
-    case "$status" in 'HTTP/1.0 401 '*|'HTTP/1.1 401 '*) ;; *) return 1 ;; esac
+    [[ "$status" =~ ^HTTP/1\.[01][[:space:]]([0-9]{3})[[:space:]] ]] && [ "${BASH_REMATCH[1]}" = "$expected_status" ] || return 1
     while IFS= read -r line; do
       line=${line%$'\r'}
       [ -n "$line" ] || break
-      case "$(printf '%s' "$line" | tr A-Z a-z)" in www-authenticate:*basic*) challenge=yes ;; esac
+      lower=$(printf '%s' "$line" | tr A-Z a-z)
+      case "$lower" in
+        subscription-encryption:*)
+          [ "$found" = no ] && [[ "$lower" =~ ^subscription-encryption:[[:space:]]*true[[:space:]]*$ ]] || return 1
+          found=yes ;;
+        www-authenticate:*) return 1 ;;
+      esac
     done
-    [ "$challenge" = yes ]
-  } < "$1"
+    [ "$found" = "$encrypted" ]
+  } < "$response"
 }
 
-# 发布时实际下载订阅：只连接 VPS 自身；令牌和认证头经 stdin 传入，不放进进程参数。
+# 仅由 HTTPS 校验调用，host/port/args/temporary 为调用者的局部变量；密码只走 stdin。
+subscription_https_request(){
+  local method="$1" path="$2" credential="${3:-none}" body=''
+  export -n body 2>/dev/null || true
+  if [ "$credential" = correct ]; then body="$subscription_password"
+  elif [ "$credential" = wrong ]; then
+    body=invalid-password-0000
+    [ "$body" != "$subscription_password" ] || body=invalid-password-0001
+  fi
+  {
+    printf '%s %s HTTP/1.0\r\nHost: %s:%s\r\nConnection: close\r\n' "$method" "$path" "$host" "$port"
+    if [ "$method" = POST ]; then printf 'Content-Type: text/plain\r\nContent-Length: %s\r\n' "${#body}"; fi
+    printf '\r\n'
+    [ "$method" != POST ] || printf '%s' "$body"
+  } | timeout -k 1 10 openssl s_client "${args[@]}" > "$temporary/response" 2> "$temporary/tls-error"
+}
+
+# 只连接 VPS 自身，校验证书、匿名密文下载及密码 POST；不把 Token/密码放进进程参数。
 verify_subscription_https(){
-  local token="$1" host verify_host port endpoint temporary file expected failed=no authorization rejected_auth
+  local token="$1" host verify_host port endpoint temporary file expected failed=no request_path
   local -a args
-  export -n authorization rejected_auth 2>/dev/null || true
   load_subscription_auth || return 1
-  authorization=$(printf 'agsbx:%s' "$subscription_password" | safe_base64) || return 1
   command -v timeout >/dev/null 2>&1 || { echo "错误：缺少 timeout，无法限制订阅 HTTPS 下载校验时间。"; return 1; }
   [[ "$token" =~ ^[A-Za-z0-9_-]{16,128}$ ]] || return 1
   host=$(subscription_certificate_host) || return 1
@@ -5234,34 +5767,43 @@ verify_subscription_https(){
   else args+=(-servername "$verify_host" -verify_hostname "$verify_host"); fi
   temporary=$(mktemp -d "$HOME/agsbx/.subscription-check.XXXXXX") || return 1
   chmod 700 "$temporary" || { rmdir "$temporary"; return 1; }
+  if [ "$subscription_auth_mode" = yes ]; then
+    if ! subscription_https_request GET /index.html \
+      || ! subscription_response_matches "$HOME/websbx/index.html" "$temporary/response" \
+      || ! subscription_response_headers "$temporary/response" 200 no; then
+      echo "错误：浏览器密码页未通过匿名 HTTPS 下载及正文校验，停止发布。"; failed=yes
+    fi
+  fi
   for file in jhsub.txt clmi.yaml; do
+    [ "$failed" = no ] || break
     expected="$HOME/websbx/$token/$file"
     [ "$file" != clmi.yaml ] || [ -e "$expected" ] || continue
-    if [ ! -s "$expected" ]; then
-      echo "错误：待发布的 $file 缺失或为空。"
-      failed=yes; break
+    if [ ! -s "$expected" ]; then echo "错误：待发布的 $file 缺失或为空。"; failed=yes; break; fi
+    # 旧 raw 地址在开启时也必须只返回同一密文，不能通过静态路径泄露私有原文。
+    if ! subscription_https_request GET "/$token/$file" \
+      || ! subscription_response_matches "$expected" "$temporary/response" \
+      || ! subscription_response_headers "$temporary/response" 200 no; then
+      echo "错误：$file 的静态 HTTPS 下载与发布文件不一致，停止发布。"; failed=yes; break
     fi
-    for rejected_auth in '' YWdzYng6aW52YWxpZA==; do
-      if ! {
-        printf 'GET /%s/%s HTTP/1.0\r\nHost: %s:%s\r\nConnection: close\r\n' "$token" "$file" "$host" "$port"
-        [ -z "$rejected_auth" ] || printf 'Authorization: Basic %s\r\n' "$rejected_auth"
-        printf '\r\n'
-      } | timeout -k 1 10 openssl s_client "${args[@]}" > "$temporary/response" 2> "$temporary/tls-error" \
-        || ! subscription_response_requires_auth "$temporary/response"; then
-        echo "错误：$file 没有可靠拒绝无密码或错误密码访问，停止发布。"
-        failed=yes; break
-      fi
-    done
-    [ "$failed" = no ] || break
-    if ! printf 'GET /%s/%s HTTP/1.0\r\nHost: %s:%s\r\nAuthorization: Basic %s\r\nConnection: close\r\n\r\n' "$token" "$file" "$host" "$port" "$authorization" \
-      | timeout -k 1 10 openssl s_client "${args[@]}" > "$temporary/response" 2> "$temporary/tls-error"; then
-      echo "错误：$file 的本机 HTTPS 下载失败，未输出分享链接。"
-      tail -n 6 "$temporary/tls-error"
-      failed=yes; break
+    [ "$subscription_auth_mode" = yes ] || continue
+    request_path="/cgi-bin/sub/$token/$file"
+    if ! subscription_https_request GET "$request_path" \
+      || ! subscription_response_matches "$expected" "$temporary/response" \
+      || ! subscription_response_headers "$temporary/response" 200 yes \
+      || ! subscription_https_request HEAD "$request_path" \
+      || ! subscription_response_headers "$temporary/response" 200 yes; then
+      echo "错误：$file 的加密订阅 GET/HEAD 或加密标记检查失败，停止发布。"; failed=yes; break
     fi
-    if ! subscription_response_matches "$expected" "$temporary/response"; then
-      echo "错误：$file 的 HTTPS 响应状态、长度或正文与发布文件不一致，未输出分享链接。"
-      failed=yes; break
+    if ! subscription_https_request POST "$request_path" wrong \
+      || ! subscription_response_headers "$temporary/response" 403 no \
+      || ! subscription_https_request POST "$request_path" none \
+      || ! subscription_response_headers "$temporary/response" 400 no; then
+      echo "错误：$file 的浏览器访问未拒绝无密码或错误密码，停止发布。"; failed=yes; break
+    fi
+    if ! subscription_https_request POST "$request_path" correct \
+      || ! subscription_response_matches "$HOME/agsbx/sub_plain/$token/$file" "$temporary/response" \
+      || ! subscription_response_headers "$temporary/response" 200 no; then
+      echo "错误：$file 的正确密码 POST 或原文校验失败，停止发布。"; failed=yes; break
     fi
   done
   rm -rf -- "$temporary" || return 1
@@ -10504,7 +11046,7 @@ if [ "$cip_mode" = publish ]; then
 else
   sub=''
   if [ -e "$HOME/agsbx/sub_publish_pending" ] || [ -L "$HOME/agsbx/sub_publish_pending" ]; then
-    echo "订阅发布尚未完成，未输出分享链接；agsbx res 可使用已保存的文件、密码和证书继续校验。"
+    echo "订阅发布尚未完成，未输出分享链接；agsbx res 可使用已保存的文件、保护状态和证书继续校验。"
   elif [ -s "$HOME/agsbx/subtoken.log" ] && [ -d "$HOME/websbx" ]; then sub=yes; fi
 fi
 render_cert_hash=$(certificate_fingerprint 2>/dev/null)
@@ -11339,7 +11881,7 @@ if [ "$sub" = yes ]; then
     sub=''
   fi
   if [ "$cip_mode" != publish ] && ! load_subscription_auth; then
-    echo "现有订阅尚未启用有效的独立密码，已隐藏分享链接；请执行 agsbx res 迁移，再用 agsbx list 查看凭据。"
+    echo "现有订阅的密码保护状态缺失或异常，已隐藏分享链接；请核对保存状态，或用完整参数执行 rep 并明确指定 subauth。"
     sub=''
   fi
 fi
@@ -11349,13 +11891,29 @@ echo "$argoshow"
 echo
 if [ "$sub" = yes ]; then
 hr2
+if [ "$subscription_auth_mode" = yes ]; then
+if subscription_http_tree_valid; then
+  if [ -n "$clash_sub_info" ]; then
+    echo "ClashMi 格式加密 YAML 订阅：https://${subdomain}:${subport_show}/cgi-bin/sub/${subtoken}/clmi.yaml"
+  else echo "本次没有可完整导出的 Mihomo 节点，请使用聚合协议订阅。"; fi
+  echo "ClashMi 格式加密聚合订阅：https://${subdomain}:${subport_show}/cgi-bin/sub/${subtoken}/jhsub.txt"
+  echo "浏览器查看聚合订阅：https://${subdomain}:${subport_show}/index.html#${subtoken}/jhsub.txt"
+  if [ -n "$clash_sub_info" ]; then
+    echo "浏览器查看/下载 YAML：https://${subdomain}:${subport_show}/index.html#${subtoken}/clmi.yaml"
+  fi
+  echo "浏览器请使用上述查看链接：页面加载完成后只需输入订阅密码，无需填写用户名。"
+else
+  echo "加密订阅或浏览器入口尚未就绪，未输出新链接；请执行 agsbx res 迁移，保留原订阅密码、Token 与证书。"
+fi
+printf '订阅密码：%s\n' "$subscription_password"
+echo "加密订阅和浏览器查看共用此独立密码，不需要用户名；客户端填写订阅解密密码并保持证书验证开启。"
+echo "Shadowrocket 按 ClashMi 相同解密逻辑的兼容假设处理，尚未实机验证；其他客户端须支持此加密格式。"
+echo "旧 HTTP Basic 订阅迁移后，请复制新的 /cgi-bin/sub/ 链接；原静态地址只提供密文。"
+else
 if [ -n "$clash_sub_info" ]; then echo "$clash_sub_info"; else echo "本次没有可完整导出的 Mihomo 节点，请使用聚合协议链接。"; fi
 echo "聚合协议本地订阅地址：${suburl}/jhsub.txt"
-echo "订阅 HTTP Basic 用户名：agsbx"
-printf '订阅 HTTP Basic 密码：%s\n' "$subscription_password"
-echo "两个链接共用此独立密码；请在客户端配置 HTTP Basic 认证并保持证书验证开启。"
-echo "Shadowrocket 的订阅 Password 栏用途未确认，不能将它直接视为 HTTP Basic 认证设置。"
-echo "若客户端只支持 URL 用户信息，可用 https://agsbx:密码@主机:端口/路径；该完整地址含密码，泄漏即失去独立密码保护。"
+echo "订阅密码保护：关闭；可直接使用以上 HTTPS 链接订阅，无需填写用户名或密码。"
+fi
 echo "clmi.yaml 仅包含可完整导出的 Mihomo 节点（含 Mieru，不含 Naive）；jhsub.txt 包含 Mieru 与 Naive 链接，Naive 另附 Shadowrocket 的 http2/http3 格式。"
 echo "订阅地址使用共享 CA 证书覆盖的域名或 IP；域名应解析到订阅服务，客户端保持证书验证开启。"
 hr2
@@ -11860,8 +12418,7 @@ rep_restore_runtime(){
         echo "恢复的订阅仍处于待发布状态，保持关闭；可用 agsbx res 继续校验。"
         failed=yes
       else
-        restored_port=$(cat "$HOME/agsbx/subport_real.log" 2>/dev/null)
-        { prepare_subscription_http_tree && start_subscription_http "$restored_port"; } || failed=yes
+        start_restored_subscription_http || failed=yes
       fi
     else
       failed=yes
@@ -11896,10 +12453,8 @@ rep_rollback_transaction(){
   fi
   if rep_restore_snapshot_files && rep_restore_runtime && [ "$external_restore_failed" = no ]; then
     echo "旧部署已恢复。"
-    if [ "$rep_old_subscription_running" = yes ] && load_subscription_auth; then
-      echo "恢复后的订阅已要求 HTTP Basic 认证，原订阅链接可继续使用。"
-      printf '订阅用户名：agsbx\n订阅密码：%s\n' "$subscription_password"
-      echo "回滚可能恢复旧版 agsbx；上述凭据另保存在受保护的 agsbx/sub_password 文件中。"
+    if [ "$rep_old_subscription_running" = yes ]; then
+      echo "订阅已用快照中的原启动助手恢复；原格式、链接和密码均未改变，沿用原客户端设置。"
     fi
     rep_remove_backup || true
     return 0

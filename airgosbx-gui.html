@@ -10,7 +10,7 @@
     与 airgosbx.sh 配套维护、同版本提交和发布。无外部资源、请求、遥测或自动持久化。
     与 airgosbx.sh 配套维护：修改 showvars、协议归属、secp、warp、rep 或 URL 生成规则时，
     同时核对 PROTOCOLS、XRAY_PROFILES、FIELDS、collect、savedCommandPlan 和 validate。
-    配套版本：V26.09.27.7。XHTTP_DEFAULTS_VERSION 与 BUILD.presetVersion 仅在默认参数变化时更新。
+    配套版本：V26.09.27.8。XHTTP_DEFAULTS_VERSION 与 BUILD.presetVersion 仅在默认参数变化时更新。
     发布前须核对配套脚本是否已同步到 GitHub main；存在未发布接口变更时 remoteAligned 保持 false。
     页面只生成文本，不执行命令。选择“对照脚本”时只读取用户明确选择的文件。
   -->
@@ -80,8 +80,8 @@
     .check-field{display:flex;flex-direction:row;align-items:center;gap:10px;min-height:42px;font-size:13px;cursor:pointer}
     .check-field input{width:18px;height:18px;accent-color:var(--green);flex-shrink:0}
     .check-field .field-label{display:flex;justify-content:flex-start;gap:6px}.wide{grid-column:1/-1}
-    #subscription-fields .check-field{grid-column:1/-1;display:grid;grid-template-columns:18px minmax(0,1fr);align-items:start}
-    #subscription-fields .check-field input{margin-top:2px}#subscription-fields .check-field small{grid-column:2}
+    #subscription-fields .check-field,#subscription-specific .check-field{grid-column:1/-1;display:grid;grid-template-columns:18px minmax(0,1fr);align-items:start}
+    #subscription-fields .check-field input,#subscription-specific .check-field input{margin-top:2px}#subscription-fields .check-field small,#subscription-specific .check-field small{grid-column:2}
     .notice{font-size:12px;background:var(--wash);padding:12px 14px;border-radius:var(--control);margin-top:14px}
     .notice.warning{background:var(--amber-bg);color:var(--amber)}
     .search-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
@@ -242,7 +242,7 @@
 <div class="page">
   <header class="masthead">
     <div class="brand"><div class="brand-mark" aria-hidden="true">A</div><div><div class="eyebrow">AIRGOSBX / WORKBENCH</div><h1>配置工作台</h1><p class="meta">配置连接，生成 VPS 命令。</p></div></div>
-    <div class="tools"><span id="build-version" class="meta">V26.09.27.7 · 离线单文件</span><button id="reset" type="button">重置表单</button></div>
+    <div class="tools"><span id="build-version" class="meta">V26.09.27.8 · 离线单文件</span><button id="reset" type="button">重置表单</button></div>
   </header>
   <noscript><p class="notice warning">此页面需要浏览器 JavaScript 才能生成命令。所有逻辑都在当前 HTML 内，不加载外部资源。</p></noscript>
 
@@ -285,7 +285,7 @@
       <section class="panel" id="certificates"><div class="panel-heading"><div><h2 class="step"><span class="section-index">03</span>证书与订阅</h2><p class="section-description">证书、地址与订阅</p><p class="intro">统一配置节点证书、系统 IP 策略与 HTTPS 订阅。</p></div></div><div class="policy-summary" aria-label="证书使用规则"><p><strong>REALITY</strong><span>无需申请 CA 证书。</span></p><p><strong>HTTPS 订阅</strong><span>必须使用 CA，优先复用；没有则申请。</span></p><p><strong>NaiveProxy</strong><span>Caddy 自动申请并管理域名证书。</span></p></div><div id="common-fields" class="form-grid"></div><div id="certificate-fields" class="form-grid" style="margin-top:16px"></div><div id="certificate-specific" class="form-grid" style="margin-top:16px"></div><p class="note">自签证书只用于未开启订阅的普通 TLS 节点，需要客户端建立信任或固定指纹；HTTPS 订阅不接受自签证书。SS / SOCKS5 入口仅在终端输出完整 URL，不加入订阅。VLESS Encryption 节点请使用完整 URL 或聚合订阅，脚本不会生成缺失加密参数的 Clash 节点。</p><div id="subscription-fields" class="form-grid" style="margin-top:16px"></div><div id="subscription-specific" class="form-grid" style="margin-top:16px" hidden></div><details><summary>更多变量：证书账户、跳跃端口与源地址</summary><div id="advanced-fields" class="form-grid"></div></details></section>
       </div>
 
-      <section class="panel" id="reference"><div class="panel-heading"><div><h2 class="step">维护对照</h2><p class="section-description">脚本与 GUI 的维护对照</p><p class="intro">页面以当前工作区脚本为依据；HTML 不会自动读取磁盘或远端代码。</p></div></div><div class="table-wrap"><table class="help-table"><thead><tr><th>功能位置</th><th>脚本入口</th><th>GUI 同步点</th></tr></thead><tbody><tr><td>协议及所属核心</td><td><code>showvars / ins</code></td><td>协议清单、能力标记、核心推导</td></tr><tr><td>Xray 扩展</td><td><code>各入口的 extra / mode / fm 变量</code></td><td>按协议默认方案、FM 组合与独立调参</td></tr><tr><td>CDN / Argo</td><td><code>cdnym / argo / agn / agk</code></td><td>接入条件、端口、隧道绑定</td></tr><tr><td>出站</td><td><code>warp / secpN / securlN / secuotN</code></td><td>B1–B16 的目标、独立范围及 WARP 出站互斥；兼容旧版单 B</td></tr><tr><td>订阅</td><td><code>sub / subpt / subid / subpass / res</code></td><td>路径 Token、可选密码与 VPS 独立随机密码、旧订阅迁移说明</td></tr><tr><td>命令生成与还原</td><td><code>环境变量与管理命令</code></td><td>字段映射、引用转义、旧版通用参数继承</td></tr><tr><td>生命周期</td><td><code>rep / del / upx / ups …</code></td><td>操作清单、参数过滤、影响说明</td></tr></tbody></table></div><p class="note">覆盖范围：常用部署、证书、订阅、出站和管理入口。XDNS / XICMP 使用 Xray ≥26.7.28 的专用配置与完整客户端 JSON，不加入通用链接订阅；目录中标为不可配置的核心字段未接入脚本，内部证书续期和跳跃规则恢复命令由脚本管理。端口占用、服务归属、证书和真实连通性须在 VPS 检查。</p><p class="note">对照功能只提取你选择的脚本中的变量声明与帮助条目，不执行、不上传。它能提示变量清单差异，不能代替调用逻辑审查。</p><div class="tools" style="margin-top:14px"><label class="file-label">选择 airgosbx.sh 对照<input id="source-file" class="visually-hidden" type="file" accept=".sh,text/plain"></label><button id="clear-compare" type="button" class="text-button">清除对照</button></div><p id="sync-result" class="sync-result" role="status">配套版本：V26.09.27.7；XHTTP 默认参数版本：V26.09.08.1。尚未读取其他文件。</p></section>
+      <section class="panel" id="reference"><div class="panel-heading"><div><h2 class="step">维护对照</h2><p class="section-description">脚本与 GUI 的维护对照</p><p class="intro">页面以当前工作区脚本为依据；HTML 不会自动读取磁盘或远端代码。</p></div></div><div class="table-wrap"><table class="help-table"><thead><tr><th>功能位置</th><th>脚本入口</th><th>GUI 同步点</th></tr></thead><tbody><tr><td>协议及所属核心</td><td><code>showvars / ins</code></td><td>协议清单、能力标记、核心推导</td></tr><tr><td>Xray 扩展</td><td><code>各入口的 extra / mode / fm 变量</code></td><td>按协议默认方案、FM 组合与独立调参</td></tr><tr><td>CDN / Argo</td><td><code>cdnym / argo / agn / agk</code></td><td>接入条件、端口、隧道绑定</td></tr><tr><td>出站</td><td><code>warp / secpN / securlN / secuotN</code></td><td>B1–B16 的目标、独立范围及 WARP 出站互斥；兼容旧版单 B</td></tr><tr><td>订阅</td><td><code>sub / subauth / subpt / subid / subpass / res</code></td><td>独立密码保护开关、路径 Token、手填或 VPS 独立随机密码、已有保护模式恢复</td></tr><tr><td>命令生成与还原</td><td><code>环境变量与管理命令</code></td><td>字段映射、引用转义、旧版通用参数继承</td></tr><tr><td>生命周期</td><td><code>rep / del / upx / ups …</code></td><td>操作清单、参数过滤、影响说明</td></tr></tbody></table></div><p class="note">覆盖范围：常用部署、证书、订阅、出站和管理入口。XDNS / XICMP 使用 Xray ≥26.7.28 的专用配置与完整客户端 JSON，不加入通用链接订阅；目录中标为不可配置的核心字段未接入脚本，内部证书续期和跳跃规则恢复命令由脚本管理。端口占用、服务归属、证书和真实连通性须在 VPS 检查。</p><p class="note">对照功能只提取你选择的脚本中的变量声明与帮助条目，不执行、不上传。它能提示变量清单差异，不能代替调用逻辑审查。</p><div class="tools" style="margin-top:14px"><label class="file-label">选择 airgosbx.sh 对照<input id="source-file" class="visually-hidden" type="file" accept=".sh,text/plain"></label><button id="clear-compare" type="button" class="text-button">清除对照</button></div><p id="sync-result" class="sync-result" role="status">配套版本：V26.09.27.8；XHTTP 默认参数版本：V26.09.08.1。尚未读取其他文件。</p></section>
     </main>
 
     <aside class="output" id="command" aria-labelledby="command-title">
@@ -321,7 +321,7 @@
 <script>
 /* 配置清单集中在这里，避免表单、架构图与命令生成各自维护一套名称。 */
 'use strict';
-const BUILD = {version:'V26.09.27.7',presetVersion:'V26.09.08.1',remoteAligned:true, source:'https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/main/airgosbx.sh', schema:'通用字段基线：Xray v26.3.27；XDNS/XICMP：v26.7.28'};
+const BUILD = {version:'V26.09.27.8',presetVersion:'V26.09.08.1',remoteAligned:true, source:'https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/main/airgosbx.sh', schema:'通用字段基线：Xray v26.3.27；XDNS/XICMP：v26.7.28'};
 const OPERATIONS = [
   ['install','安装 / 创建节点'],['rep','重建协议配置（rep）'],['restore-ip','恢复原 IP 策略'],['list','显示节点（list）'],['status','资源与流量（status）'],['update','更新脚本（update）'],['res','重启代理与隧道（res）'],['start','启动核心（start）'],['stop','停止核心（stop）'],['restart','重启核心（restart）'],['reload','重载配置（reload）'],['upx','升级 Xray（upx）'],['ups','升级 Sing-box（ups）'],['downx','降级 Xray（downx）'],['downs','降级 Sing-box（downs）'],['del','卸载（del）'],['vars','查看变量（vars）'],['cmds','查看命令（cmds）'],['help','完整帮助（help）']
 ];
@@ -508,7 +508,7 @@ const EXTRA_GROUPS={padding:'填充与外观',request:'HTTP 请求与响应',lay
 const XRAY_RANGES={xpadding:[1,4096],xmuxcon:[0,1024],xmuxmax:[0,128],fmpadding:[0,100],fmnoise:[1,1200],fmreset:[0,3600],fmdelay:[0,1000],fmfraglen:[1,16384],fmfragdelay:[0,1000],fmfragsplit:[1,64]};
 const FIELDS = {
   operation:{label:'操作',options:OPERATIONS,value:'install'},
-  scriptSource:{label:'执行入口',options:[['repo','GitHub main 分支'],['local','VPS 本地 airgosbx.sh'],['custom','指定脚本 URL'],['shortcut','已安装的 agsbx 命令']],value:'repo'},
+  scriptSource:{label:'执行入口',options:[['repo','GitHub main 分支'],['local','VPS 本地 airgosbx.sh'],['custom','指定脚本 URL'],['shortcut','已安装的 agsbx 命令']],value:BUILD.remoteAligned?'repo':'local'},
   scriptPath:{label:'VPS 上的脚本路径',value:'./airgosbx.sh',help:'这是 VPS 上的路径，不是 Mac 路径；请先把对应脚本放到 VPS。'},
   scriptURL:{label:'脚本 URL',placeholder:'https://example.com/airgosbx.sh',help:'生成下载并执行的 Bash 命令；页面本身不访问该地址。'},
   target:{label:'目标核心',options:[['all','全部（不含 Mita）'],['xray','Xray'],['sb','Sing-box'],['caddy','Caddy'],['mita','Mita / Mieru']],value:'all'},
@@ -593,10 +593,11 @@ const FIELDS = {
   sslcom_eab_kid:{label:'SSL.com EAB Key ID',type:'password',help:'可选，仅 SSL.com 备用签发使用。'},
   sslcom_eab_hmac:{label:'SSL.com EAB HMAC',type:'password',help:'与 EAB Key ID 配对。'},
   certdns:{label:'旧证书变量兼容',options:[['','不额外设置'],['cf','certdns=cf']],help:'仅用于对照旧命令，选择 DNS-01 时不必重复设置。'},
-  sub:{label:'启用 HTTPS 订阅',type:'checkbox',help:'必须使用 CA 证书。YAML 与 TXT 均需密码认证，用户名固定为 agsbx。'},
+  sub:{label:'启用 HTTPS 订阅',type:'checkbox',help:'必须使用 CA 证书。默认凭完整 URL 订阅，可另行开启密码保护。'},
+  subauth:{label:'开启订阅密码保护',type:'checkbox',value:false,help:'关闭时，YAML 与 TXT 仅凭完整 HTTPS URL 订阅。开启后，客户端获取加密内容，需支持 ClashMi 的订阅解密格式并填写密码；浏览器查看入口先加载 HTTPS 页面，再只输入同一密码，无需用户名。'},
   subpt:{label:'订阅 HTTPS 端口',placeholder:'无 CDN 时可留空随机',help:'启用 CDN 时须填写 443、2053、2083、2087、2096 或 8443，并避开其他 TCP 入口。'},
   subid:{label:'订阅路径 Token',type:'password',placeholder:'留空生成独立随机路径 Token',help:'这是链接路径，不是密码。使用 16–128 位字母、数字、下划线或短横线；换 Token 后旧地址失效。'},
-  subpass:{label:'订阅密码',type:'password',maxLength:128,placeholder:'留空由 VPS 独立随机生成',help:'可选填 16–128 位字母、数字或 . _ ~ -，不能与路径 Token 相同。留空时每次安装或 rep 都生成新密码，不复用其他协议密码。'},
+  subpass:{label:'订阅密码',type:'password',maxLength:128,placeholder:'开启保护后，留空由 VPS 独立随机生成',help:'开启密码保护时可填 16–128 位字母、数字或 . _ ~ -，不能与路径 Token 相同。留空时每次安装或 rep 都由 VPS 生成新密码，不复用其他协议密码。'},
   hyjpt:{label:'通用 Hysteria2 跳跃范围',placeholder:'20000-30000',help:'支持单端口或连续范围；shyjpt / xhyjpt 已填写时优先，两核心的有效跳跃范围不能重叠。'},
   agsbxurl:{label:'脚本更新 / 快捷命令来源',placeholder:'留空采用脚本默认 GitHub main',help:'安装时优先复制当前本地脚本作为快捷命令；此 URL 用于后续更新或无法复制时的下载来源。'}
 };
@@ -1136,11 +1137,12 @@ function initialize(){
   const certOperationLink=node('a','note','查看顶部操作选择');certOperationLink.id='cert-operation-link';certOperationLink.href='#operation';certOperationLink.dataset.issueTarget='operation';certOperationLink.hidden=true;
   $('certMode').closest('[data-field]').append(certOperationLink);
   mount('certificate-specific',['certym','certip','certwild','certcrt','certkey','CF_Token']);
-  mount('subscription-fields',['sub']);mount('subscription-specific',['subpt','subid','subpass']);
-  const subscriptionNotes=node('details','wide');subscriptionNotes.append(node('summary','','订阅认证与客户端说明'));
-  subscriptionNotes.append(node('p','note','clmi.yaml 与 jhsub.txt 使用 HTTP Basic 认证。密码留空时，每次安装或 rep 都由 VPS 独立生成新的 64 位十六进制随机密码，不复用旧订阅或其他协议密码。部署后与订阅链接一起输出，可用 agsbx list 查看；rep 后请更新客户端密码。手填密码会写入完整部署命令，默认预览隐藏；页面不自动保存。客户端须支持订阅 HTTP Basic 认证，仅有名为 Password 的输入框不能确认兼容。请分别保存链接与密码；把凭据嵌入 URL 后，完整链接泄漏也会泄漏密码。'));
+  mount('subscription-fields',['sub']);mount('subscription-specific',['subpt','subid','subauth','subpass']);
+  const subscriptionNotes=node('details','wide');subscriptionNotes.append(node('summary','','订阅密码与客户端说明'));
+  subscriptionNotes.append(node('p','note','clmi.yaml 与 jhsub.txt 共用密码保护开关，默认关闭；关闭时只需完整订阅 URL，任何持有链接的人均可读取订阅。开启后使用 ClashMi 的订阅内容加密格式，响应标记 subscription-encryption: true，内容为 Base64 编码的 IV 与 AES-CBC 密文；客户端用单独填写的密码解密，无需 HTTP Basic 用户名。浏览器使用脚本输出的“浏览器查看”链接，先加载 HTTPS 密码页面，再提交同一密码读取或下载原始订阅，密码不写入 URL，也不在页面中自动保存。'));
+  subscriptionNotes.append(node('p','note','当前按 ClashMi 的解密逻辑适配；Shadowrocket 的 Password 栏按相同逻辑作兼容假设，尚未运行验证。其他客户端须支持此订阅加密格式，不能仅因有密码输入框就认定可用，也不代表普通 Clash Verge 订阅已支持。不支持时可关闭保护，或另行使用兼容的客户端配置。密码留空时，每次安装或 rep 都由 VPS 独立生成新的 64 位十六进制随机密码，不复用旧订阅或其他协议密码。部署后与订阅链接一起输出，可用 agsbx list 查看；rep 后请更新客户端密码。手填密码会写入完整部署命令，默认预览隐藏；页面不自动保存。请分别保存链接与密码。'));
   subscriptionNotes.append(node('p','note','订阅只描述客户端连接 A 的入站，不包含 B 的地址、密码或出站映射。订阅生成不读取二级出站配置；节点、DNS 和代理组不会因二级出站开关或 B 分配而改变。Mihomo YAML 收录所有已启用且可完整导出的入站，没有符合条件的入站时不生成 YAML。Mieru 可导出 YAML；Naive 仅导出原生及 Shadowrocket 链接。SS/SOCKS5 仍只在终端输出 URL。'));
-  subscriptionNotes.append(node('p','note','已有订阅可在更新脚本后运行 res 加入认证；未完成的订阅发布也可由 res 使用已保存的文件和密码继续校验，恢复不会轮换密码。update 本身不修改运行配置或重建订阅内容。已有 Naive 二级链路不支持用 rep 原地迁移。'));$('subscription-specific').append(subscriptionNotes);
+  subscriptionNotes.append(node('p','note','res 保留已有可信订阅状态的保护开关和密码；已有受保护订阅不会因新默认值而开放。旧版 HTTP Basic 保护会迁移为内容加密，迁移后需使用新输出的订阅 URL，并在客户端配置解密密码；密码、路径 Token 和证书不轮换。未完成的订阅发布可由 res 使用已保存的文件和保护状态继续校验。早于密码功能且没有认证状态的旧订阅，需通过 rep 明确选择保护模式。update 本身不修改运行配置或重建订阅内容。已有 Naive 二级链路不支持用 rep 原地迁移。'));$('subscription-specific').append(subscriptionNotes);
   mount('advanced-fields',['acmem','acmetimeout','zerossl_eab_kid','zerossl_eab_hmac','CF_Account_ID','CF_Zone_ID','CF_Key','CF_Email','sslcom_eab_kid','sslcom_eab_hmac','certdns','hyjpt','agsbxurl']);
   for(const [core,label,description] of CORE_INFO){
     const group=node('details','core-group');group.dataset.core=core;group.open=false;group.id='core-'+core;
@@ -1308,6 +1310,9 @@ function updateVisibility(deploy,protocols){
     $(urlKey).closest('[data-field]').classList.toggle('wide',!showUot);
   }
   $('subscription-specific').hidden=!value('sub');
+  $('subauth').disabled=!value('sub');
+  $('subpass').disabled=!value('sub')||!value('subauth');
+  text('help-subpass',value('sub')&&value('subauth')?FIELDS.subpass.help:'密码保护已关闭，此项不写入生成命令，也不会在 VPS 生成订阅密码。'+(value('subpass')?' 已填密码仅保留在当前表单；重新开启保护后可编辑并使用。':''));
   const cert=value('certMode'),rep=value('operation')==='rep',certLocked=rep&&!value('sub');
   const autoCert=[...$('certMode').options].find(option=>option.value==='auto');
   autoCert.textContent=value('sub')?'复用已有 CA；没有则在 VPS 申请':'脚本默认：复用或自签';
@@ -1396,7 +1401,7 @@ function collect(deploy,protocols){
     if(value('secondaryEnabled'))for(const group of secondaryGroups){add('secp'+group.id,[...group.selection].join(','));add('securl'+group.id,value('securl'+group.id).trim());if(value('secuot'+group.id)==='on')add('secuot'+group.id,'on');}
     for(const key of ['name','uuid','reym','hyjpt','agsbxurl'])add(key,value(key));
     if(value('ipv')!=='keep')add('ipv',value('ipv')==='restore'?'':value('ipv'),true);
-    if(value('sub')){add('sub','y');add('subpt',value('subpt').trim());add('subid',value('subid'));add('subpass',value('subpass'));}
+    if(value('sub')){add('sub','y');add('subpt',value('subpt').trim());add('subid',value('subid'));add('subauth',value('subauth')?'y':'n');if(value('subauth'))add('subpass',value('subpass'));}
     if(value('operation')!=='rep'||value('sub')){
       const cert=value('certMode');
       if(cert==='interactive')add('alns','y');
@@ -1574,7 +1579,10 @@ function savedCommandPlan(parsed){
     }
     if(spec.type==='extra'){fields[key]=bool(raw,key)?'y':'n';continue;}
     if(spec.type==='headers'){fields[key]=headersFromBase64(raw);const problem=headersProblem(fields[key]);if(problem)throw new Error(problem);continue;}
-    if(spec.type==='checkbox'){fields[key]=key==='sub'?['y','yes','1'].includes(raw):bool(raw,key);continue;}
+    if(spec.type==='checkbox'){
+      if(key==='subauth'&&!['y','yes','1','n','no','0'].includes(raw))throw new Error('subauth 只接受小写 y / yes / 1 或 n / no / 0，不能留空。');
+      fields[key]=key==='sub'?['y','yes','1'].includes(raw):bool(raw,key);continue;
+    }
     let value=raw;
     if(key==='warp')value=({'':'sx',xs:'sx',x4s4:'s4x4',x6s4:'s4x6',x4s6:'s6x4',x6s6:'s6x6',x4s:'sx4',x6s:'sx6',s4x:'xs4',s6x:'xs6'})[raw]||raw;
     if(key==='ipv')value=raw===''?'restore':raw;
@@ -1599,7 +1607,12 @@ function savedCommandPlan(parsed){
   fields.argoKind=pairs.get('agn')||pairs.get('agk')?'fixed':'temporary';
   fields.warpEnabled=pairs.has('warp');
   fields.secondaryEnabled=SECONDARY_KEYS.some(key=>pairs.has(key));
-  fields.sub=fields.sub||pairs.has('subpt')||pairs.has('subid')||Boolean(pairs.get('subpass'));
+  if(!pairs.has('subauth'))fields.subauth=Boolean(pairs.get('subpass'));
+  if(!fields.subauth&&pairs.get('subpass'))throw new Error('subauth=n 不能同时提供非空 subpass；请开启密码保护或移除密码，未还原。');
+  fields.sub=fields.sub||pairs.has('subpt')||pairs.has('subid')||fields.subauth;
+  if(parsed.operation==='rep'&&fields.sub&&!pairs.has('subauth')&&!pairs.get('subpass'))throw new Error('这条 rep 命令会沿用 VPS 已有的密码保护模式，GUI 无法读取该模式。请在原命令中明确补充 subauth=y 或 subauth=n 后再还原，避免无意关闭已有保护。');
+  if(!pairs.has('subauth')&&fields.subauth)notes.push('旧命令的非空 subpass 已还原为开启订阅密码保护；重新生成时显式传入 subauth=y。');
+  else if(fields.sub&&!pairs.has('subauth'))notes.push('命令未指定 subauth 或非空 subpass，已还原为不启用密码保护；重新生成时显式传入 subauth=n。');
   if(pairs.get('certcrt')||pairs.get('certkey'))fields.certMode='external';
   else if(pairs.get('acmemode')){
     if(!['http','alpn','dns','ip'].includes(pairs.get('acmemode')))throw new Error('无法还原此 ACME 模式。');
@@ -2153,8 +2166,9 @@ function validate(deploy,protocols,pairs){
   if(value('sub')&&value('subpt')){const p=value('subpt').trim();if(!/^\d{1,5}$/.test(p)||Number(p)<1||Number(p)>65535)error('订阅端口应为 1 至 65535。','subpt');else if(ports.has('tcp:'+Number(p)))error('订阅端口与 '+ports.get('tcp:'+Number(p))+' 的 TCP 端口重复。','subpt');}
   if(value('sub')&&value('cdnEnabled')&&!CDN_HTTPS_PORTS.has(String(Number(value('subpt').trim()))))error('CDN 订阅须显式填写受支持的 HTTPS 端口。','subpt');
   if(value('sub')&&value('subid')&&!/^[A-Za-z0-9_-]{16,128}$/.test(value('subid')))error('订阅 Token 使用 16 至 128 位字母、数字、下划线或短横线。','subid');
-  if(value('sub')&&value('subpass')&&!/^[A-Za-z0-9._~-]{16,128}$/.test(value('subpass')))error('订阅密码使用 16 至 128 位字母、数字、点、下划线、波浪线或短横线，不含空格。','subpass');
-  if(value('sub')&&value('subpass')&&value('subid')&&value('subpass')===value('subid'))error('订阅密码必须与路径 Token 不同。','subpass');
+  if(value('sub')&&value('subauth')&&value('subpass')&&!/^[A-Za-z0-9._~-]{16,128}$/.test(value('subpass')))error('订阅密码使用 16 至 128 位字母、数字、点、下划线、波浪线或短横线，不含空格。','subpass');
+  if(value('sub')&&value('subauth')&&value('subpass')&&value('subid')&&value('subpass')===value('subid'))error('订阅密码必须与路径 Token 不同。','subpass');
+  if(value('sub')&&!value('subauth')&&value('subpass'))warn('密码保护已关闭，已填密码仅保留在当前表单，不写入本次命令；持有订阅 URL 即可访问。','subauth');
   const cert=value('certMode');
   const zeroSSLKid=value('zerossl_eab_kid'),zeroSSLHmac=value('zerossl_eab_hmac');
   if(zeroSSLKid||zeroSSLHmac){
@@ -2224,8 +2238,8 @@ function update(){
   }
   if(!issues.length)$('issues').append(node('p','valid-note',idle?'尚未选择协议，可直接开始选择。':'配置项匹配，可以复制命令。'));
   $('parameter-list').replaceChildren();for(const [key,v] of pairs){const row=node('div','parameter-row');row.append(node('code','',key),node('span','',!value('show-secrets')&&PRIVATE_KEYS.has(key)?'已隐藏':v===''?'空值（保留）':v));$('parameter-list').append(row);}if(!pairs.length)$('parameter-list').append(node('p','note','当前没有需要传入的变量。'));
-  const source=value('scriptSource');text('source-hint',source==='local'?(!BUILD.remoteAligned?'本轮出站改动尚未发布，请先将配套脚本放到 VPS。':'')+'使用 VPS 上与此 GUI 配套的脚本文件。安装时优先复制它作为 agsbx 快捷命令；agsbxurl 控制后续更新与下载回退来源。':source==='repo'?(BUILD.remoteAligned?'默认使用 GitHub main 的配套脚本。下载和执行发生在 VPS，页面只生成命令文本。':'当前工作区接口尚未发布，请使用配套的 VPS 本地脚本或指定来源。'):source==='custom'?'此 URL 同时传入 agsbxurl，保持本次执行与后续快捷命令来源一致。页面不访问这个地址。':'执行 VPS 上已有的 agsbx。请确认已安装脚本包含本页所使用的变量。');
-  text('operation-hint',op==='rep'?'rep 会停止并重建所选非 Caddy 协议，保留已有 Naive/Caddy；未开订阅时保留证书，无证书时可首次自签。开启订阅必须复用 CA 或申请 IP / 域名证书，相关文件纳入回滚。未选协议可能移除。路径和 SOCKS 凭据会重新生成，请重新导入节点。已有 Naive 二级链路不支持此重建方式。':op==='restore-ip'?'仅用于已有部署：生成 ipv=空值 的恢复命令。按 VPS 保存的快照恢复网络策略；快照不完整时脚本会停止并提示人工处理。':op==='install'?'用于首次安装；开始部署前会准备 agsbx 管理入口，安装中途失败也可进入卸载。已有部署变更协议请选 rep。执行时可能安装依赖、下载核心、修改 VPS 服务与系统网络设置，页面只生成文本。':op==='res'?'res 重启已配置的 Xray / Sing-box / Caddy、Argo 与订阅服务；不包含 Mita。旧订阅会加入 HTTP Basic 认证，随后用 agsbx list 查看链接、用户名与密码，并更新客户端认证设置。':op==='reload'?'Xray 与 Sing-box 的 reload 都会执行配置预检后的重启，并检查监听；连接会短暂中断。Caddy 保留原生重载；all 不包含 Mita，Mita 需显式选择。':op==='update'?'update 只更新脚本，不修改运行配置。已有订阅需再执行 res 才会加入密码认证；二级出站变更需重新配置。':op==='del'?'卸载操作的影响发生在执行命令的 VPS 上。':'管理已有部署；协议表单中的选择不会附加到这条命令。');
+  const source=value('scriptSource');text('source-hint',source==='local'?(!BUILD.remoteAligned?'当前接口尚未发布，请先将配套脚本放到 VPS。':'')+'使用 VPS 上与此 GUI 配套的脚本文件。安装时优先复制它作为 agsbx 快捷命令；agsbxurl 控制后续更新与下载回退来源。':source==='repo'?(BUILD.remoteAligned?'默认使用 GitHub main 的配套脚本。下载和执行发生在 VPS，页面只生成命令文本。':'当前工作区接口尚未发布，请使用配套的 VPS 本地脚本或指定来源。'):source==='custom'?'此 URL 同时传入 agsbxurl，保持本次执行与后续快捷命令来源一致。页面不访问这个地址。':'执行 VPS 上已有的 agsbx。请确认已安装脚本包含本页所使用的变量。');
+  text('operation-hint',op==='rep'?'rep 会停止并重建所选非 Caddy 协议，保留已有 Naive/Caddy；未开订阅时保留证书，无证书时可首次自签。开启订阅必须复用 CA 或申请 IP / 域名证书，相关文件纳入回滚。本页按密码保护开关显式生成 subauth=y 或 n，请确认选择。未选协议可能移除。路径和 SOCKS 凭据会重新生成，请重新导入节点。已有 Naive 二级链路不支持此重建方式。':op==='restore-ip'?'仅用于已有部署：生成 ipv=空值 的恢复命令。按 VPS 保存的快照恢复网络策略；快照不完整时脚本会停止并提示人工处理。':op==='install'?'用于首次安装；开始部署前会准备 agsbx 管理入口，安装中途失败也可进入卸载。已有部署变更协议请选 rep。执行时可能安装依赖、下载核心、修改 VPS 服务与系统网络设置，页面只生成文本。':op==='res'?'res 重启已配置的 Xray / Sing-box / Caddy、Argo 与订阅服务；不包含 Mita。保留已有可信状态的保护开关和密码，旧 HTTP Basic 保护会迁移为内容加密；迁移后用 agsbx list 查看新的订阅 URL，并配置客户端解密密码。缺少认证状态的旧订阅须通过 rep 明确选择。此操作不传入部署表单中的 subauth 或 subpass。':op==='reload'?'Xray 与 Sing-box 的 reload 都会执行配置预检后的重启，并检查监听；连接会短暂中断。Caddy 保留原生重载；all 不包含 Mita，Mita 需显式选择。':op==='update'?'update 只更新脚本，不修改运行配置、密码保护模式或订阅内容；二级出站变更需重新配置。':op==='del'?'卸载操作的影响发生在执行命令的 VPS 上。':'管理已有部署；协议表单中的选择不会附加到这条命令。');
   updateArchitecture(deploy,protocols,cores);
 }
 async function copyCommand(){
