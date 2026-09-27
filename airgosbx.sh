@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-AIRGOSBX_VERSION='V26.09.27.8'
+AIRGOSBX_VERSION='V26.09.27.9'
 # 仅在内置 XHTTP 默认参数改变时更新此标记，普通脚本版本更新不使旧命令失效。
 XHTTP_DEFAULTS_VERSION='V26.09.08.1'
 agsbxurl="${agsbxurl:-https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/main/airgosbx.sh}"
@@ -444,20 +444,18 @@ filter_component_cron(){
   done < "$source"
 }
 
-# 页面不含部署数据；Token 留在 URL fragment，密码仅在同源 HTTPS 请求头中发送。
+# 页面仅写入保护开关；Token 留在 URL fragment，密码仅在同源 HTTPS POST 正文中发送。
 subscription_browser_page(){
+  printf '<!doctype html>\n<!-- AIRGOSBX_SUBSCRIPTION_BROWSER_V1 -->\n<html lang="zh-CN" data-protected="%s"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">\n' "${subscription_auth_mode:-yes}"
   cat <<'AIRGOSBX_SUBSCRIPTION_PAGE'
-<!doctype html>
-<!-- AIRGOSBX_SUBSCRIPTION_BROWSER_V1 -->
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="referrer" content="no-referrer">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'none'; base-uri 'none'; form-action 'none'">
 <title>订阅文件</title><style>
-:root{font:16px/1.6 system-ui,sans-serif;color:#19372f;background:#f4f5f0}body{margin:0;padding:32px 20px}main{max-width:780px;margin:6vh auto;background:#fff;border:1px solid #d4ded5;border-radius:20px;padding:32px}h1{margin:0 0 12px;font-size:28px}p{color:#50645c}.form-row{display:flex;gap:12px;flex-wrap:wrap}label{display:block;margin:24px 0 8px}input{box-sizing:border-box;flex:1;min-width:200px;border:1px solid #aabbb0;border-radius:8px;padding:12px;font:inherit}button,a.download{background:#235e49;color:white;border:0;border-radius:8px;padding:12px 18px;font:inherit}button:disabled,input:disabled{opacity:.5}a.download{display:inline-block;text-decoration:none;margin-top:12px}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f4f5f0;padding:16px;border-radius:8px;font-size:13px}#status{min-height:26px}[hidden]{display:none!important}
-</style></head><body><main><h1>查看订阅文件</h1><p>页面加载完成后，输入独立订阅密码。密码只用于本次 HTTPS 请求。</p>
-<p>如浏览器提示证书错误或“不安全”，请停止输入并核对证书；本页不能判断你是否曾绕过证书警告。</p>
-<form id="access" autocomplete="off"><label for="password">订阅密码</label><div class="form-row"><input id="password" type="password" autocomplete="off" spellcheck="false" autocapitalize="off" maxlength="128" required disabled><button id="submit" type="submit" disabled>查看订阅</button></div></form>
-<p id="status" role="status" aria-live="polite">正在加载页面…</p><a id="download" class="download" hidden>下载订阅文件</a><pre id="content" hidden></pre><noscript><p>请启用 JavaScript 后使用此页面。</p></noscript></main>
+:root{font:16px/1.6 system-ui,sans-serif;color:#19372f;background:#f4f5f0}body{margin:0;padding:24px 16px}main{max-width:440px;margin:12vh auto;background:#fff;border:1px solid #d4ded5;border-radius:16px;padding:24px}main.unlocked{max-width:1100px;margin:16px auto}.form-row,.actions{display:flex;gap:10px;flex-wrap:wrap}input{box-sizing:border-box;flex:1;min-width:0;width:200px;border:1px solid #aabbb0;border-radius:8px;padding:12px;font:inherit}button,a.download{box-sizing:border-box;background:#235e49;color:white;border:0;border-radius:8px;padding:12px 18px;font:inherit;cursor:pointer;text-decoration:none;white-space:nowrap}button:disabled,input:disabled{opacity:.5;cursor:default}button:not(:disabled):active,a.download:active{transform:translateY(1px)}input:focus-visible,button:focus-visible,a:focus-visible{outline:2px solid #235e49;outline-offset:3px}.actions{margin-bottom:16px}.actions button,.actions a{padding:8px 16px;font-size:14px}a.download{background:#e7eee8;color:#235e49}pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;font:14px/1.8 ui-monospace,SFMono-Regular,Consolas,monospace}#status{margin:12px 0 0;color:#9c3535;font-size:14px}[hidden]{display:none!important}
+html[data-protected="no"] #access{display:none}.actions button,.actions a{min-height:44px}
+</style></head><body><main id="panel">
+<form id="access" autocomplete="off"><div class="form-row"><input id="password" type="password" aria-label="订阅密码" placeholder="输入密码" autocomplete="off" spellcheck="false" autocapitalize="off" maxlength="128" required disabled><button id="submit" type="submit" disabled>查看</button></div></form>
+<p id="status" role="status" aria-live="polite" hidden></p><div id="actions" class="actions" hidden><button id="copy" type="button" aria-live="polite">复制全部</button><a id="download" class="download">下载</a></div><pre id="content" hidden></pre><noscript><p>请启用 JavaScript。</p></noscript></main>
 <script>
 (() => {
   'use strict';
@@ -465,18 +463,31 @@ subscription_browser_page(){
   const password = document.getElementById('password');
   const submit = document.getElementById('submit');
   const status = document.getElementById('status');
+  const panel = document.getElementById('panel');
+  const actions = document.getElementById('actions');
+  const copy = document.getElementById('copy');
   const content = document.getElementById('content');
   const download = document.getElementById('download');
+  const requiresPassword = document.documentElement.dataset.protected !== 'no';
   let resource = null;
   let objectUrl = null;
   let activeController = null;
   let requestGeneration = 0;
   let pageActive = true;
   let pageLoaded = false;
+  const showError = (message = '') => {
+    status.textContent = message;
+    status.hidden = !message;
+  };
   const clearOutput = () => {
+    form.hidden = !requiresPassword;
+    panel.classList.remove('unlocked');
+    actions.hidden = true;
+    copy.disabled = false;
+    copy.textContent = '复制全部';
+    showError();
     content.textContent = '';
     content.hidden = true;
-    download.hidden = true;
     download.removeAttribute('href');
     if (objectUrl) URL.revokeObjectURL(objectUrl);
     objectUrl = null;
@@ -489,6 +500,7 @@ subscription_browser_page(){
     password.value = '';
     password.disabled = true;
     submit.disabled = true;
+    submit.textContent = '查看';
     clearOutput();
   };
   const parseCurrentHash = () => {
@@ -496,72 +508,123 @@ subscription_browser_page(){
     password.disabled = true;
     submit.disabled = true;
     if (location.protocol !== 'https:') {
-      status.textContent = '仅允许通过 HTTPS 访问；密码输入已禁用。';
+      showError('请使用 HTTPS 地址。');
       return;
     }
-    const match = /^#([A-Za-z0-9_-]{16,128})\/(jhsub\.txt|clmi\.yaml)$/.exec(location.hash);
+    const match = /^#([A-Za-z0-9_-]{16,128})\/jhsub\.txt$/.exec(location.hash);
     if (!match) {
-      status.textContent = '此地址缺少有效的订阅路径，请使用脚本输出的“浏览器查看”链接。';
+      showError('订阅地址无效。');
       return;
     }
-    resource = {path: '/cgi-bin/sub/' + match[1] + '/' + match[2], name: match[2]};
-    password.disabled = false;
-    submit.disabled = false;
-    status.textContent = '页面已加载。请确认浏览器没有证书警告，再输入密码。';
+    resource = {path: '/cgi-bin/sub/' + match[1] + '/jhsub.txt', rawPath: '/' + match[1] + '/jhsub.txt', name: 'jhsub.txt'};
+    password.disabled = !requiresPassword;
+    submit.disabled = !requiresPassword;
+    showError();
+    if (!requiresPassword) loadContent();
   };
   window.addEventListener('load', () => {
     pageLoaded = true;
     if (pageActive) parseCurrentHash();
   }, {once: true});
-  form.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    if (!pageActive || !resource || location.protocol !== 'https:' || submit.disabled) return;
+  async function loadContent() {
+    if (!pageActive || !resource || location.protocol !== 'https:' || activeController || (requiresPassword && submit.disabled)) return;
     clearOutput();
-    if (!/^[A-Za-z0-9._~-]{16,128}$/.test(password.value)) {
-      status.textContent = '请输入脚本提供的订阅密码（16–128 位）。';
+    if (requiresPassword && !/^[A-Za-z0-9._~-]{16,128}$/.test(password.value)) {
+      showError('密码格式不正确。');
       return;
     }
-    let requestPassword = password.value;
+    let requestPassword = requiresPassword ? password.value : '';
     password.value = '';
     password.disabled = true;
     submit.disabled = true;
-    status.textContent = '正在获取订阅文件…';
+    submit.textContent = '查看中…';
     const controller = new AbortController();
     activeController = controller;
     const generation = ++requestGeneration;
     const timer = setTimeout(() => controller.abort(), 15000);
     try {
-      const response = await fetch(resource.path, {
-        method: 'POST', headers: {'Content-Type': 'text/plain'}, body: requestPassword, credentials: 'omit',
+      const response = await fetch(requiresPassword ? resource.path : resource.rawPath, {
+        method: requiresPassword ? 'POST' : 'GET', headers: requiresPassword ? {'Content-Type': 'text/plain'} : {},
+        body: requiresPassword ? requestPassword : undefined, credentials: 'omit',
         cache: 'no-store', redirect: 'error', referrerPolicy: 'no-referrer', signal: controller.signal
       });
       requestPassword = '';
       if (!pageActive || generation !== requestGeneration) return;
-      if (response.status === 403) throw new Error('密码错误，请重新输入。');
-      if (response.status === 401) throw new Error('服务器仍要求旧版认证，请确认部署了配套版本的脚本。');
-      if (response.status !== 200) throw new Error('订阅文件暂不可用，请核对部署状态。');
+      if (response.status === 403) throw new Error(requiresPassword ? '密码错误。' : '订阅暂不可用。');
+      if (response.status === 401) throw new Error('请更新服务端。');
+      if (response.status !== 200) throw new Error('订阅暂不可用。');
       const text = await response.text();
       if (!pageActive || generation !== requestGeneration) return;
-      if (!text.trim()) throw new Error('订阅文件为空，请核对部署状态。');
+      if (!text.trim()) throw new Error('订阅内容为空。');
+      if (!requiresPassword && !/^[A-Za-z][A-Za-z0-9+.-]*:\/\//m.test(text)) throw new Error('保护设置已更新，请刷新页面。');
       content.textContent = text;
       content.hidden = false;
       objectUrl = URL.createObjectURL(new Blob([text], {type: 'text/plain;charset=utf-8'}));
       download.href = objectUrl;
       download.download = resource.name;
-      download.textContent = '下载 ' + resource.name;
-      download.hidden = false;
-      status.textContent = '已获取 ' + resource.name + '。关闭页面将清除本页显示的内容。';
+      form.hidden = true;
+      showError();
+      panel.classList.add('unlocked');
+      actions.hidden = false;
+      copy.focus({preventScroll: true});
     } catch (error) {
       if (!pageActive || generation !== requestGeneration) return;
-      status.textContent = error.name === 'AbortError' ? '请求超时，请稍后重试。' :
-        error instanceof TypeError ? '请求失败，请检查 HTTPS 连接和订阅服务。' : error.message;
+      showError(error.name === 'AbortError' ? '请求超时，请重试。' :
+        error instanceof TypeError ? '连接失败，请重试。' : error.message);
     } finally {
       requestPassword = '';
       clearTimeout(timer);
       if (activeController === controller) activeController = null;
       if (pageActive && generation === requestGeneration) {
-        password.disabled = false;
-        submit.disabled = false;
+        password.disabled = !requiresPassword || form.hidden;
+        submit.disabled = !requiresPassword || form.hidden;
+        submit.textContent = '查看';
+      }
+    }
+  }
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    loadContent();
+  });
+  copy.addEventListener('click', async () => {
+    if (!pageActive || actions.hidden || copy.disabled || !content.textContent) return;
+    const generation = requestGeneration;
+    const text = content.textContent;
+    copy.disabled = true;
+    let copied = false;
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('fallback');
+      await navigator.clipboard.writeText(text);
+      copied = true;
+    } catch {
+      if (!pageActive || generation !== requestGeneration) return;
+      const area = document.createElement('textarea');
+      area.value = text;
+      area.readOnly = true;
+      area.setAttribute('aria-label', '订阅内容');
+      area.style.position = 'fixed';
+      area.style.left = '-9999px';
+      document.body.append(area);
+      try {
+        area.focus({preventScroll: true});
+        area.select();
+        area.setSelectionRange(0, area.value.length);
+        copied = document.execCommand('copy');
+      } catch {} finally { area.remove(); }
+    } finally {
+      if (pageActive && generation === requestGeneration) {
+        copy.disabled = false;
+        copy.textContent = copied ? '已复制' : '请手动复制';
+        copy.focus({preventScroll: true});
+        if (!copied) {
+          const selection = window.getSelection();
+          if (selection) {
+            const range = document.createRange();
+            range.selectNodeContents(content);
+            selection.removeAllRanges();
+            selection.addRange(range);
+          }
+        }
       }
     }
   });
@@ -569,7 +632,8 @@ subscription_browser_page(){
     pageActive = false;
     resetRequest();
   });
-  window.addEventListener('pageshow', () => {
+  window.addEventListener('pageshow', (event) => {
+    if (!event.persisted) return;
     pageActive = true;
     resetRequest();
     if (pageLoaded) parseCurrentHash();
@@ -1088,11 +1152,9 @@ prepare_subscription_http_tree(){
   mkdir -p -m 700 "$HOME/websbx/cgi-bin" || return 1
   subscription_gateway_wrapper | ip_policy_atomic_write "$HOME/websbx/cgi-bin/sub" 700 || return 1
   subscription_gateway_handler | ip_policy_atomic_write "$HOME/agsbx/sub_gateway.sh" 600 || return 1
+  subscription_browser_page | ip_policy_atomic_write "$HOME/websbx/index.html" 600 || return 1
   if [ "$subscription_auth_mode" = yes ]; then
-    subscription_browser_page | ip_policy_atomic_write "$HOME/websbx/index.html" 600 || return 1
     atomic_text_file "$HOME/agsbx/sub_format" aes-v1 || return 1
-  else
-    rm -f -- "$HOME/websbx/index.html" || return 1
   fi
   subscription_http_tree_valid
 }
@@ -1102,11 +1164,10 @@ subscription_http_tree_valid(){
   local directory config token file hash
   subscription_tree_is_owned && load_subscription_auth || return 1
   [ "$(stat -c '%u:%a' "$HOME/websbx")" = '0:700' ] || return 1
-  if [ -e "$HOME/websbx/index.html" ]; then subscription_browser_page_valid || return 1; fi
+  subscription_browser_page_valid || return 1
   if [ "$subscription_auth_mode" = yes ]; then
     config='# AIRGOSBX_SUBSCRIPTION_CIPHER_V1'
-    [ "$subscription_format" = aes-v1 ] \
-      && subscription_browser_page_valid || return 1
+    [ "$subscription_format" = aes-v1 ] || return 1
   else
     config='# AIRGOSBX_SUBSCRIPTION_AUTH_DISABLED'
   fi
@@ -1691,9 +1752,9 @@ vrow "subpass"  "开启保护时的密码（16-128 位字母、数字或 . _ ~ -
 echo "             subauth 关闭时 YAML/TXT 可直接通过 HTTPS 链接订阅，不生成或输出密码。"
 echo "             开启保护且发布时密码留空，由 VPS 独立随机生成；非空 subpass 未设 subauth 时自动启用。"
 echo "             rep 未指定 subauth/subpass 时沿用已保存的保护开关；res 沿用开关和密码，不轮换。"
-echo "             开启时输出 ClashMi 格式加密订阅，客户端在解密密码栏填同一密码，不需要用户名。"
-echo "             浏览器使用单独的查看链接：HTTPS 页面加载后只需输入密码。密码不拼入 URL。"
-echo "             Shadowrocket 按相同解密逻辑的兼容假设处理，仍待实机验证；不等于所有 Clash 客户端均支持。"
+echo "             开启时输出加密订阅，客户端在解密密码栏填同一密码，不需要用户名。"
+echo "             网页查看仅提供 TXT，支持一键复制；关闭保护直接显示，开启后输入同一密码。"
+echo "             客户端须支持订阅内容解密；不同客户端和版本的支持情况可能不同。"
 
 vg "⑨ Hysteria2 端口跳跃（抗QoS限速）"
 vrow "hyjpt"    "全局跳跃端口，自动分配给激活的hy2核"
@@ -5767,12 +5828,10 @@ verify_subscription_https(){
   else args+=(-servername "$verify_host" -verify_hostname "$verify_host"); fi
   temporary=$(mktemp -d "$HOME/agsbx/.subscription-check.XXXXXX") || return 1
   chmod 700 "$temporary" || { rmdir "$temporary"; return 1; }
-  if [ "$subscription_auth_mode" = yes ]; then
-    if ! subscription_https_request GET /index.html \
-      || ! subscription_response_matches "$HOME/websbx/index.html" "$temporary/response" \
-      || ! subscription_response_headers "$temporary/response" 200 no; then
-      echo "错误：浏览器密码页未通过匿名 HTTPS 下载及正文校验，停止发布。"; failed=yes
-    fi
+  if ! subscription_https_request GET /index.html \
+    || ! subscription_response_matches "$HOME/websbx/index.html" "$temporary/response" \
+    || ! subscription_response_headers "$temporary/response" 200 no; then
+    echo "错误：订阅查看页未通过匿名 HTTPS 下载及正文校验，停止发布。"; failed=yes
   fi
   for file in jhsub.txt clmi.yaml; do
     [ "$failed" = no ] || break
@@ -11873,7 +11932,7 @@ if [ "$sub" = yes ]; then
   if subdomain=$(subscription_certificate_host); then
     suburl="https://${subdomain}:${subport_show}/${subtoken}"
     if { [ "$cip_mode" = publish ] && [ -n "$clash_config" ]; } || { [ "$cip_mode" != publish ] && [ -f "$HOME/websbx/$subtoken/clmi.yaml" ]; }; then
-      clash_sub_info="Clash/Mihomo 本地订阅链接：${suburl}/clmi.yaml"
+      clash_sub_info="Clash 订阅地址：${suburl}/clmi.yaml"
     fi
   else
     [ "$cip_mode" != publish ] || return 1
@@ -11894,24 +11953,23 @@ hr2
 if [ "$subscription_auth_mode" = yes ]; then
 if subscription_http_tree_valid; then
   if [ -n "$clash_sub_info" ]; then
-    echo "ClashMi 格式加密 YAML 订阅：https://${subdomain}:${subport_show}/cgi-bin/sub/${subtoken}/clmi.yaml"
+    echo "Clash 订阅地址：https://${subdomain}:${subport_show}/cgi-bin/sub/${subtoken}/clmi.yaml"
   else echo "本次没有可完整导出的 Mihomo 节点，请使用聚合协议订阅。"; fi
-  echo "ClashMi 格式加密聚合订阅：https://${subdomain}:${subport_show}/cgi-bin/sub/${subtoken}/jhsub.txt"
-  echo "浏览器查看聚合订阅：https://${subdomain}:${subport_show}/index.html#${subtoken}/jhsub.txt"
-  if [ -n "$clash_sub_info" ]; then
-    echo "浏览器查看/下载 YAML：https://${subdomain}:${subport_show}/index.html#${subtoken}/clmi.yaml"
-  fi
-  echo "浏览器请使用上述查看链接：页面加载完成后只需输入订阅密码，无需填写用户名。"
+  echo "聚合订阅地址：https://${subdomain}:${subport_show}/cgi-bin/sub/${subtoken}/jhsub.txt"
+  echo "网页查看：https://${subdomain}:${subport_show}/index.html#${subtoken}/jhsub.txt"
 else
   echo "加密订阅或浏览器入口尚未就绪，未输出新链接；请执行 agsbx res 迁移，保留原订阅密码、Token 与证书。"
 fi
 printf '订阅密码：%s\n' "$subscription_password"
-echo "加密订阅和浏览器查看共用此独立密码，不需要用户名；客户端填写订阅解密密码并保持证书验证开启。"
-echo "Shadowrocket 按 ClashMi 相同解密逻辑的兼容假设处理，尚未实机验证；其他客户端须支持此加密格式。"
-echo "旧 HTTP Basic 订阅迁移后，请复制新的 /cgi-bin/sub/ 链接；原静态地址只提供密文。"
+echo "订阅与网页共用此密码；客户端需支持订阅内容解密。"
 else
 if [ -n "$clash_sub_info" ]; then echo "$clash_sub_info"; else echo "本次没有可完整导出的 Mihomo 节点，请使用聚合协议链接。"; fi
-echo "聚合协议本地订阅地址：${suburl}/jhsub.txt"
+echo "聚合订阅地址：${suburl}/jhsub.txt"
+if subscription_http_tree_valid; then
+  echo "网页查看：https://${subdomain}:${subport_show}/index.html#${subtoken}/jhsub.txt"
+else
+  echo "网页查看入口尚未更新，请执行 agsbx res。"
+fi
 echo "订阅密码保护：关闭；可直接使用以上 HTTPS 链接订阅，无需填写用户名或密码。"
 fi
 echo "clmi.yaml 仅包含可完整导出的 Mihomo 节点（含 Mieru，不含 Naive）；jhsub.txt 包含 Mieru 与 Naive 链接，Naive 另附 Shadowrocket 的 http2/http3 格式。"
