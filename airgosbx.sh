@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-AIRGOSBX_VERSION='V26.09.27.10'
+AIRGOSBX_VERSION='V26.09.27.11'
 # 仅在内置 XHTTP 默认参数改变时更新此标记，普通脚本版本更新不使旧命令失效。
 XHTTP_DEFAULTS_VERSION='V26.09.08.1'
 agsbxurl="${agsbxurl:-https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/main/airgosbx.sh}"
