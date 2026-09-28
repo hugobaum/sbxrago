@@ -5814,7 +5814,7 @@ subscription_https_request(){
 
 # 只连接 VPS 自身，校验证书、匿名密文下载及密码 POST；不把 Token/密码放进进程参数。
 verify_subscription_https(){
-  local token="$1" host verify_host port endpoint temporary file expected failed=no request_path
+  local token="$1" host verify_host port endpoint temporary file expected failed=yes request_path
   local -a args
   load_subscription_auth || return 1
   command -v timeout >/dev/null 2>&1 || { echo "错误：缺少 timeout，无法限制订阅 HTTPS 下载校验时间。"; return 1; }
@@ -5822,16 +5822,23 @@ verify_subscription_https(){
   host=$(subscription_certificate_host) || return 1
   verify_host=${host#[}; verify_host=${verify_host%]}
   port=$(cat "$HOME/agsbx/subport.log") && valid_port "$port" || return 1
-  if [ "$public_listen_address" = '::' ]; then endpoint="[::1]:$port"; else endpoint="127.0.0.1:$port"; fi
-  args=(-connect "$endpoint" -alpn http/1.1 -verify_return_error -quiet -ign_eof)
-  if valid_ip "$verify_host"; then args+=(-verify_ip "$verify_host")
-  else args+=(-servername "$verify_host" -verify_hostname "$verify_host"); fi
   temporary=$(mktemp -d "$HOME/agsbx/.subscription-check.XXXXXX") || return 1
   chmod 700 "$temporary" || { rmdir "$temporary"; return 1; }
-  if ! subscription_https_request GET /index.html \
-    || ! subscription_response_matches "$HOME/websbx/index.html" "$temporary/response" \
-    || ! subscription_response_headers "$temporary/response" 200 no; then
-    echo "错误：订阅查看页未通过匿名 HTTPS 下载及正文校验，停止发布。"; failed=yes
+  # 公网监听配置为 :: 不代表 VPS 的 IPv6 回环地址可连接；以完整 HTTPS 校验选择地址。
+  # 只改变连接地址，保留证书身份与 Host；选定后所有订阅检查固定使用同一地址。
+  for endpoint in "127.0.0.1:$port" "[::1]:$port"; do
+    args=(-connect "$endpoint" -alpn http/1.1 -verify_return_error -quiet -ign_eof)
+    if valid_ip "$verify_host"; then args+=(-verify_ip "$verify_host")
+    else args+=(-servername "$verify_host" -verify_hostname "$verify_host"); fi
+    if subscription_https_request GET /index.html \
+      && subscription_response_matches "$HOME/websbx/index.html" "$temporary/response" \
+      && subscription_response_headers "$temporary/response" 200 no; then
+      failed=no
+      break
+    fi
+  done
+  if [ "$failed" = yes ]; then
+    echo "错误：订阅查看页在 VPS 的 IPv4、IPv6 回环地址上均未通过匿名 HTTPS 下载及正文校验，停止发布。"
   fi
   for file in jhsub.txt clmi.yaml; do
     [ "$failed" = no ] || break
