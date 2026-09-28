@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-AIRGOSBX_VERSION='V26.09.27.9'
+AIRGOSBX_VERSION='V26.09.27.10'
 # 仅在内置 XHTTP 默认参数改变时更新此标记，普通脚本版本更新不使旧命令失效。
 XHTTP_DEFAULTS_VERSION='V26.09.08.1'
 agsbxurl="${agsbxurl:-https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/main/airgosbx.sh}"
@@ -1726,6 +1726,7 @@ vrow "cdnym"    "CDN host域名/优选IP域名（须已解析到CF）"
 vg "⑦ TLS 证书（无订阅时可自动自签；开启订阅必须使用公信 CA）"
 vrow "alns"     "acme.sh 证书开关：y＝需要证书时交互选择申请方式"
 vrow "acmemode" "预设方式：ip / http / alpn / dns（留空则交互选择）"
+vrow "acmeca"   "独立 acme.sh：auto / letsencrypt / zerossl / sslcom；不改变 Caddy 的 CA"
 vrow "certip"   "IP 短期证书的一个或两个公网 IP（空格分隔）"
 vrow "certym"   "域名；兼容旧用法：单独设置时默认 HTTP-01"
 vrow "certwild" "DNS-01 时填 y，同时申请根域名与泛域名"
@@ -1881,6 +1882,7 @@ printf '%s\n' "${C_BOLD}用法：agsbx <命令> [参数]　（已安装后任意
 vg "① 脚本管理"
 vrow "update"   "更新脚本自身到最新版（不动配置与内核）"
 vrow "rep"      "事务重置非Caddy协议；保留Naive/Caddy，开启订阅时可复用或申请CA证书"
+vrow "cert"     "维护已有证书：接回 Caddy 后台签发结果，或按原 ACME 账户正常续期；不强制重签"
 vrow "del"      "卸载 agsbx（清进程/服务/定时任务/文件）"
 
 vg "② 查看 / 信息"
@@ -2543,6 +2545,7 @@ deployment_port_specs(){
 validate_deployment_inputs(){
   local flag variable file network value key has_link_protocol=no
   validate_zerossl_eab_inputs || return 1
+  case "${acmeca:-auto}" in auto|letsencrypt|zerossl|sslcom) ;; *) echo "错误：acmeca 仅支持 auto/letsencrypt/zerossl/sslcom。"; return 1 ;; esac
   while IFS=: read -r flag variable file network; do
     [ "${!flag}" = yes ] || continue
     value=${!variable}
@@ -2990,7 +2993,7 @@ esac
 [ -z "${xvargopt+x}" ] || { xvargo=yes; vmag=yes; }
 case "$1" in
   ''|rep) validate_xray_options || exit 1 ;;
-  del|list|status|stats|top|update|res|start|stop|restart|reload|upx|ups|downx|downs|__cert_renew|__cert_reload|__restore_hops) ;;
+  del|list|status|stats|top|update|res|cert|start|stop|restart|reload|upx|ups|downx|downs|__cert_renew|__cert_reload|__restore_hops) ;;
   *) echo "错误：未知命令 $1，请使用 agsbx help。"; exit 1 ;;
 esac
 # 布尔开关 sub 归一化：仅 sub=y/yes/1 视为显式启用，其余值或空/未设一律=关闭，统一规范（禁用 sub=on 之类写法）。
@@ -3043,7 +3046,7 @@ if [ "$1" = "rep" ]; then
 [ -n "$naive" ] || [ "$mierup" = yes ] || [ "$vwp" = yes ] || [ "$sop" = yes ] || [ "$vxp" = yes ] || [ "$ssp" = yes ] || [ "$vlp" = yes ] || [ "$vmp" = yes ] || [ "$hyp" = yes ] || [ "$tup" = yes ] || [ "$xhp" = yes ] || [ "$anp" = yes ] || [ "$arp" = yes ] || [ "$xhyp" = yes ] || [ "$xdns" = yes ] || [ "$xicp" = yes ] || [ "$xvcdn" = yes ] || [ "$xvargo" = yes ] || { echo "提示：rep重置协议时，请在脚本前至少设置一个协议变量哦! 💣"; exit; }
 fi
 else
-[ "$1" = "del" ] || [ -n "$naive" ] || [ "$mierup" = yes ] || [ "$vwp" = yes ] || [ "$sop" = yes ] || [ "$vxp" = yes ] || [ "$ssp" = yes ] || [ "$vlp" = yes ] || [ "$vmp" = yes ] || [ "$hyp" = yes ] || [ "$tup" = yes ] || [ "$xhp" = yes ] || [ "$anp" = yes ] || [ "$arp" = yes ] || [ "$xhyp" = yes ] || [ "$xdns" = yes ] || [ "$xicp" = yes ] || [ "$xvcdn" = yes ] || [ "$xvargo" = yes ] || { echo "提示：未安装airgosbx脚本，请在脚本前至少设置一个协议变量哦！💣"; exit; }
+[ "$1" = "del" ] || [ "$1" = cert ] || [ "$1" = __cert_renew ] || [ -n "$naive" ] || [ "$mierup" = yes ] || [ "$vwp" = yes ] || [ "$sop" = yes ] || [ "$vxp" = yes ] || [ "$ssp" = yes ] || [ "$vlp" = yes ] || [ "$vmp" = yes ] || [ "$hyp" = yes ] || [ "$tup" = yes ] || [ "$xhp" = yes ] || [ "$anp" = yes ] || [ "$arp" = yes ] || [ "$xhyp" = yes ] || [ "$xdns" = yes ] || [ "$xicp" = yes ] || [ "$xvcdn" = yes ] || [ "$xvargo" = yes ] || { echo "提示：未安装airgosbx脚本，请在脚本前至少设置一个协议变量哦！💣"; exit; }
 fi
 uuid=${uuid:-''}
 obfs_pass=${obfs_pass:-''}
@@ -3082,6 +3085,7 @@ secuot=${secuot:-off}
 export name=${name:-''}
 export alns=${alns:-''}
 export acmemode=${acmemode:-''}
+export acmeca=${acmeca:-''}
 export certip=${certip:-''}
 export certym=${certym:-''}
 export certwild=${certwild:-''}
@@ -3136,7 +3140,7 @@ echo "  · 节点信息：agsbx list      ｜ 资源/流量：agsbx status"
 echo "  · 修改型操作需要系统 flock；证书维护任务与部署操作互斥"
 echo "  · rep 后请重新导入链接；新 SOCKS 凭据、传输路径及订阅令牌独立保存"
 echo "  · 重置配置：变量组 agsbx rep ｜ 更新脚本：agsbx update ｜ 卸载：agsbx del"
-echo "    rep 保留 Naive/Caddy 与全部证书；如需变更这些内容，必须先 agsbx del 再重装"
+echo "    rep 保留 Naive/Caddy 与全部证书；证书维护用 agsbx cert，不要为证书问题卸载重装"
 echo "  · 内核启停：agsbx start｜stop｜restart｜reload [xray｜sb｜caddy｜mita｜all]"
 echo "  · 升级内核：agsbx upx/ups [版本]  ｜ 降级：agsbx downx/downs <版本>"
 hr
@@ -5664,7 +5668,7 @@ echo "$1" > "$HOME/agsbx/cert_source"
 echo "$2" > "$HOME/agsbx/cert_identifier"
 }
 validate_certificate_bundle(){
-local cert_file="$1" key_file="$2" source="$3" identifier threshold cert_public key_public
+local cert_file="$1" key_file="$2" source="$3" identifier cert_public key_public
 shift 3
 [ -s "$cert_file" ] && [ -s "$key_file" ] || return 1
 openssl x509 -noout -in "$cert_file" >/dev/null 2>&1 || return 1
@@ -5672,12 +5676,8 @@ openssl pkey -noout -in "$key_file" >/dev/null 2>&1 || return 1
 cert_public=$(openssl x509 -pubkey -noout -in "$cert_file" 2>/dev/null | openssl pkey -pubin -outform DER 2>/dev/null | openssl dgst -sha256 2>/dev/null)
 key_public=$(openssl pkey -in "$key_file" -pubout -outform DER 2>/dev/null | openssl dgst -sha256 2>/dev/null)
 [ -n "$cert_public" ] && [ "$cert_public" = "$key_public" ] || return 1
-case "$source" in
-  acme-ip) threshold=86400 ;;
-  acme-http|acme-alpn|acme-dns) threshold=2592000 ;;
-  *) threshold=0 ;;
-esac
-openssl x509 -checkend "$threshold" -noout -in "$cert_file" >/dev/null 2>&1 || return 1
+# 是否仍可使用与是否到了续期窗口分开判断；续期时间交给原签发客户端。
+openssl x509 -checkend 0 -noout -in "$cert_file" >/dev/null 2>&1 || return 1
 if [ "$source" != selfsigned ]; then
   openssl x509 -noout -ext subjectAltName -in "$cert_file" 2>/dev/null | grep -Eq 'DNS:|IP Address:' || return 1
 fi
@@ -5990,54 +5990,110 @@ setup_selfsigned_certificate(){
   write_cert_fingerprint
 }
 ensure_official_acme(){
-local mode="$1"
-# 主脚本与 DNS hook 必须固定到同一官方提交；升级时同步更新此值并重新审阅，禁止直接执行可变 master。
-local acme_ref="2feb392bd0e3964d9bf68871ae804578d9d5ca80"
-local acme_script="$HOME/agsbx/acme.sh"
-local acme_tmp="$HOME/agsbx/.acme.sh.$$"
-local acme_ref_file="$HOME/agsbx/acme_upstream_ref"
-local cf_hook="$HOME/agsbx/dnsapi/dns_cf.sh"
-local cf_hook_tmp="$HOME/agsbx/dnsapi/.dns_cf.sh.$$"
-local cf_hook_ref_file="$HOME/agsbx/dnsapi/.dns_cf_ref"
-local refresh=no
-[ -s "$acme_script" ] || refresh=yes
-[ "$(cat "$acme_ref_file" 2>/dev/null)" = "$acme_ref" ] || refresh=yes
-if [ "$refresh" = yes ]; then
-  echo "准备安装固定到官方提交 ${acme_ref:0:12} 的 acme.sh。"
-  fetch_file "https://raw.githubusercontent.com/acmesh-official/acme.sh/$acme_ref/acme.sh" "$acme_tmp" || {
-    rm -f "$acme_tmp"
-    echo "错误：无法从 acmesh-official/acme.sh 官方仓库下载脚本。"
-    return 1
-  }
-  head -n 1 "$acme_tmp" | grep -q '^#!/' || {
-    rm -f "$acme_tmp"
-    echo "错误：下载到的 acme.sh 文件格式异常。"
-    return 1
-  }
-  mv "$acme_tmp" "$acme_script" || return 1
-  echo "$acme_ref" > "$acme_ref_file"
+local mode="$1" directory="$HOME/agsbx" metadata acme_ref old_ref old_version new_version
+local need_hook=no old_ok=no stage='' failure='' file rollback_ok=yes
+local -a files=(acme.sh acme_upstream_ref) changed=()
+# 每次申请或续期都查询官方 latest 正式发布；主脚本与已安装的 DNS hook 同步更新。
+if [ "$mode" = dns ] || [ -e "$directory/dnsapi/dns_cf.sh" ] || [ -L "$directory/dnsapi/dns_cf.sh" ] \
+  || [ -e "$directory/dnsapi/.dns_cf_ref" ] || [ -L "$directory/dnsapi/.dns_cf_ref" ]; then
+  need_hook=yes
+  files+=(dnsapi/dns_cf.sh dnsapi/.dns_cf_ref)
 fi
-chmod 700 "$acme_script" 2>/dev/null
-if [ "$mode" = ip ] && ! grep -q -- '--certificate-profile' "$acme_script"; then
-  echo "错误：固定版本的 acme.sh 不支持 IP 证书参数。"
+if [ -L "$directory/dnsapi" ] || { [ -e "$directory/dnsapi" ] && [ ! -d "$directory/dnsapi" ]; }; then
+  echo "错误：ACME DNS hook 目录异常，未更新客户端。"; return 1
+fi
+for file in "${files[@]}"; do
+  if [ -L "$directory/$file" ] || { [ -e "$directory/$file" ] && [ ! -f "$directory/$file" ]; }; then
+    echo "错误：ACME 文件类型异常：$file，未更新客户端。"; return 1
+  fi
+done
+# API 或下载暂时失败时，仅复用通过静态检查且主脚本/hook 版本标记一致的完整旧版。
+old_ref=$(cat "$directory/acme_upstream_ref" 2>/dev/null)
+old_version=$(sed -n -e 's/^VER="\([0-9][0-9.]*\)"$/\1/p' -e 's/^VER=\([0-9][0-9.]*\)$/\1/p' "$directory/acme.sh" 2>/dev/null)
+if [ -s "$directory/acme.sh" ] && head -n 1 "$directory/acme.sh" | grep -q '^#!/' \
+  && bash -n "$directory/acme.sh" 2>/dev/null \
+  && [[ "$old_version" =~ ^[0-9]+(\.[0-9]+){1,3}$ ]] \
+  && { [[ "$old_ref" =~ ^[0-9a-f]{40}$ ]] || [ "${old_ref#v}" = "$old_version" ]; }; then
+  old_ok=yes
+fi
+if [ "$need_hook" = yes ] && { [ ! -s "$directory/dnsapi/dns_cf.sh" ] \
+  || [ "$(cat "$directory/dnsapi/.dns_cf_ref" 2>/dev/null)" != "$old_ref" ] \
+  || ! head -n 1 "$directory/dnsapi/dns_cf.sh" | grep -q '^#!/' \
+  || ! grep -Eq '^dns_cf_add\(\)[[:space:]]*\{' "$directory/dnsapi/dns_cf.sh" \
+  || ! grep -Eq '^dns_cf_rm\(\)[[:space:]]*\{' "$directory/dnsapi/dns_cf.sh" \
+  || ! bash -n "$directory/dnsapi/dns_cf.sh" 2>/dev/null; }; then
+  old_ok=no
+fi
+if [ "$mode" = ip ] && ! grep -q -- '--certificate-profile' "$directory/acme.sh" 2>/dev/null; then old_ok=no; fi
+while :; do
+  if ! metadata=$(release_json acmesh-official/acme.sh latest) \
+    || ! acme_ref=$(release_tag "$metadata") \
+    || ! [[ "$acme_ref" =~ ^v?[0-9]+(\.[0-9]+){1,3}$ ]] \
+    || ! printf '%s\n' "$metadata" | grep -Eq '^[[:space:]]*"draft":[[:space:]]*false[[:space:]]*,?[[:space:]]*$' \
+    || ! printf '%s\n' "$metadata" | grep -Eq '^[[:space:]]*"prerelease":[[:space:]]*false[[:space:]]*,?[[:space:]]*$'; then
+    failure="无法确认 acme.sh 官方最新正式版"; break
+  fi
+  [ "$old_ok" != yes ] || [ "$old_ref" != "$acme_ref" ] || return 0
+  echo "准备更新 acme.sh 至官方最新正式版 $acme_ref。"
+  stage=$(mktemp -d "$directory/.acme-update.XXXXXX") || { failure="无法创建 ACME 更新暂存目录"; break; }
+  mkdir -p "$stage/new/dnsapi" "$stage/old/dnsapi" || { failure="无法准备 ACME 更新目录"; break; }
+  if ! fetch_file "https://raw.githubusercontent.com/acmesh-official/acme.sh/$acme_ref/acme.sh" "$stage/new/acme.sh"; then
+    failure="无法下载官方 acme.sh $acme_ref"; break
+  fi
+  new_version=$(sed -n -e 's/^VER="\([0-9][0-9.]*\)"$/\1/p' -e 's/^VER=\([0-9][0-9.]*\)$/\1/p' "$stage/new/acme.sh")
+  if ! head -n 1 "$stage/new/acme.sh" | grep -q '^#!/' \
+    || [ "$new_version" != "${acme_ref#v}" ] || ! bash -n "$stage/new/acme.sh" \
+    || { [ "$mode" = ip ] && ! grep -q -- '--certificate-profile' "$stage/new/acme.sh"; }; then
+    failure="下载的 acme.sh 版本、格式或语法检查失败"; break
+  fi
+  if [ "$need_hook" = yes ]; then
+    if ! fetch_file "https://raw.githubusercontent.com/acmesh-official/acme.sh/$acme_ref/dnsapi/dns_cf.sh" "$stage/new/dnsapi/dns_cf.sh" \
+      || ! head -n 1 "$stage/new/dnsapi/dns_cf.sh" | grep -q '^#!/' \
+      || ! grep -Eq '^dns_cf_add\(\)[[:space:]]*\{' "$stage/new/dnsapi/dns_cf.sh" \
+      || ! grep -Eq '^dns_cf_rm\(\)[[:space:]]*\{' "$stage/new/dnsapi/dns_cf.sh" \
+      || ! bash -n "$stage/new/dnsapi/dns_cf.sh"; then
+      failure="同一正式版的 Cloudflare DNS hook 下载或检查失败"; break
+    fi
+    printf '%s\n' "$acme_ref" > "$stage/new/dnsapi/.dns_cf_ref" \
+      && chmod 700 "$stage/new/dnsapi/dns_cf.sh" && chmod 600 "$stage/new/dnsapi/.dns_cf_ref" \
+      && mkdir -p "$directory/dnsapi" || { failure="无法准备 DNS hook 和版本标记"; break; }
+  fi
+  printf '%s\n' "$acme_ref" > "$stage/new/acme_upstream_ref" \
+    && chmod 700 "$stage/new/acme.sh" && chmod 600 "$stage/new/acme_upstream_ref" \
+    || { failure="无法准备 acme.sh 和版本标记"; break; }
+  # 先备份所有目标，再替换；任一文件或标记替换失败都恢复本次改动。
+  for file in "${files[@]}"; do
+    if [ -e "$directory/$file" ] && ! cp -p "$directory/$file" "$stage/old/$file"; then
+      failure="无法备份原 ACME 文件：$file"; break
+    fi
+  done
+  [ -z "$failure" ] || break
+  for file in "${files[@]}"; do
+    changed+=("$file")
+    mv -f "$stage/new/$file" "$directory/$file" || { failure="无法替换 ACME 文件：$file"; break; }
+  done
+  [ -z "$failure" ] || break
+  rm -rf -- "$stage"
+  return 0
+done
+for file in "${changed[@]}"; do
+  if [ -e "$stage/old/$file" ]; then
+    mv -f "$stage/old/$file" "$directory/$file" || rollback_ok=no
+  else
+    rm -f -- "$directory/$file" || rollback_ok=no
+  fi
+done
+if [ "$rollback_ok" != yes ]; then
+  echo "错误：$failure，且恢复旧文件失败；备份保留在 $stage，已停止 ACME 操作。"
   return 1
 fi
-if [ "$mode" = dns ] && { [ ! -s "$cf_hook" ] || [ "$(cat "$cf_hook_ref_file" 2>/dev/null)" != "$acme_ref" ]; }; then
-  mkdir -p "$HOME/agsbx/dnsapi"
-  fetch_file "https://raw.githubusercontent.com/acmesh-official/acme.sh/$acme_ref/dnsapi/dns_cf.sh" "$cf_hook_tmp" || {
-    rm -f "$cf_hook_tmp"
-    echo "错误：无法从官方仓库下载 Cloudflare DNS hook。"
-    return 1
-  }
-  grep -q 'dns_cf_add()' "$cf_hook_tmp" || {
-    rm -f "$cf_hook_tmp"
-    echo "错误：下载到的 Cloudflare DNS hook 格式异常。"
-    return 1
-  }
-  mv "$cf_hook_tmp" "$cf_hook" || return 1
-  echo "$acme_ref" > "$cf_hook_ref_file"
-  chmod 700 "$cf_hook" 2>/dev/null
+[ -z "$stage" ] || rm -rf -- "$stage"
+if [ "$old_ok" = yes ]; then
+  echo "警告：$failure；本次继续使用已有完整版本 $old_ref，下次申请或续期再检查更新。"
+  return 0
 fi
+echo "错误：$failure，且没有完整可用的旧版 acme.sh，已停止 ACME 操作。"
+return 1
 }
 setup_external_certificate(){
 local acme_cert_file="$HOME/agsbx/acmecer/cert.pem"
@@ -6194,14 +6250,246 @@ persist_zerossl_eab(){
   fi
 }
 
+# Caddy 签发失败时关闭受管启动项，保留服务定义、配置、账户和证书。
+caddy_certificate_autostart(){
+  local enabled="$1" before after line expected state
+  if managed_service_state caddy; then
+    if pidof systemd >/dev/null 2>&1; then
+      if [ "$enabled" = yes ]; then systemctl enable "$managed_sd" >/dev/null
+      else systemctl --quiet disable "$managed_sd"; fi
+    else
+      if [ "$enabled" = yes ]; then rc-update add "$managed_rc" default
+      else rc-update del "$managed_rc" default; fi
+    fi
+    return $?
+  else
+    state=$?
+    [ "$state" = 1 ] || { echo "错误：Caddy 服务归属无法确认，未修改开机启动。"; return 1; }
+  fi
+  # 无 init 系统时只替换本脚本已知的 Caddy 启动行，不处理其他程序的任务。
+  expected=$(component_cron_line caddy) || return 1
+  before=$(mktemp) && after=$(mktemp) || return 1
+  read_crontab_or_empty "$before" || { rm -f -- "$before" "$after"; return 1; }
+  while IFS= read -r line || [ -n "$line" ]; do
+    [ "$line" != "$expected" ] && [ "$line" != "$expected # AIRGOSBX_CORE" ] || continue
+    if legacy_naive_cron_matches "$line"; then
+      # 旧任务同时启动 Sing-box 与 Caddy；失败时仍保留 Sing-box 的开机启动。
+      line="$(component_cron_line sing-box) # AIRGOSBX_CORE"
+    fi
+    printf '%s\n' "$line" >> "$after" || { rm -f -- "$before" "$after"; return 1; }
+  done < "$before"
+  if [ "$enabled" = yes ]; then
+    printf '%s # AIRGOSBX_CORE\n' "$expected" >> "$after" || { rm -f -- "$before" "$after"; return 1; }
+  fi
+  crontab "$after" || { rm -f -- "$before" "$after"; return 1; }
+  rm -f -- "$before" "$after"
+}
+
+stop_failed_caddy_issuance(){
+  local status=0
+  stop_managed_service caddy || status=1
+  caddy_certificate_autostart no || status=1
+  if agsbx_component_running caddy; then
+    echo "错误：Caddy 仍在运行，未能确认终止后台申请；请检查受管服务。"; return 1
+  fi
+  [ "$status" = 0 ] || { echo "错误：Caddy 停止或关闭开机启动失败，请检查服务状态。"; return 1; }
+  echo "已停止受管 Caddy 并关闭其开机启动；保留账户、配置和证书，等待手动处理。"
+}
+
+caddy_shared_paths_match(){
+  local config mismatched=no
+  for config in xr.json sb.json; do
+    [ -s "$HOME/agsbx/$config" ] || continue
+    # 只检查本脚本目录中的证书字段；不改写用户配置或 Caddy 的 CA 存储。
+    if ! awk -F '"' -v root="$HOME/agsbx/" -v cert="$tls_cert_file" -v key="$tls_key_file" '
+      {for(i=2;i<=NF;i+=2) {
+        field=$i; value=$(i+2)
+        if(index(value,root)!=1) continue
+        if((field=="certificateFile" || field=="certificate_path") && value!=cert) bad=1
+        if((field=="keyFile" || field=="key_path") && value!=key) bad=1
+      }}
+      END {exit bad ? 1 : 0}' "$HOME/agsbx/$config"; then
+      echo "$config 仍引用旧证书路径，需要用原协议参数执行 agsbx rep 重建配置（保留 Caddy）。"
+      mismatched=yes
+    fi
+  done
+  [ "$mismatched" = no ]
+}
+
+recover_caddy_certificate(){
+  local identifier="$1" cert key
+  valid_domain "$identifier" || return 1
+  [ -s "$HOME/agsbx/Caddyfile" ] && [ -d "$HOME/agsbx/caddy_storage" ] || return 1
+  while IFS= read -r -d '' cert; do
+    key="${cert%.*}.key"
+    validate_certificate_bundle "$cert" "$key" caddy "$identifier" || continue
+    atomic_text_file "$HOME/agsbx/cert_mode" caddy \
+      && record_cert_source caddy "$identifier" && record_tls_cert_paths "$cert" "$key" \
+      && atomic_text_file "$HOME/agsbx/sni.txt" "$identifier" || return 1
+    tls_cert_ready=yes
+    return 0
+  done < <(find "$HOME/agsbx/caddy_storage" -type f -iname "$identifier.crt" -print0 2>/dev/null)
+  return 1
+}
+
+# 接回已签发但尚未完成安装的证书；返回 2 表示没有可复用证书，返回 1 表示安装失败。
+recover_acme_certificate(){
+  local identifier="$1" source="$2" directory="$HOME/agsbx/acme/${1}_ecc" webroot
+  shift 2
+  local cert="$directory/fullchain.cer" key="$directory/$identifier.key"
+  validate_certificate_bundle "$cert" "$key" "$source" "$@" \
+    && validate_public_certificate "$cert" "$key" "$identifier" || return 2
+  [ -f "$directory/$identifier.conf" ] && [ ! -L "$directory/$identifier.conf" ] || {
+    echo "错误：已有有效 ACME 证书，但续期配置缺失；已保留证书，不重新下单。"; return 1
+  }
+  if grep -q '^Le_ReloadCmd=' "$directory/$identifier.conf"; then
+    neutralize_legacy_acme_reload "$identifier" || return 1
+  fi
+  if valid_ip "$identifier"; then source=acme-ip
+  else
+    webroot=$(sed -n "s/^Le_Webroot='\([^']*\)'$/\1/p" "$directory/$identifier.conf")
+    case "$webroot" in dns_cf) source=acme-dns ;; alpn) source=acme-alpn ;; no) source=acme-http ;; esac
+  fi
+  ensure_official_acme "${source#acme-}" || return 1
+  mkdir -p "$HOME/agsbx/acmecer" || return 1
+  # 安装证书只复制现有产物并登记后续复制路径，不创建新订单。
+  bash 8>&- "$HOME/agsbx/acme.sh" --home "$HOME/agsbx/acme" --install-cert -d "$identifier" --ecc \
+    --fullchain-file "$HOME/agsbx/acmecer/cert.pem" --key-file "$HOME/agsbx/acmecer/private.key" --reloadcmd true \
+    >> "$HOME/agsbx/acme_issue.log" 2>&1 || return 1
+  validate_certificate_bundle "$HOME/agsbx/acmecer/cert.pem" "$HOME/agsbx/acmecer/private.key" "$source" "$@" || return 1
+  chmod 600 "$HOME/agsbx/acmecer/private.key" || return 1
+  atomic_text_file "$HOME/agsbx/cert_mode" ca \
+    && record_cert_source "$source" "$identifier" \
+    && record_tls_cert_paths "$HOME/agsbx/acmecer/cert.pem" "$HOME/agsbx/acmecer/private.key" \
+    && atomic_text_file "$HOME/agsbx/sni.txt" "$identifier" && register_acme_cron || return 1
+  tls_cert_source="恢复 ACME 已签发证书（未重新申请）"
+  echo "$tls_cert_source"
+}
+
+# 仅保存等待截止时间；不保存邮箱、账户密钥或完整 CA 响应。
+acme_ca_retry_ready(){
+  local ca="$1" path="$HOME/agsbx/acme/.retry_after_$1" until now
+  case "$ca" in letsencrypt|zerossl|sslcom) ;; *) return 1 ;; esac
+  [ -e "$path" ] || [ -L "$path" ] || return 0
+  [ -f "$path" ] && [ ! -L "$path" ] && until=$(cat "$path") \
+    && [[ "$until" =~ ^[0-9]{1,12}$ ]] && now=$(date +%s) || {
+    echo "跳过 $ca：限流等待记录异常，请保留账户并检查 $path。"; return 1
+  }
+  if [ "$now" -lt "$until" ]; then
+    echo "跳过 $ca：仍在限流等待期，最早重试时间为 $(date -u -d "@$until" '+%Y-%m-%d %H:%M:%S UTC' 2>/dev/null || printf '%s' "$until")。"
+    return 1
+  fi
+}
+
+record_acme_rate_limit(){
+  local ca="$1" log="$2" retry seconds until now
+  case "$ca" in letsencrypt|zerossl|sslcom) ;; *) return 1 ;; esac
+  grep -Eiq 'rateLimited|rate[ -]limit|too many (new|certificates|failed|requests)' "$log" || return 0
+  now=$(date +%s) || return 1
+  retry=$(sed -nE 's/.*retry after ([0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9]{2}:[0-9]{2}:[0-9]{2}).*/\1/p' "$log" | tail -1)
+  until=''
+  [ -z "$retry" ] || until=$(date -u -d "${retry/T/ }" +%s 2>/dev/null)
+  if ! [[ "$until" =~ ^[0-9]{1,12}$ ]]; then
+    seconds=$(sed -nE 's/.*[Rr]etry-[Aa]fter:[[:space:]]*([0-9]+)[[:space:]]*\r?$/\1/p' "$log" | tail -1)
+    if [[ "$seconds" =~ ^[0-9]{1,9}$ ]]; then until=$((now + 10#$seconds)); fi
+  fi
+  if ! [[ "$until" =~ ^[0-9]{1,12}$ ]] || [ "$until" -le "$now" ]; then
+    until=$((now + 86400))
+    echo "$ca 返回限流但未提供可识别的恢复时间；本地先暂停 24 小时，实际恢复以 CA 为准。"
+  else
+    echo "$ca 返回限流，已记录 CA 指定的最早重试时间。"
+  fi
+  atomic_text_file "$HOME/agsbx/acme/.retry_after_$ca" "$until"
+}
+
+renew_managed_acme_certificate(){
+  local identifier source mode api ca log status conf
+  identifier=$(cat "$HOME/agsbx/cert_identifier") && source=$(cat "$HOME/agsbx/cert_source") || return 1
+  valid_domain "$identifier" || valid_ip "$identifier" || return 1
+  case "$source" in acme-ip|acme-http|acme-alpn|acme-dns) mode=${source#acme-} ;; *) return 1 ;; esac
+  conf="$HOME/agsbx/acme/${identifier}_ecc/$identifier.conf"
+  [ -f "$conf" ] && [ ! -L "$conf" ] || return 1
+  api=$(sed -n "s/^Le_API='\([^']*\)'$/\1/p" "$conf")
+  case "$api" in
+    https://acme-v02.api.letsencrypt.org/directory) ca=letsencrypt ;;
+    https://acme.zerossl.com/v2/DV90) ca=zerossl ;;
+    https://acme.ssl.com/sslcom-dv-ecc) ca=sslcom ;;
+    *) echo "错误：无法确认原签发 CA，保留证书与账户，未发起续期。"; return 1 ;;
+  esac
+  acme_ca_retry_ready "$ca" || return 1
+  command -v timeout >/dev/null 2>&1 || { echo "错误：缺少 timeout，未启动续期。"; return 1; }
+  neutralize_legacy_acme_reload "$identifier" && ensure_official_acme "$mode" || return 1
+  log=$(mktemp "$HOME/agsbx/acme/.renew.XXXXXX") || return 1
+  # 续期只使用原账户和原验证方式，最多 600 秒；不在后台循环或强制重新下单。
+  timeout -k 2 600 bash 8>&- "$HOME/agsbx/acme.sh" --home "$HOME/agsbx/acme" --renew -d "$identifier" --ecc > "$log" 2>&1
+  status=$?
+  cat "$log" >> "$HOME/agsbx/acme_issue.log" || { rm -f -- "$log"; return 1; }
+  chmod 600 "$HOME/agsbx/acme_issue.log" || { rm -f -- "$log"; return 1; }
+  if [ "$status" != 0 ] && [ "$status" != 2 ]; then
+    record_acme_rate_limit "$ca" "$log" || { rm -f -- "$log"; return 1; }
+    rm -f -- "$log"
+    echo "本次 ACME 续期失败或超时，已结束；未启动后台重试。详情见 $HOME/agsbx/acme_issue.log。"
+    return 1
+  fi
+  rm -f -- "$log"
+  recover_acme_certificate "$identifier" "$source" "$identifier" || return 1
+  reload_shared_certificate
+}
+
+maintain_certificate(){
+  local source identifier remaining=60 cert directory candidate=''
+  source=$(cat "$HOME/agsbx/cert_source" 2>/dev/null)
+  if [ "$source" = caddy ] || [ -s "$HOME/agsbx/Caddyfile" ]; then
+    identifier=$(cat "$HOME/agsbx/naive_domain") && valid_domain "$identifier" || return 1
+    if ! agsbx_component_running caddy; then
+      kctl start caddy || { stop_failed_caddy_issuance; return 1; }
+    fi
+    while [ "$remaining" -gt 0 ]; do
+      if recover_caddy_certificate "$identifier"; then
+        caddy_certificate_autostart yes || return 1
+        if ! caddy_shared_paths_match; then
+          echo "Caddy 证书已就绪，但共享 TLS 配置尚未更新；本次不记录重载成功，请保留证书并完成上述 rep。"
+          return 1
+        fi
+        reload_shared_certificate && setup_caddy_cert_reload || return 1
+        show_tls_cert_summary "已接回 Caddy 证书" "$identifier"
+        return 0
+      fi
+      sleep 1; remaining=$((remaining - 1))
+    done
+    stop_failed_caddy_issuance || return 1
+    echo "60 秒内证书仍未就绪；请先检查 DNS、端口与 CA 错误，再手动执行 agsbx cert。"
+    return 1
+  fi
+  if [ -z "$source" ] && [ -d "$HOME/agsbx/acme" ]; then
+    while IFS= read -r -d '' cert; do
+      directory=${cert%/*}; identifier=${directory##*/}; identifier=${identifier%_ecc}
+      { valid_ip "$identifier" || valid_domain "$identifier"; } || continue
+      validate_certificate_bundle "$cert" "$directory/$identifier.key" recovery "$identifier" \
+        && validate_public_certificate "$cert" "$directory/$identifier.key" "$identifier" || continue
+      if [ -n "$candidate" ]; then
+        echo "发现多份有效 ACME 证书，不能自动选取；请用明确域名的证书方案恢复，保留现有文件。"; return 1
+      fi
+      candidate="$identifier"
+    done < <(find "$HOME/agsbx/acme" -mindepth 2 -maxdepth 2 -type f -name fullchain.cer -print0 2>/dev/null)
+    if [ -n "$candidate" ]; then
+      recover_acme_certificate "$candidate" acme-http "$candidate" && reload_shared_certificate
+      return $?
+    fi
+  fi
+  case "$source" in
+    acme-*) renew_managed_acme_certificate ;;
+    external) echo "外部证书须由原签发工具续期，再通过原路径更新；无需卸载 Airgosbx。" ;;
+    *) echo "未找到可维护的证书来源。请保留 ACME 工作目录，并使用明确的证书方案恢复部署。"; return 1 ;;
+  esac
+}
+
 setup_acme_certificate(){
 local mode="$1"
 local acme_script="$HOME/agsbx/acme.sh"
 local acme_home="$HOME/agsbx/acme"
-local acme_cert_file="$HOME/agsbx/acmecer/cert.pem"
-local acme_key_file="$HOME/agsbx/acmecer/private.key"
 local acme_log="$HOME/agsbx/acme_issue.log"
-local input identifier source required_port reload_cmd cf_prompted=no index
+local input identifier source required_port cf_prompted=no index recovery_status attempt_log requested_ca
 local ca_index ca_server ca_label ca_status
 local ca_timeout register_timeout=15 selected_ca="" default_ca_server zerossl_ca_conf sslcom_ca_conf ca_succeeded=no
 local -a identifiers issue_args register_args ca_servers ca_labels
@@ -6285,6 +6573,15 @@ case "$mode" in
     return 1
     ;;
 esac
+requested_ca=${acmeca:-auto}
+case "$requested_ca" in auto|letsencrypt|zerossl|sslcom) ;; *) echo "错误：acmeca 仅支持 auto/letsencrypt/zerossl/sslcom。"; return 1 ;; esac
+if { [ "$mode" = ip ] || [ "$mode" = alpn ]; } && [ "$requested_ca" != auto ] && [ "$requested_ca" != letsencrypt ]; then
+  echo "错误：$mode 模式只支持 Let's Encrypt；切换 CA 请使用 HTTP-01 或 DNS-01。"; return 1
+fi
+# 先恢复本地已签发结果，再检查端口、DNS 凭据或创建新订单。
+recover_acme_certificate "${identifiers[0]}" "$source" "${identifiers[@]}"
+recovery_status=$?
+case "$recovery_status" in 0) return 0 ;; 1) return 1 ;; esac
 if [ -n "$required_port" ] && port_is_listening "$required_port"; then
   echo "错误：$mode 模式需要独占 $required_port/TCP，但该端口当前已被占用。"
   echo "脚本不会停止现有服务；请释放端口，或改选 Cloudflare DNS-01。"
@@ -6364,19 +6661,18 @@ case "$mode" in
   *)
     ca_servers=(letsencrypt zerossl sslcom)
     ca_labels=("Let's Encrypt" "ZeroSSL" "SSL.com")
-    echo "ACME CA优先级：Let's Encrypt → ZeroSSL → SSL.com；注册上限 ${register_timeout} 秒，签发上限 ${ca_timeout} 秒。"
-    if [ -z "$acmem" ] && [ -t 0 ]; then
-      printf "请输入 ACME 注册邮箱（ZeroSSL 自动获取 EAB、SSL.com 备用使用；已提供 ZeroSSL EAB 可回车）：" >&2
-      read -r acmem
-      acmem=$(printf '%s' "$acmem" | tr -d '[:space:]')
-    fi
+    echo "ACME 自动顺序：Let's Encrypt → ZeroSSL → 已配置的 SSL.com；每家注册最多 ${register_timeout} 秒，签发最多 ${ca_timeout} 秒。"
     ;;
 esac
 
-: > "$acme_log"
+[ "$requested_ca" = auto ] || echo "本次仅尝试指定 CA：$requested_ca（已有有效证书仍优先复用）。"
+printf '\n===== 本次申请：%s =====\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> "$acme_log" || return 1
+chmod 600 "$acme_log" || return 1
 for ca_index in "${!ca_servers[@]}"; do
   ca_server="${ca_servers[$ca_index]}"
   ca_label="${ca_labels[$ca_index]}"
+  [ "$requested_ca" = auto ] || [ "$requested_ca" = "$ca_server" ] || continue
+  acme_ca_retry_ready "$ca_server" || continue
 
   if [ "$ca_server" = zerossl ]; then
     zerossl_ca_conf="$acme_home/ca/acme.zerossl.com/v2/DV90/ca.conf"
@@ -6387,16 +6683,23 @@ for ca_index in "${!ca_servers[@]}"; do
     fi
     if [ -z "$acmem" ] && ! { grep -Eq "^CA_EAB_KEY_ID='[^']+'$" "$zerossl_ca_conf" 2>/dev/null \
       && grep -Eq "^CA_EAB_HMAC_KEY='[^']+'$" "$zerossl_ca_conf" 2>/dev/null; }; then
-      echo "跳过 ZeroSSL：没有完整 EAB 凭据，也未提供 acmem 用于自动获取。"
-      printf '\n===== 跳过 ZeroSSL：缺少 EAB 凭据与注册邮箱 =====\n' >> "$acme_log"
-      continue
+      if [ -t 0 ]; then
+        printf "ZeroSSL：填写可收信的邮箱即可自动获取 EAB，无需邮箱密码（回车跳过）：" >&2
+        read -r acmem
+        acmem=$(printf '%s' "$acmem" | tr -d '[:space:]')
+      fi
+      if [ -z "$acmem" ]; then
+        echo "跳过 ZeroSSL：没有完整 EAB 凭据，也未提供 acmem 邮箱。"
+        printf '\n===== 跳过 ZeroSSL：缺少 EAB 凭据与注册邮箱 =====\n' >> "$acme_log"
+        continue
+      fi
     fi
   fi
   if [ "$ca_server" = sslcom ]; then
     sslcom_ca_conf="$acme_home/ca/acme.ssl.com/sslcom-dv-ecc/ca.conf"
     if ! { grep -q '^CA_EAB_KEY_ID=' "$sslcom_ca_conf" 2>/dev/null && grep -q '^CA_EAB_HMAC_KEY=' "$sslcom_ca_conf" 2>/dev/null; } \
-      && { [ -z "$sslcom_eab_kid" ] || [ -z "$sslcom_eab_hmac" ]; } && [ -t 0 ]; then
-      echo "SSL.com 作为第三备用 CA 需要预先从 SSL.com 账户获取 EAB 凭据。"
+      && { [ -z "$sslcom_eab_kid" ] || [ -z "$sslcom_eab_hmac" ]; } && [ "$requested_ca" = sslcom ] && [ -t 0 ]; then
+      echo "SSL.com 需要官网账户的 Account/ACME Key 与 HMAC Key（Dashboard → api credentials）。"
       if [ -z "$sslcom_eab_kid" ]; then
         printf "SSL.com EAB Key ID（回车跳过该 CA）：" >&2
         read -r sslcom_eab_kid
@@ -6408,6 +6711,9 @@ for ca_index in "${!ca_servers[@]}"; do
       fi
     fi
     if ! { grep -q '^CA_EAB_KEY_ID=' "$sslcom_ca_conf" 2>/dev/null && grep -q '^CA_EAB_HMAC_KEY=' "$sslcom_ca_conf" 2>/dev/null; }; then
+      if [ -n "$sslcom_eab_kid" ] && [ -n "$sslcom_eab_hmac" ] && [ -z "$acmem" ] && [ -t 0 ]; then
+        printf "SSL.com 首次注册邮箱（回车跳过）：" >&2; read -r acmem
+      fi
       if [ -z "$acmem" ]; then
         echo "跳过 SSL.com：首次注册缺少 acmem。"
         printf '\n===== 跳过 SSL.com：首次注册缺少邮箱 =====\n' >> "$acme_log"
@@ -6447,13 +6753,22 @@ for ca_index in "${!ca_servers[@]}"; do
     fi
   fi
 
+  if [ -n "$acmem" ] && ! [[ "$acmem" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$ ]]; then
+    echo "错误：acmem 必须是邮箱地址，不需要邮箱密码。"; return 1
+  fi
   echo "正在尝试 $ca_label（注册最多 ${register_timeout} 秒，签发最多 ${ca_timeout} 秒）..."
   printf '\n===== CA 尝试：%s；注册超时：%s 秒；签发超时：%s 秒 =====\n' "$ca_label" "$register_timeout" "$ca_timeout" >> "$acme_log"
   register_args=(bash "$acme_script" --home "$acme_home" --register-account --server "$ca_server")
   [ -n "$acmem" ] && register_args+=(-m "$acmem")
   [ "$ca_server" = sslcom ] && register_args+=(--ecc)
-  ( export CF_Token CF_Account_ID CF_Zone_ID CF_Key CF_Email; timeout -k 2 "$register_timeout" "${register_args[@]}" 8>&- ) >> "$acme_log" 2>&1
+  attempt_log=$(mktemp "$acme_home/.attempt.XXXXXX") || return 1
+  timeout -k 2 "$register_timeout" "${register_args[@]}" 8>&- > "$attempt_log" 2>&1
   ca_status=$?
+  cat "$attempt_log" >> "$acme_log" || { rm -f -- "$attempt_log"; return 1; }
+  if [ "$ca_status" -ne 0 ]; then
+    record_acme_rate_limit "$ca_server" "$attempt_log" || { rm -f -- "$attempt_log"; return 1; }
+  fi
+  rm -f -- "$attempt_log"
   if [ "$ca_server" = sslcom ]; then
     unset sslcom_eab_kid sslcom_eab_hmac
   fi
@@ -6478,9 +6793,21 @@ for ca_index in "${!ca_servers[@]}"; do
   for identifier in "${identifiers[@]}"; do
     issue_args+=(-d "$identifier")
   done
-  ( export CF_Token CF_Account_ID CF_Zone_ID CF_Key CF_Email; timeout -k 2 "$ca_timeout" bash 8>&- "$acme_script" "${issue_args[@]}" ) >> "$acme_log" 2>&1
+  attempt_log=$(mktemp "$acme_home/.attempt.XXXXXX") || return 1
+  ( export CF_Token CF_Account_ID CF_Zone_ID CF_Key CF_Email; timeout -k 2 "$ca_timeout" bash 8>&- "$acme_script" "${issue_args[@]}" ) > "$attempt_log" 2>&1
   ca_status=$?
-  if [ "$ca_status" -eq 0 ]; then
+  cat "$attempt_log" >> "$acme_log" || { rm -f -- "$attempt_log"; return 1; }
+  if [ "$ca_status" != 0 ] && [ "$ca_status" != 2 ]; then
+    record_acme_rate_limit "$ca_server" "$attempt_log" || { rm -f -- "$attempt_log"; return 1; }
+  fi
+  rm -f -- "$attempt_log"
+  if [ "$ca_status" -eq 0 ] || [ "$ca_status" -eq 2 ]; then
+    if [ "$ca_status" = 2 ]; then
+      echo "ACME 报告无需重新签发，将核对并恢复已有证书。"
+      recover_acme_certificate "${identifiers[0]}" "$source" "${identifiers[@]}" && return 0
+      echo "错误：ACME 已跳过申请，但没有可恢复的有效证书；请保留账户与日志，不强制重签或切换 CA。"
+      return 1
+    fi
     ca_succeeded=yes
     selected_ca="$ca_label"
     default_ca_server="$ca_server"
@@ -6503,23 +6830,11 @@ if [ "$ca_succeeded" != yes ]; then
   return 1
 fi
 identifier="${identifiers[0]}"
-reload_cmd="true"
-bash 8>&- "$acme_script" --home "$acme_home" --install-cert -d "$identifier" --ecc --fullchain-file "$acme_cert_file" --key-file "$acme_key_file" --reloadcmd "$reload_cmd" >> "$acme_log" 2>&1 || return 1
-if ! validate_certificate_bundle "$acme_cert_file" "$acme_key_file" "$source" "${identifiers[@]}"; then
-  echo "错误：ACME 已签发，但运行目录中的证书未通过有效期、SAN 或私钥匹配校验，详情见 $acme_log"
+if ! recover_acme_certificate "$identifier" "$source" "${identifiers[@]}"; then
+  echo "错误：CA 已完成签发，但本地证书安装或校验失败；已保留 ACME 工作目录，请勿卸载重装。详情见 $acme_log"
   return 1
 fi
-[ "$sub" != yes ] || validate_public_certificate "$acme_cert_file" "$acme_key_file" "$identifier" || {
-  echo "错误：新证书未通过系统信任库校验，不能用于订阅分享。"
-  return 1
-}
-chmod 600 "$acme_key_file" 2>/dev/null
-register_acme_cron || return 1
 unset CF_Token CF_Key CF_Email CF_Account_ID CF_Zone_ID
-echo "$identifier" > "$HOME/agsbx/sni.txt"
-echo "ca" > "$HOME/agsbx/cert_mode"
-record_cert_source "$source" "$identifier"
-record_tls_cert_paths "$acme_cert_file" "$acme_key_file"
 tls_cert_source="ACME 自动申请成功（$selected_ca）"
 }
 setup_tls_certificate(){
@@ -6540,6 +6855,14 @@ setup_tls_certificate(){
         tls_caddy_reuse_notice_shown=yes
       fi
       return 0
+    fi
+  fi
+  # Caddy 切换签发者后存储路径可能改变，先接回已签出的有效证书。
+  if [ -s "$HOME/agsbx/Caddyfile" ] && [ -s "$HOME/agsbx/naive_domain" ]; then
+    reuse_identifier=$(cat "$HOME/agsbx/naive_domain")
+    if ! recover_caddy_certificate "$reuse_identifier"; then
+      echo "错误：Caddy 证书尚未就绪；请先执行 agsbx cert，保留账户和证书存储。"
+      return 1
     fi
   fi
   # Caddy 内置 ACME 仍保持最高优先级；新进程复用磁盘上的既有证书时重新校验一次，
@@ -6563,7 +6886,7 @@ setup_tls_certificate(){
     fi
     if [ "$rep_mode" = yes ] && [ "$sub" != yes ]; then
       echo "错误：rep 保留的 Caddy 证书未通过有效期、SAN 或私钥匹配校验。"
-      echo "如需更换或重新申请 Caddy 证书，请先执行 agsbx del，再重新运行脚本。"
+      echo "请先执行 agsbx cert 维护已有证书；保留 Caddy 账户和存储，不要卸载重装。"
       return 1
     fi
   fi
@@ -6641,7 +6964,7 @@ setup_tls_certificate(){
   fi
   if [ "$rep_mode" = yes ] && [ "$sub" != yes ] && [ "$(cat "$HOME/agsbx/cert_mode" 2>/dev/null)" = ca ]; then
     echo "错误：rep 保留的 ACME/外部受信任证书未通过复用验证。"
-    echo "如需更换或重新申请证书，请先执行 agsbx del，再重新运行脚本。"
+    echo "请先执行 agsbx cert 维护已有证书；外部证书由原签发工具更新，不要卸载重装。"
     return 1
   fi
   is_yes "$alns" && acme_requested=yes
@@ -7900,6 +8223,7 @@ systemctl daemon-reload >/dev/null 2>&1 || { echo "错误：systemctl daemon-rel
 systemctl enable agsbx-caddy >/dev/null 2>&1 || { echo "错误：无法启用 agsbx-caddy.service。"; return 1; }
 if ! systemctl restart agsbx-caddy >/dev/null 2>&1 || ! systemctl is-active --quiet agsbx-caddy; then
   echo "错误：agsbx-caddy.service 启动失败，请运行 journalctl -u agsbx-caddy -n 30 --no-pager 查看日志。"
+  stop_failed_caddy_issuance
   return 1
 fi
 elif command -v rc-service >/dev/null 2>&1 && is_root; then
@@ -7936,6 +8260,7 @@ rc-update add agsbx-caddy default >/dev/null 2>&1 || { echo "错误：无法启�
 rc-service agsbx-caddy stop >/dev/null 2>&1 || true
 if ! rc-service agsbx-caddy start 8>&- >/dev/null 2>&1 || ! agsbx_component_running caddy; then
   echo "错误：OpenRC agsbx-caddy 服务启动失败，请查看 $HOME/agsbx/caddy.log 或系统日志。"
+  stop_failed_caddy_issuance
   return 1
 fi
 else
@@ -7946,6 +8271,7 @@ nohup "$HOME/agsbx/caddy" run --config "$HOME/agsbx/Caddyfile" 8>&- > "$HOME/ags
 sleep 1
 if ! agsbx_component_running caddy; then
   echo "错误：Caddy 后台进程启动失败，请查看 $HOME/agsbx/caddy.log。"
+  stop_failed_caddy_issuance
   return 1
 fi
 fi
@@ -7991,8 +8317,9 @@ if [ "$caddy_cert_valid" = yes ]; then
   setup_caddy_cert_reload || return 1
 else
   printf '%s\n' "${C_RED}错误：60 秒内未检测到通过有效期、SAN 与私钥匹配校验的 Caddy TLS 证书。${C_RESET}"
-  echo "Caddy 可能仍在后台获取证书中，或者 80/443 端口被占用/DNS 解析未生效。"
-  echo "建议稍后运行 journalctl -u agsbx-caddy -f 或查看 $HOME/agsbx/caddy.log 查看具体证书申请进度。"
+  stop_failed_caddy_issuance || return 1
+  echo "请先检查 Caddy 日志中的 CA 错误、80/443 端口及 DNS；处理后手动执行 agsbx cert，最多再尝试 60 秒。"
+  echo "不要为申请证书卸载重装；本次安装已终止，未保留后台签发重试。"
   return 1
 fi
 
@@ -12033,13 +12360,13 @@ rep_validate_preserved_certificate(){
   fi
   mode=$(cat "$HOME/agsbx/cert_mode" 2>/dev/null)
   if [ "$rep_preserved_caddy" = yes ] && [ "$mode" != caddy ]; then
-    echo "错误：检测到需要保留的 Caddy，但现有证书模式不是 caddy；为避免错误复用，请先执行 agsbx del。"
+    echo "错误：检测到需要保留的 Caddy，但证书状态未完成；请先执行 agsbx cert 恢复证书记录。"
     return 1
   fi
   case "$mode" in
     caddy)
       if [ "$rep_preserved_caddy" != yes ]; then
-        echo "错误：检测到 Caddy 证书状态，但缺少可安全保留的 Caddy 配置；请先执行 agsbx del。"
+        echo "错误：检测到 Caddy 证书状态，但缺少可安全保留的 Caddy 配置；请恢复原配置，保留证书存储。"
         return 1
       fi
       cert_file=$(cat "$HOME/agsbx/cert_file_path" 2>/dev/null)
@@ -12049,7 +12376,7 @@ rep_validate_preserved_certificate(){
       if ! valid_domain "$identifier" \
         || ! validate_certificate_bundle "$cert_file" "$key_file" caddy "$identifier"; then
         echo "错误：rep 保留的 Caddy 证书未通过有效期、SAN 或私钥匹配校验。"
-        echo "如需更换或重新申请 Caddy 证书，请先执行 agsbx del，再重新运行脚本。"
+        echo "请先执行 agsbx cert 维护已有证书；保留 Caddy 账户和存储，不要卸载重装。"
         return 1
       fi
       tls_cert_source="rep 前置校验通过的 Caddy 证书"
@@ -12065,13 +12392,13 @@ rep_validate_preserved_certificate(){
       case "$source" in
         acme-ip|acme-http|acme-alpn|acme-dns|external) ;;
         *)
-          echo "错误：rep 保留的受信任证书来源无法识别；请先执行 agsbx del。"
+          echo "错误：rep 保留的受信任证书来源无法识别；请核对 cert_source 与原证书文件，不要删除账户或证书。"
           return 1 ;;
       esac
       if { ! valid_ip "$identifier" && ! valid_domain "$identifier"; } \
         || ! validate_certificate_bundle "$cert_file" "$key_file" "$source" "$identifier"; then
         echo "错误：rep 保留的 ACME/外部证书未通过有效期、SAN 或私钥匹配校验。"
-        echo "如需更换或重新申请证书，请先执行 agsbx del，再重新运行脚本。"
+        echo "请先执行 agsbx cert 维护已有证书；外部证书由原签发工具更新，不要卸载重装。"
         return 1
       fi
       if [ "$source" = external ]; then
@@ -12083,7 +12410,7 @@ rep_validate_preserved_certificate(){
       return 0
       ;;
     *)
-      echo "错误：无法识别现有证书模式 $mode；为避免 rep 误改证书，请先执行 agsbx del。"
+      echo "错误：无法识别现有证书模式 $mode；请核对证书记录并保留现有文件，不要卸载重装。"
       return 1
       ;;
   esac
@@ -12101,14 +12428,14 @@ rep_validate_preserved_scope(){
   local option value
   rep_manage_certificate=no
   [ "$sub" != yes ] || rep_manage_certificate=yes
-  for option in naive naiveuser naivepass naivebuild naivesite alns acmemode certip certym certwild certcrt certkey acmem acmetimeout certdns CF_Token CF_Key CF_Email CF_Account_ID CF_Zone_ID zerossl_eab_kid zerossl_eab_hmac sslcom_eab_kid sslcom_eab_hmac; do
+  for option in naive naiveuser naivepass naivebuild naivesite alns acmemode acmeca certip certym certwild certcrt certkey acmem acmetimeout certdns CF_Token CF_Key CF_Email CF_Account_ID CF_Zone_ID zerossl_eab_kid zerossl_eab_hmac sslcom_eab_kid sslcom_eab_hmac; do
     if [ "$rep_manage_certificate" = yes ]; then
       case "$option" in naive|naiveuser|naivepass|naivebuild|naivesite) ;; *) continue ;; esac
     fi
     value=${!option-}
     if [ -n "$value" ]; then
       echo "错误：agsbx rep 不允许设置 $option；Naive/Caddy 保留不变，证书参数仅在启用订阅时接受。"
-      echo "如需变更这些内容，请先执行 agsbx del，再重新运行脚本。"
+      echo "证书维护请先使用 agsbx cert；rep 保留现有 Naive/Caddy 配置，不要为证书问题卸载重装。"
       return 1
     fi
   done
@@ -12906,14 +13233,11 @@ case "$1" in
 esac
 
 case "$1" in
+  cert)
+    maintain_certificate
+    exit $? ;;
   __cert_renew)
-    identifier=$(cat "$HOME/agsbx/cert_identifier") || exit 1
-    neutralize_legacy_acme_reload "$identifier" || exit 1
-    [ -s "$HOME/agsbx/acme.sh" ] || exit 1
-    bash 8>&- "$HOME/agsbx/acme.sh" --home "$HOME/agsbx/acme" --renew -d "$identifier" --ecc
-    renew_status=$?
-    [ "$renew_status" = 0 ] || [ "$renew_status" = 2 ] || exit 1
-    reload_shared_certificate
+    renew_managed_acme_certificate
     exit $? ;;
   __cert_reload)
     reload_shared_certificate

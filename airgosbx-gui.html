@@ -10,7 +10,7 @@
     与 airgosbx.sh 配套维护、同版本提交和发布。无外部资源、请求、遥测或自动持久化。
     与 airgosbx.sh 配套维护：修改 showvars、协议归属、secp、warp、rep 或 URL 生成规则时，
     同时核对 PROTOCOLS、XRAY_PROFILES、FIELDS、collect、savedCommandPlan 和 validate。
-    配套版本：V26.09.27.9。XHTTP_DEFAULTS_VERSION 与 BUILD.presetVersion 仅在默认参数变化时更新。
+    配套版本：V26.09.27.10。XHTTP_DEFAULTS_VERSION 与 BUILD.presetVersion 仅在默认参数变化时更新。
     发布前须核对配套脚本是否已同步到 GitHub main；存在未发布接口变更时 remoteAligned 保持 false。
     页面只生成文本，不执行命令。选择“对照脚本”时只读取用户明确选择的文件。
   -->
@@ -242,7 +242,7 @@
 <div class="page">
   <header class="masthead">
     <div class="brand"><div class="brand-mark" aria-hidden="true">A</div><div><div class="eyebrow">AIRGOSBX / WORKBENCH</div><h1>配置工作台</h1><p class="meta">配置连接，生成 VPS 命令。</p></div></div>
-    <div class="tools"><span id="build-version" class="meta">V26.09.27.9 · 离线单文件</span><button id="reset" type="button">重置表单</button></div>
+    <div class="tools"><span id="build-version" class="meta">V26.09.27.10 · 离线单文件</span><button id="reset" type="button">重置表单</button></div>
   </header>
   <noscript><p class="notice warning">此页面需要浏览器 JavaScript 才能生成命令。所有逻辑都在当前 HTML 内，不加载外部资源。</p></noscript>
 
@@ -285,7 +285,7 @@
       <section class="panel" id="certificates"><div class="panel-heading"><div><h2 class="step"><span class="section-index">03</span>证书与订阅</h2><p class="section-description">证书、地址与订阅</p><p class="intro">统一配置节点证书、系统 IP 策略与 HTTPS 订阅。</p></div></div><div class="policy-summary" aria-label="证书使用规则"><p><strong>REALITY</strong><span>无需申请 CA 证书。</span></p><p><strong>HTTPS 订阅</strong><span>必须使用 CA，优先复用；没有则申请。</span></p><p><strong>NaiveProxy</strong><span>Caddy 自动申请并管理域名证书。</span></p></div><div id="common-fields" class="form-grid"></div><div id="certificate-fields" class="form-grid" style="margin-top:16px"></div><div id="certificate-specific" class="form-grid" style="margin-top:16px"></div><p class="note">自签证书只用于未开启订阅的普通 TLS 节点，需要客户端建立信任或固定指纹；HTTPS 订阅不接受自签证书。SS / SOCKS5 入口仅在终端输出完整 URL，不加入订阅。VLESS Encryption 节点请使用完整 URL 或聚合订阅，脚本不会生成缺失加密参数的 Clash 节点。</p><div id="subscription-fields" class="form-grid" style="margin-top:16px"></div><div id="subscription-specific" class="form-grid" style="margin-top:16px" hidden></div><details><summary>更多变量：证书账户、跳跃端口与源地址</summary><div id="advanced-fields" class="form-grid"></div></details></section>
       </div>
 
-      <section class="panel" id="reference"><div class="panel-heading"><div><h2 class="step">维护对照</h2><p class="section-description">脚本与 GUI 的维护对照</p><p class="intro">页面以当前工作区脚本为依据；HTML 不会自动读取磁盘或远端代码。</p></div></div><div class="table-wrap"><table class="help-table"><thead><tr><th>功能位置</th><th>脚本入口</th><th>GUI 同步点</th></tr></thead><tbody><tr><td>协议及所属核心</td><td><code>showvars / ins</code></td><td>协议清单、能力标记、核心推导</td></tr><tr><td>Xray 扩展</td><td><code>各入口的 extra / mode / fm 变量</code></td><td>按协议默认方案、FM 组合与独立调参</td></tr><tr><td>CDN / Argo</td><td><code>cdnym / argo / agn / agk</code></td><td>接入条件、端口、隧道绑定</td></tr><tr><td>出站</td><td><code>warp / secpN / securlN / secuotN</code></td><td>B1–B16 的目标、独立范围及 WARP 出站互斥；兼容旧版单 B</td></tr><tr><td>订阅</td><td><code>sub / subauth / subpt / subid / subpass / res</code></td><td>独立密码保护开关、路径 Token、手填或 VPS 独立随机密码、已有保护模式恢复</td></tr><tr><td>命令生成与还原</td><td><code>环境变量与管理命令</code></td><td>字段映射、引用转义、旧版通用参数继承</td></tr><tr><td>生命周期</td><td><code>rep / del / upx / ups …</code></td><td>操作清单、参数过滤、影响说明</td></tr></tbody></table></div><p class="note">覆盖范围：常用部署、证书、订阅、出站和管理入口。XDNS / XICMP 使用 Xray ≥26.7.28 的专用配置与完整客户端 JSON，不加入通用链接订阅；目录中标为不可配置的核心字段未接入脚本，内部证书续期和跳跃规则恢复命令由脚本管理。端口占用、服务归属、证书和真实连通性须在 VPS 检查。</p><p class="note">对照功能只提取你选择的脚本中的变量声明与帮助条目，不执行、不上传。它能提示变量清单差异，不能代替调用逻辑审查。</p><div class="tools" style="margin-top:14px"><label class="file-label">选择 airgosbx.sh 对照<input id="source-file" class="visually-hidden" type="file" accept=".sh,text/plain"></label><button id="clear-compare" type="button" class="text-button">清除对照</button></div><p id="sync-result" class="sync-result" role="status">配套版本：V26.09.27.9；XHTTP 默认参数版本：V26.09.08.1。尚未读取其他文件。</p></section>
+      <section class="panel" id="reference"><div class="panel-heading"><div><h2 class="step">维护对照</h2><p class="section-description">脚本与 GUI 的维护对照</p><p class="intro">页面以当前工作区脚本为依据；HTML 不会自动读取磁盘或远端代码。</p></div></div><div class="table-wrap"><table class="help-table"><thead><tr><th>功能位置</th><th>脚本入口</th><th>GUI 同步点</th></tr></thead><tbody><tr><td>协议及所属核心</td><td><code>showvars / ins</code></td><td>协议清单、能力标记、核心推导</td></tr><tr><td>Xray 扩展</td><td><code>各入口的 extra / mode / fm 变量</code></td><td>按协议默认方案、FM 组合与独立调参</td></tr><tr><td>CDN / Argo</td><td><code>cdnym / argo / agn / agk</code></td><td>接入条件、端口、隧道绑定</td></tr><tr><td>出站</td><td><code>warp / secpN / securlN / secuotN</code></td><td>B1–B16 的目标、独立范围及 WARP 出站互斥；兼容旧版单 B</td></tr><tr><td>订阅</td><td><code>sub / subauth / subpt / subid / subpass / res</code></td><td>独立密码保护开关、路径 Token、手填或 VPS 独立随机密码、已有保护模式恢复</td></tr><tr><td>命令生成与还原</td><td><code>环境变量与管理命令</code></td><td>字段映射、引用转义、旧版通用参数继承</td></tr><tr><td>生命周期</td><td><code>rep / del / upx / ups …</code></td><td>操作清单、参数过滤、影响说明</td></tr></tbody></table></div><p class="note">覆盖范围：常用部署、证书、订阅、出站和管理入口。XDNS / XICMP 使用 Xray ≥26.7.28 的专用配置与完整客户端 JSON，不加入通用链接订阅；目录中标为不可配置的核心字段未接入脚本，内部证书续期和跳跃规则恢复命令由脚本管理。端口占用、服务归属、证书和真实连通性须在 VPS 检查。</p><p class="note">对照功能只提取你选择的脚本中的变量声明与帮助条目，不执行、不上传。它能提示变量清单差异，不能代替调用逻辑审查。</p><div class="tools" style="margin-top:14px"><label class="file-label">选择 airgosbx.sh 对照<input id="source-file" class="visually-hidden" type="file" accept=".sh,text/plain"></label><button id="clear-compare" type="button" class="text-button">清除对照</button></div><p id="sync-result" class="sync-result" role="status">配套版本：V26.09.27.10；XHTTP 默认参数版本：V26.09.08.1。尚未读取其他文件。</p></section>
     </main>
 
     <aside class="output" id="command" aria-labelledby="command-title">
@@ -321,8 +321,9 @@
 <script>
 /* 配置清单集中在这里，避免表单、架构图与命令生成各自维护一套名称。 */
 'use strict';
-const BUILD = {version:'V26.09.27.9',presetVersion:'V26.09.08.1',remoteAligned:true, source:'https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/main/airgosbx.sh', schema:'通用字段基线：Xray v26.3.27；XDNS/XICMP：v26.7.28'};
+const BUILD = {version:'V26.09.27.10',presetVersion:'V26.09.08.1',remoteAligned:true, source:'https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/main/airgosbx.sh', schema:'通用字段基线：Xray v26.3.27；XDNS/XICMP：v26.7.28'};
 const OPERATIONS = [
+  ['cert','维护已有证书（cert）'],
   ['install','安装 / 创建节点'],['rep','重建协议配置（rep）'],['restore-ip','恢复原 IP 策略'],['list','显示节点（list）'],['status','资源与流量（status）'],['update','更新脚本（update）'],['res','重启代理与隧道（res）'],['start','启动核心（start）'],['stop','停止核心（stop）'],['restart','重启核心（restart）'],['reload','重载配置（reload）'],['upx','升级 Xray（upx）'],['ups','升级 Sing-box（ups）'],['downx','降级 Xray（downx）'],['downs','降级 Sing-box（downs）'],['del','卸载（del）'],['vars','查看变量（vars）'],['cmds','查看命令（cmds）'],['help','完整帮助（help）']
 ];
 const CORE_INFO = [
@@ -575,7 +576,7 @@ const FIELDS = {
   uuid:{label:'UUID / 通用密码',type:'password',placeholder:'留空自动生成',help:'VLESS / VMess 请用有效 UUID；部分协议仍复用它作密码。SOCKS 凭据、传输路径和订阅 Token 独立生成。'},
   reym:{label:'REALITY 目标域名',placeholder:'留空由脚本按地区选择'},
   ipv:{label:'系统 IP 栈策略',options:[['keep','保持现状，不传 ipv'],['4','仅 IPv4'],['6','仅 IPv6'],['4;6','双栈，IPv4 优先'],['6;4','双栈，IPv6 优先'],['restore','取消受管策略，恢复原状态']],value:'keep',help:'会影响 VPS 网络配置；ipv=6 在脚本中要求 NetworkManager 等前提。'},
-  certMode:{label:'TLS 证书方案',help:'此选项配置 Xray / Sing-box 的共享 TLS 证书。订阅优先复用有效 Caddy / ACME 证书；申请或导入选项仅在没有可复用 CA 时生效。Naive 由 Caddy 独立管理证书。',options:[['auto','脚本默认：复用或自签'],['interactive','ACME · 在 VPS 交互选择'],['http','ACME · HTTP-01'],['alpn','ACME · TLS-ALPN-01'],['dns','ACME · Cloudflare DNS-01'],['ip','ACME · IP 证书'],['external','导入 VPS 已有证书']],value:'auto'},
+  certMode:{label:'TLS 证书方案',help:'此选项配置 Xray / Sing-box 的共享 TLS 证书。订阅优先复用有效 Caddy / ACME 证书；申请或导入选项仅在没有可复用 CA 时生效。Naive 由 Caddy 独立管理证书。独立 acme.sh 在申请和每日续期检查前获取官方 latest 稳定正式版，排除预发布版；配套 Cloudflare DNS 插件同步更新。更新失败时仅复用完整可用的旧版。客户端更新本身不申请证书，下载与运行发生在 VPS。',options:[['auto','脚本默认：复用或自签'],['interactive','ACME · 在 VPS 交互选择'],['http','ACME · HTTP-01'],['alpn','ACME · TLS-ALPN-01'],['dns','ACME · Cloudflare DNS-01'],['ip','ACME · IP 证书'],['external','导入 VPS 已有证书']],value:'auto'},
   certym:{label:'证书域名 / 导入证书的 SNI',placeholder:'proxy.example.com',help:'导入时可留空由证书推导；泛域名证书应填写匹配的具体域名。VPS 会检查证书链、有效期、私钥和 SAN。'},
   certip:{label:'证书 IP',placeholder:'一个或两个公网 IP，空格分隔'},
   certwild:{label:'同时申请泛域名',type:'checkbox'},
@@ -586,12 +587,13 @@ const FIELDS = {
   CF_Zone_ID:{label:'Cloudflare Zone ID',placeholder:'可选'},
   CF_Key:{label:'旧版 Cloudflare Global API Key',type:'password',help:'仅兼容旧账户配置，与 CF_Email 配对；优先使用权限受限的 DNS Token。'},
   CF_Email:{label:'旧版 Cloudflare 账户邮箱',type:'email',placeholder:'与 CF_Key 配对'},
-  acmem:{label:'ACME 注册邮箱 / Caddy 邮箱',type:'email',placeholder:'ZeroSSL 自动获取 EAB 时需要',help:'ZeroSSL 首次注册若没有手填或已保存的 EAB，需填写此邮箱自动获取；完整手填 EAB 时邮箱可留空。SSL.com 首次注册也使用此邮箱。Naive/Caddy 在独立证书流程中复用此邮箱，下面的 EAB 不配置 Caddy。'},
+  acmem:{label:'ACME 注册邮箱 / Caddy 邮箱',type:'email',placeholder:'填写你可以收信的邮箱地址',help:'ZeroSSL 通常只需邮箱地址，由客户端自动取得 EAB，无需手动填写下面的 ZeroSSL 密钥；已有完整 EAB 时邮箱可留空。SSL.com 首次注册需要邮箱和对应 EAB。Naive/Caddy 也使用此邮箱，但下面的 EAB 不会传给 Caddy。这里只填邮箱地址，不需要邮箱密码。'},
   acmetimeout:{label:'单家 CA 超时（秒）',placeholder:'5 至 600，留空使用默认值'},
-  zerossl_eab_kid:{label:'ZeroSSL EAB Key ID',type:'password',maxLength:512,help:'可选，与 HMAC 成对填写；留空可由上方注册邮箱自动获取 EAB。仅用于脚本 HTTP-01 / DNS-01 的 ZeroSSL 备用签发。'},
+  acmeca:{label:'独立 acme.sh 使用的 CA',options:[['auto','自动：Let’s Encrypt → ZeroSSL → 已配置的 SSL.com'],['letsencrypt','仅 Let’s Encrypt'],['zerossl','仅 ZeroSSL'],['sslcom','仅 SSL.com']],value:'auto',help:'只影响没有可复用证书时的独立申请，不改变 Caddy。HTTP-01 / DNS-01 可选择三家；IP / TLS-ALPN-01 仅支持 Let’s Encrypt。限流等待期内跳过对应 CA，不启动后台重试。自动模式不再询问未配置的 SSL.com 密钥。'},
+  zerossl_eab_kid:{label:'ZeroSSL EAB Key ID',type:'password',maxLength:512,help:'可选，与 HMAC 成对填写；留空可由上方注册邮箱自动获取 EAB。手动获取：登录 ZeroSSL → Developer → EAB → Generate；不要填写普通 API Access Key。仅用于脚本 HTTP-01 / DNS-01 的 ZeroSSL 备用签发。'},
   zerossl_eab_hmac:{label:'ZeroSSL EAB HMAC',type:'password',maxLength:1024,help:'与 Key ID 配对，粘贴时不要添加空格。完整手填后无需另外填写注册邮箱；不用于 Caddy、IP 证书、TLS-ALPN-01 或外部证书。'},
-  sslcom_eab_kid:{label:'SSL.com EAB Key ID',type:'password',help:'可选，仅 SSL.com 备用签发使用。'},
-  sslcom_eab_hmac:{label:'SSL.com EAB HMAC',type:'password',help:'与 EAB Key ID 配对。'},
+  sslcom_eab_kid:{label:'SSL.com EAB Key ID',type:'password',help:'仅 HTTP-01 / DNS-01 的 SSL.com 备用签发使用；不使用这家 CA 时可留空。首次使用请注册并登录 SSL.com，在 Dashboard → developers and integration → api credentials 中复制 Account/ACME Key，与 HMAC 配对填写。'},
+  sslcom_eab_hmac:{label:'SSL.com EAB HMAC',type:'password',help:'从 SSL.com 同一凭据页面复制 HMAC Key，与上方 Account/ACME Key 配对；首次注册还需填写邮箱。脚本不会自动领取 SSL.com EAB，Caddy 默认备用也不包含 SSL.com。'},
   certdns:{label:'旧证书变量兼容',options:[['','不额外设置'],['cf','certdns=cf']],help:'仅用于对照旧命令，选择 DNS-01 时不必重复设置。'},
   sub:{label:'启用 HTTPS 订阅',type:'checkbox',help:'必须使用 CA 证书。提供“Clash 订阅地址”（YAML 客户端）、“聚合订阅地址”（TXT 客户端）和“网页查看”（TXT 浏览器复制）三个入口。可另行开启密码保护。'},
   subauth:{label:'开启订阅密码保护',type:'checkbox',value:false,help:'关闭时，YAML 与 TXT 地址可直接订阅，网页查看入口直接显示 TXT 内容并可一键复制、下载。开启后，客户端须用密码解密订阅；网页先加载 HTTPS 页面，输入同一密码解锁后显示 TXT 内容，无需用户名。'},
@@ -1134,6 +1136,7 @@ function initialize(){
   mount('access-fields',['cdnEnabled','argoEnabled']);mount('cdn-fields',['cdnym']);mount('argo-fields',['argo','argoKind','agn','agk']);
   mount('outbound-fields',['warpEnabled','secondaryEnabled']);mount('warp-fields',['warp']);resetSecondaryGroups();
   mount('common-fields',['name','uuid','reym','ipv']);mount('certificate-fields',['certMode']);
+  $('certificate-fields').append(node('p','note wide','已有证书仍有效时优先复用，接近到期交由正常续期处理。Caddy 初次申请仍等待 60 秒，失败后停止受管进程并关闭开机启动，保留账户和证书；排除原因后可在顶部选择“维护已有证书（cert）”手动尝试。独立 ACME 返回“无需续期”时恢复已有证书，不强制重签。'));
   const certOperationLink=node('a','note','查看顶部操作选择');certOperationLink.id='cert-operation-link';certOperationLink.href='#operation';certOperationLink.dataset.issueTarget='operation';certOperationLink.hidden=true;
   $('certMode').closest('[data-field]').append(certOperationLink);
   mount('certificate-specific',['certym','certip','certwild','certcrt','certkey','CF_Token']);
@@ -1143,7 +1146,7 @@ function initialize(){
   subscriptionNotes.append(node('p','note','密码保护按 ClashMi 的订阅内容加密格式适配，响应标记 subscription-encryption: true，内容为 Base64 编码的 IV 与 AES-CBC 密文。用户已反馈当前 Shadowrocket 成功读取加密 YAML 订阅；此结果不涵盖其他版本或加密 TXT。其他客户端或版本须支持此格式，不能仅因有密码输入框就认定可用，也不代表普通 Clash Verge 订阅已支持。不支持时可关闭保护，或另行使用兼容的客户端配置。密码留空时，每次安装或 rep 都由 VPS 独立生成新的 64 位十六进制随机密码，不复用旧订阅或其他协议密码。部署后与地址一起输出，可用 agsbx list 查看；rep 后请更新客户端密码。手填密码会写入完整部署命令，默认预览隐藏；页面不自动保存。请分别保存链接与密码。'));
   subscriptionNotes.append(node('p','note','订阅只描述客户端连接 A 的入站，不包含 B 的地址、密码或出站映射。订阅生成不读取二级出站配置；节点、DNS 和代理组不会因二级出站开关或 B 分配而改变。Mihomo YAML 收录所有已启用且可完整导出的入站，没有符合条件的入站时不生成 YAML。Mieru 可导出 YAML；Naive 仅导出原生及 Shadowrocket 链接。SS/SOCKS5 仍只在终端输出 URL。'));
   subscriptionNotes.append(node('p','note','res 保留已有可信订阅状态的保护开关和密码；已有受保护订阅不会因新默认值而开放。旧版 HTTP Basic 保护会迁移为内容加密，迁移后需使用新输出的订阅 URL，并在客户端配置解密密码；密码、路径 Token 和证书不轮换。未完成的订阅发布可由 res 使用已保存的文件和保护状态继续校验。早于密码功能且没有认证状态的旧订阅，需通过 rep 明确选择保护模式。update 本身不修改运行配置或重建订阅内容。已有 Naive 二级链路不支持用 rep 原地迁移。'));$('subscription-specific').append(subscriptionNotes);
-  mount('advanced-fields',['acmem','acmetimeout','zerossl_eab_kid','zerossl_eab_hmac','CF_Account_ID','CF_Zone_ID','CF_Key','CF_Email','sslcom_eab_kid','sslcom_eab_hmac','certdns','hyjpt','agsbxurl']);
+  mount('advanced-fields',['acmem','acmeca','acmetimeout','zerossl_eab_kid','zerossl_eab_hmac','CF_Account_ID','CF_Zone_ID','CF_Key','CF_Email','sslcom_eab_kid','sslcom_eab_hmac','certdns','hyjpt','agsbxurl']);
   for(const [core,label,description] of CORE_INFO){
     const group=node('details','core-group');group.dataset.core=core;group.open=false;group.id='core-'+core;
     const heading=node('summary','core-heading'),arrow=node('span','core-arrow');arrow.setAttribute('aria-hidden','true');
@@ -1317,7 +1320,7 @@ function updateVisibility(deploy,protocols){
   const autoCert=[...$('certMode').options].find(option=>option.value==='auto');
   autoCert.textContent=value('sub')?'复用已有 CA；没有则在 VPS 申请':'脚本默认：复用或自签';
   $('certMode').disabled=certLocked;
-  text('help-certMode',certLocked?'当前 rep 未开启订阅，因此保留已有证书，不能更换证书方案。开启订阅后，可复用已有 CA 或申请 IP / 域名证书。没有订阅、也没有旧证书记录时，TLS 节点仍可生成首次自签证书。':FIELDS.certMode.help);
+  text('help-certMode',certLocked?'当前 rep 未开启订阅，因此保留已有证书。需要续期或恢复证书时，在顶部选择“维护已有证书（cert）”，不要卸载重装。开启订阅后，可复用已有 CA 或申请 IP / 域名证书。':FIELDS.certMode.help);
   $('cert-operation-link').hidden=!certLocked;
   for(const key of ['certym','certip','certwild','certcrt','certkey','CF_Token']){
     const visible=({certym:['http','alpn','dns','external'],certip:['ip'],certwild:['dns'],certcrt:['external'],certkey:['external'],CF_Token:['dns']})[key].includes(cert)&&!certLocked;
@@ -1325,7 +1328,7 @@ function updateVisibility(deploy,protocols){
   }
   for(const key of ['acmem','acmetimeout','CF_Account_ID','CF_Zone_ID','CF_Key','CF_Email','sslcom_eab_kid','sslcom_eab_hmac','certdns'])$(key).disabled=certLocked;
   for(const key of ['CF_Account_ID','CF_Zone_ID','CF_Key','CF_Email','certdns'])$(key).disabled=certLocked||cert!=='dns';
-  for(const key of ['acmetimeout','sslcom_eab_kid','sslcom_eab_hmac'])$(key).disabled=certLocked||cert==='external'||cert==='auto'&&!value('sub');
+  for(const key of ['acmeca','acmetimeout','sslcom_eab_kid','sslcom_eab_hmac'])$(key).disabled=certLocked||cert==='external'||cert==='auto'&&!value('sub');
   for(const key of ['zerossl_eab_kid','zerossl_eab_hmac']){
     const applicable=zeroSSLEabApplicable(value('operation'),cert,value('sub'));
     $(key).disabled=!applicable&&!value(key);
@@ -1408,7 +1411,7 @@ function collect(deploy,protocols){
       if(['http','alpn','dns','ip'].includes(cert)){add('alns','y');add('acmemode',cert);if(cert==='ip')add('certip',value('certip').trim());else add('certym',value('certym').trim());}
       if(cert==='dns'){if(value('certwild'))add('certwild','y');for(const key of ['CF_Token','CF_Account_ID','CF_Zone_ID','CF_Key','CF_Email','certdns'])add(key,value(key));}
       if(cert==='external'){add('certcrt',value('certcrt'));add('certkey',value('certkey'));add('certym',value('certym').trim());}
-      if(cert!=='external'&&(cert!=='auto'||value('sub'))){for(const key of ['acmetimeout','sslcom_eab_kid','sslcom_eab_hmac'])add(key,value(key));}
+      if(cert!=='external'&&(cert!=='auto'||value('sub'))){for(const key of ['acmeca','acmetimeout','sslcom_eab_kid','sslcom_eab_hmac'])add(key,value(key));}
       if(zeroSSLEabApplicable(value('operation'),cert,value('sub')))for(const key of ['zerossl_eab_kid','zerossl_eab_hmac'])add(key,value(key));
       add('acmem',value('acmem'));
     }
@@ -2176,6 +2179,9 @@ function validate(deploy,protocols,pairs){
     const problem=zeroSSLEabProblem(zeroSSLKid,zeroSSLHmac);if(problem)error(problem.message,problem.id);
   }
   if(value('operation')!=='rep'||value('sub')){
+    if(['ip','alpn'].includes(cert)&&!['auto','letsencrypt'].includes(value('acmeca')))error('IP / TLS-ALPN-01 仅支持 Let’s Encrypt；切换 CA 请使用 HTTP-01 或 DNS-01。','acmeca');
+    if(value('acmeca')==='zerossl'&&!value('acmem')&&!zeroSSLKid)warn('ZeroSSL 需要邮箱自动获取 EAB，或已有完整 EAB；留空将在 VPS 询问。','acmem');
+    if(value('acmeca')==='sslcom'&&(!value('acmem')||!value('sslcom_eab_kid')||!value('sslcom_eab_hmac')))warn('SSL.com 首次注册需要邮箱和官网取得的两项 EAB；已有 VPS 账户可复用。','sslcom_eab_kid');
     if(value('sub')&&cert==='auto')warn('订阅优先复用已有公信 CA；没有时在 VPS 申请。无人值守执行请明确选择 IP 或域名证书方案。','certMode');
     if(value('sub')&&value('operation')==='rep')warn('此次 rep 可能把共享 TLS 证书从自签升级为 CA，完成后请重新导入 TLS 节点和订阅地址。','certMode');
     if(ids.has('xvcdnpt')&&cert==='auto')warn('CDN 的 HTTPS 回源需要 Cloudflare 接受源站证书；严格校验模式应使用域名匹配的可信证书。可选择 DNS-01 或导入证书。','certMode');
@@ -2239,7 +2245,7 @@ function update(){
   if(!issues.length)$('issues').append(node('p','valid-note',idle?'尚未选择协议，可直接开始选择。':'配置项匹配，可以复制命令。'));
   $('parameter-list').replaceChildren();for(const [key,v] of pairs){const row=node('div','parameter-row');row.append(node('code','',key),node('span','',!value('show-secrets')&&PRIVATE_KEYS.has(key)?'已隐藏':v===''?'空值（保留）':v));$('parameter-list').append(row);}if(!pairs.length)$('parameter-list').append(node('p','note','当前没有需要传入的变量。'));
   const source=value('scriptSource');text('source-hint',source==='local'?(!BUILD.remoteAligned?'当前接口尚未发布，请先将配套脚本放到 VPS。':'')+'使用 VPS 上与此 GUI 配套的脚本文件。安装时优先复制它作为 agsbx 快捷命令；agsbxurl 控制后续更新与下载回退来源。':source==='repo'?(BUILD.remoteAligned?'默认使用 GitHub main 的配套脚本。下载和执行发生在 VPS，页面只生成命令文本。':'当前工作区接口尚未发布，请使用配套的 VPS 本地脚本或指定来源。'):source==='custom'?'此 URL 同时传入 agsbxurl，保持本次执行与后续快捷命令来源一致。页面不访问这个地址。':'执行 VPS 上已有的 agsbx。请确认已安装脚本包含本页所使用的变量。');
-  text('operation-hint',op==='rep'?'rep 会停止并重建所选非 Caddy 协议，保留已有 Naive/Caddy；未开订阅时保留证书，无证书时可首次自签。开启订阅必须复用 CA 或申请 IP / 域名证书，相关文件纳入回滚。本页按密码保护开关显式生成 subauth=y 或 n，请确认选择。未选协议可能移除。路径和 SOCKS 凭据会重新生成，请重新导入节点。已有 Naive 二级链路不支持此重建方式。':op==='restore-ip'?'仅用于已有部署：生成 ipv=空值 的恢复命令。按 VPS 保存的快照恢复网络策略；快照不完整时脚本会停止并提示人工处理。':op==='install'?'用于首次安装；开始部署前会准备 agsbx 管理入口，安装中途失败也可进入卸载。已有部署变更协议请选 rep。执行时可能安装依赖、下载核心、修改 VPS 服务与系统网络设置，页面只生成文本。':op==='res'?'res 重启已配置的 Xray / Sing-box / Caddy、Argo 与订阅服务；不包含 Mita。保留已有可信状态的保护开关和密码，旧 HTTP Basic 保护会迁移为内容加密；迁移后用 agsbx list 查看新的订阅 URL，并配置客户端解密密码。缺少认证状态的旧订阅须通过 rep 明确选择。此操作不传入部署表单中的 subauth 或 subpass。':op==='reload'?'Xray 与 Sing-box 的 reload 都会执行配置预检后的重启，并检查监听；连接会短暂中断。Caddy 保留原生重载；all 不包含 Mita，Mita 需显式选择。':op==='update'?'update 只更新脚本，不修改运行配置、密码保护模式或订阅内容；二级出站变更需重新配置。':op==='del'?'卸载操作的影响发生在执行命令的 VPS 上。':'管理已有部署；协议表单中的选择不会附加到这条命令。');
+  text('operation-hint',op==='rep'?'rep 会停止并重建所选非 Caddy 协议，保留已有 Naive/Caddy；未开订阅时保留证书，无证书时可首次自签。开启订阅必须复用 CA 或申请 IP / 域名证书，相关文件纳入回滚。本页按密码保护开关显式生成 subauth=y 或 n，请确认选择。未选协议可能移除。路径和 SOCKS 凭据会重新生成，请重新导入节点。已有 Naive 二级链路不支持此重建方式。':op==='cert'?'维护已有证书，不重建协议、不删除账户。Caddy 手动尝试最多 60 秒，失败后停止受管进程并关闭开机启动；ACME 按原账户正常续期，最多 600 秒，失败后退出，不留后台重试。已有有效 ACME 证书可恢复安装。成功后继续正常自动续期。':op==='restore-ip'?'仅用于已有部署：生成 ipv=空值 的恢复命令。按 VPS 保存的快照恢复网络策略；快照不完整时脚本会停止并提示人工处理。':op==='install'?'用于首次安装；开始部署前会准备 agsbx 管理入口，证书失败可先用 cert 维护，避免卸载重装。已有部署变更协议请选 rep。执行时可能安装依赖、下载核心、修改 VPS 服务与系统网络设置，页面只生成文本。':op==='res'?'res 重启已配置的 Xray / Sing-box / Caddy、Argo 与订阅服务；不包含 Mita。保留已有可信状态的保护开关和密码，旧 HTTP Basic 保护会迁移为内容加密；迁移后用 agsbx list 查看新的订阅 URL，并配置客户端解密密码。缺少认证状态的旧订阅须通过 rep 明确选择。此操作不传入部署表单中的 subauth 或 subpass。':op==='reload'?'Xray 与 Sing-box 的 reload 都会执行配置预检后的重启，并检查监听；连接会短暂中断。Caddy 保留原生重载；all 不包含 Mita，Mita 需显式选择。':op==='update'?'update 只更新脚本，不修改运行配置、密码保护模式或订阅内容；二级出站变更需重新配置。':op==='del'?'卸载操作的影响发生在执行命令的 VPS 上。':'管理已有部署；协议表单中的选择不会附加到这条命令。');
   updateArchitecture(deploy,protocols,cores);
 }
 async function copyCommand(){
