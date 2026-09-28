@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-AIRGOSBX_VERSION='V26.09.27.11'
+# 配套维护：airgosbx.sh 与 airgosbx-gui.html 是同一套工具，必须成套维护、提交和发布。
+# 修改任一文件时，须同步核对并修改另一文件的对应内容。
+# 参数、默认值、协议归属、开关与互斥、校验、命令生成与还原及功能说明必须保持一致。
+AIRGOSBX_VERSION='V26.09.28'
 # 仅在内置 XHTTP 默认参数改变时更新此标记，普通脚本版本更新不使旧命令失效。
 XHTTP_DEFAULTS_VERSION='V26.09.08.1'
 agsbxurl="${agsbxurl:-https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/main/airgosbx.sh}"
@@ -8,6 +11,7 @@ export -n zerossl_eab_kid zerossl_eab_hmac sslcom_eab_kid sslcom_eab_hmac fmpass
   vl_fmpass xh_fmpass vx_fmpass vw_fmpass vm_fmpass hy_fmpass \
   vx_fmheader vw_fmheader vm_fmheader hy_fmheader 2>/dev/null || true
 export -n xheaders64 xh_xheaders64 vx_xheaders64 xvd_xheaders64 xva_xheaders64 2>/dev/null || true
+export -n xdrive_client_id xdrive_client_secret xdrive_refresh_token 2>/dev/null || true
 export -n uuid obfs_pass subid subauth subpass securl naiveuser naivepass mieruuser mierupass agk ARGO_AUTH \
   CF_Token CF_Key CF_Email CF_Account_ID CF_Zone_ID 2>/dev/null || true
 # 编号 URL 与旧 securl 具有同等敏感性，任何子进程启动前移除 export 属性。
@@ -1680,6 +1684,16 @@ vrow "xdnsym"   "XDNS 专用域名（最长100字符）；须配置 NS 委派到
 vrow "xdnsres"  "XDNS 客户端递归解析器，IP:端口或[IPv6]:端口；默认 8.8.8.8:53"
 vrow "xicmp"    "Vless-kcp-xicmp-fm（ICMP隧道；root/CAP_NET_RAW，不关闭系统 Ping）"
 echo "             XDNS/XICMP 两端需 Xray >=26.7.28；输出完整客户端 JSON，不加入通用链接订阅。"
+vrow "xdrive"   "VLESS＋XDRIVE（云盘隧道；设置即启用，不监听公网端口）"
+vrow "xdriveservice" "Google Drive（默认）或 local；两端须使用同一专用数据目录，暂不支持 template"
+vrow "xdrivefolder" "必填：Google Drive 文件夹 ID，或 local 模式的 VPS 绝对目录路径"
+vrow "xdriveauthfile" "仅 Google Drive：VPS 绝对文件路径，纯文本三行依次为 ClientID、ClientSecret、RefreshToken"
+vrow "xdriveclientfolder" "仅 local：可选的客户端绝对目录路径，未设置则与 VPS 相同"
+echo "             XDRIVE 两端需包含该功能的 Xray；官方于 2026-09-19 合并，v26.9.9 不支持。"
+echo "             当前需先备好支持核心和部署依赖，再带完整协议参数执行 rep；不自动获取开发版核心。"
+echo "             凭据文件须属运行用户所有、权限 600/400；local 依赖另行配置的双向文件同步。"
+echo "             示例：xdrive= xdrivefolder='文件夹ID' xdriveauthfile=/root/xdrive-auth.txt agsbx rep"
+echo "             XDRIVE 导出权限为 600 的专用客户端 JSON，仅提示文件路径；文件含云盘凭据，不加入订阅。"
 
 vg "② Sing-box 内核协议（端口留空＝自动分配）"
 vrow "shypt"    "Hysteria2（QUIC暴力传输，需TLS证书）"
@@ -2257,7 +2271,7 @@ validate_xray_options() {
     xray_range_valid "$normalized" 1 65535 || { echo "错误：$option 必须是有效端口或连续范围。"; return 1; }
     printf -v "$option" '%s' "$normalized"
   done
-  for flag in xhp vlp vxp vwp xhyp xdns xicp xvcdn xvargo; do [ "${!flag}" != yes ] || has_xray=yes; done
+  for flag in xhp vlp vxp vwp xhyp xdns xicp xdrp xvcdn xvargo; do [ "${!flag}" != yes ] || has_xray=yes; done
   for flag in hyp tup anp arp ssp; do [ "${!flag}" != yes ] || has_singbox=yes; done
   if [ "$vmfm" != none ] && [ "$has_xray" = no ] && [ "$has_singbox" = yes ]; then
     echo "错误：本次 vmpt 归属 Sing-box，不能使用 Xray 的 vmfm。"; return 1
@@ -2568,12 +2582,13 @@ validate_deployment_inputs(){
     parse_xdns_resolver "$xdnsres" || { echo "错误：xdnsres 必须为有效 IP:端口或[IPv6]:端口。"; return 1; }
   fi
   [ "$xicp" != yes ] || require_xicmp_capability || return 1
+  [ "$xdrp" != yes ] || validate_xdrive_inputs || return 1
   if [ "$sub" = yes ]; then
     for flag in xhp vlp vxp vwp xhyp xvcdn xvargo hyp tup anp arp vmp mierup; do
       [ "${!flag}" != yes ] || has_link_protocol=yes
     done
     if [ -z "$naive" ] && [ "$has_link_protocol" = no ]; then
-      echo "错误：当前没有可订阅的协议，请取消 sub；SS/SOCKS5 仅输出二级代理 URL，XDNS/XICMP 使用完整客户端 JSON。"; return 1
+      echo "错误：当前没有可订阅的协议，请取消 sub；SS/SOCKS5 仅输出二级代理 URL，XDNS/XICMP/XDRIVE 使用完整客户端 JSON。"; return 1
     fi
   fi
   [ -z "$ym_vl_re" ] || valid_domain "$ym_vl_re" || { echo "错误：reym 域名格式无效。"; return 1; }
@@ -2591,7 +2606,7 @@ preflight_service_slots(){
   local flag xr=no sb=no
   [ "$sub" != yes ] || command -v timeout >/dev/null 2>&1 \
     || { echo "错误：订阅需要 timeout 以限制 ACME 和 TLS 校验时间；未开始部署。"; return 1; }
-  for flag in xhp vlp vxp vwp xhyp xdns xicp xvcdn xvargo; do [ "${!flag}" != yes ] || xr=yes; done
+  for flag in xhp vlp vxp vwp xhyp xdns xicp xdrp xvcdn xvargo; do [ "${!flag}" != yes ] || xr=yes; done
   for flag in hyp tup anp arp ssp; do [ "${!flag}" != yes ] || sb=yes; done
   if [ "$vmp" = yes ] || [ "$sop" = yes ]; then
     determine_secondary_common_core
@@ -2958,7 +2973,7 @@ case "$1" in
     ;;
 esac
 # 每次调用从公开协议参数推导内部标志，不继承父进程中的中间状态或展示名称。
-vlp='' vmp='' vwp='' vmag='' hyp='' xhyp='' tup='' xhp='' vxp='' anp='' ssp='' arp='' sop='' wap='' xicp='' xvcdn='' xvargo='' mierup=''
+vlp='' vmp='' vwp='' vmag='' hyp='' xhyp='' tup='' xhp='' vxp='' anp='' ssp='' arp='' sop='' wap='' xicp='' xdrp='' xvcdn='' xvargo='' mierup=''
 tls_cert_ready=no tls_cert_file='' tls_key_file='' tls_caddy_reuse_notice_shown=no
 rep_manage_certificate=no
 [ -z "${vlpt+x}" ] || vlp=yes
@@ -2978,6 +2993,7 @@ rep_manage_certificate=no
 [ -z "${xdnspt+x}" ] || xdns=yes
 [ -z "${xicmp+x}" ] || xicp=yes
 [ -z "${xicmppt+x}" ] || xicp=yes
+[ -z "${xdrive+x}" ] || xdrp=yes
 [ -z "${xvcdnpt+x}" ] || xvcdn=yes
 case "${mieru:-}" in
   y|Y|yes|YES|1|true|TRUE) mierup=yes ;;
@@ -3043,10 +3059,10 @@ if [ -z "$1" ] && { [ -n "$subpass" ] || [ "$subauth_requested" = yes ]; }; then
   exit 1
 fi
 if [ "$1" = "rep" ]; then
-[ -n "$naive" ] || [ "$mierup" = yes ] || [ "$vwp" = yes ] || [ "$sop" = yes ] || [ "$vxp" = yes ] || [ "$ssp" = yes ] || [ "$vlp" = yes ] || [ "$vmp" = yes ] || [ "$hyp" = yes ] || [ "$tup" = yes ] || [ "$xhp" = yes ] || [ "$anp" = yes ] || [ "$arp" = yes ] || [ "$xhyp" = yes ] || [ "$xdns" = yes ] || [ "$xicp" = yes ] || [ "$xvcdn" = yes ] || [ "$xvargo" = yes ] || { echo "提示：rep重置协议时，请在脚本前至少设置一个协议变量哦! 💣"; exit; }
+[ -n "$naive" ] || [ "$mierup" = yes ] || [ "$vwp" = yes ] || [ "$sop" = yes ] || [ "$vxp" = yes ] || [ "$ssp" = yes ] || [ "$vlp" = yes ] || [ "$vmp" = yes ] || [ "$hyp" = yes ] || [ "$tup" = yes ] || [ "$xhp" = yes ] || [ "$anp" = yes ] || [ "$arp" = yes ] || [ "$xhyp" = yes ] || [ "$xdns" = yes ] || [ "$xicp" = yes ] || [ "$xdrp" = yes ] || [ "$xvcdn" = yes ] || [ "$xvargo" = yes ] || { echo "提示：rep重置协议时，请在脚本前至少设置一个协议变量哦! 💣"; exit; }
 fi
 else
-[ "$1" = "del" ] || [ "$1" = cert ] || [ "$1" = __cert_renew ] || [ -n "$naive" ] || [ "$mierup" = yes ] || [ "$vwp" = yes ] || [ "$sop" = yes ] || [ "$vxp" = yes ] || [ "$ssp" = yes ] || [ "$vlp" = yes ] || [ "$vmp" = yes ] || [ "$hyp" = yes ] || [ "$tup" = yes ] || [ "$xhp" = yes ] || [ "$anp" = yes ] || [ "$arp" = yes ] || [ "$xhyp" = yes ] || [ "$xdns" = yes ] || [ "$xicp" = yes ] || [ "$xvcdn" = yes ] || [ "$xvargo" = yes ] || { echo "提示：未安装airgosbx脚本，请在脚本前至少设置一个协议变量哦！💣"; exit; }
+[ "$1" = "del" ] || [ "$1" = cert ] || [ "$1" = __cert_renew ] || [ -n "$naive" ] || [ "$mierup" = yes ] || [ "$vwp" = yes ] || [ "$sop" = yes ] || [ "$vxp" = yes ] || [ "$ssp" = yes ] || [ "$vlp" = yes ] || [ "$vmp" = yes ] || [ "$hyp" = yes ] || [ "$tup" = yes ] || [ "$xhp" = yes ] || [ "$anp" = yes ] || [ "$arp" = yes ] || [ "$xhyp" = yes ] || [ "$xdns" = yes ] || [ "$xicp" = yes ] || [ "$xdrp" = yes ] || [ "$xvcdn" = yes ] || [ "$xvargo" = yes ] || { echo "提示：未安装airgosbx脚本，请在脚本前至少设置一个协议变量哦！💣"; exit; }
 fi
 uuid=${uuid:-''}
 obfs_pass=${obfs_pass:-''}
@@ -5707,8 +5723,28 @@ register_acme_cron(){
   local script_path
   script_path=$(managed_script_path) || return 1
   write_managed_cron AIRGOSBX_CERT_RENEW \
-    "30 2 * * * /bin/bash $script_path __cert_renew > /dev/null 2>&1" \
+    "30 */6 * * * umask 077 && /bin/bash $script_path __cert_renew > $HOME/agsbx/cert_renewal.log 2>&1" \
     "30 2 * * * /bin/bash $HOME/agsbx/acme.sh --cron --home $HOME/agsbx/acme > /dev/null 2>&1"
+}
+
+# 只读取证书时间，不把进入续期窗口当成证书失效。日期先转 ISO 格式以兼容 GNU/BusyBox date。
+certificate_lifetime_seconds(){
+  local dates before after begin_epoch end_epoch
+  dates=$(LC_ALL=C openssl x509 -in "$1" -noout -dates 2>/dev/null) || return 1
+  dates=$(printf '%s\n' "$dates" | LC_ALL=C awk '
+    BEGIN {split("Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec", names, " "); for(i=1;i<=12;i++) months[names[i]]=i}
+    /^notBefore=|^notAfter=/ {
+      sub(/^[^=]*=/, ""); n=split($0,a,/[[:space:]]+/)
+      if(n!=5 || !(a[1] in months) || a[5]!="GMT") exit 1
+      printf "%04d-%02d-%02d %s\n",a[4],months[a[1]],a[2],a[3]; count++
+    }
+    END {if(count!=2) exit 1}') || return 1
+  before=${dates%%$'\n'*}; after=${dates#*$'\n'}
+  begin_epoch=$(date -u -d "$before" +%s 2>/dev/null) \
+    && end_epoch=$(date -u -d "$after" +%s 2>/dev/null) || return 1
+  [[ "$begin_epoch" =~ ^[0-9]+$ ]] && [[ "$end_epoch" =~ ^[0-9]+$ ]] \
+    && [ "$end_epoch" -gt "$begin_epoch" ] || return 1
+  printf '%s\n' "$((end_epoch - begin_epoch))"
 }
 # ca/caddy 是来源标记；订阅仍须实际校验证书链与 SAN，不能仅凭标记认定可信。
 cert_trusted(){ [ "$1" = "ca" ] || [ "$1" = "caddy" ]; }
@@ -5875,19 +5911,84 @@ verify_subscription_https(){
   rm -rf -- "$temporary" || return 1
   [ "$failed" = no ]
 }
-# Caddy(naive) 证书续期联动重载：Caddy 自动续期会原地更新证书文件，但 xray/sing-box 仅在启动时读取证书、
-# 不会热感知续期。此处生成助手脚本并注册每日 cron——每天比对证书指纹，仅当证书真正变化(续期)时，
-# 才重启「配置里确实引用了该 Caddy 证书路径」的内核，平时零打断；首次运行只记录基线指纹。
-# 助手脚本用单引号 heredoc 写入，内部 $HOME/$cf 等在 cron 运行时(而非安装时)求值。
-setup_caddy_cert_reload(){
+# Caddy 保留原生 ARI/比例调度；按证书实际总寿命提高比例，确保至少提前 7 天进入续期窗口。
+ensure_caddy_renewal_floor(){
+  local cert="$1" config="$HOME/agsbx/Caddyfile" lifetime current desired stage count
+  lifetime=$(certificate_lifetime_seconds "$cert") || { echo "错误：无法读取 Caddy 证书有效期，未调整续期策略。"; return 1; }
+  # 预留六小时巡检和十分钟原生检查间隔，不将仍有效的证书标成失效。
+  if [ "$lifetime" -le 627000 ]; then
+    echo "错误：Caddy 域名证书总寿命不足七天安全窗口；保留原生调度，不能套用七天兜底。"; return 1
+  fi
+  [ -f "$config" ] && [ ! -L "$config" ] || return 1
+  count=$(grep -Ec '^[[:space:]]*renewal_window_ratio[[:space:]]+' "$config")
+  case "$count" in
+    0) current=0.3333333333333333 ;;
+    1)
+      # 只认可本函数放在 tls 块首行的标记，不能把 pki 内部 CA 的同名选项当成公网证书策略。
+      current=$(awk '
+        /^[[:space:]]*renewal_window_ratio[[:space:]]+/ {
+          if(previous !~ /^[[:space:]]*tls[[:space:]]+[^[:space:]{}]+[[:space:]]*\{[[:space:]]*$/ || $0 !~ /# AIRGOSBX_RENEWAL_FLOOR$/) exit 1
+          print $2; found=1
+        }
+        {previous=$0}
+        END {if(!found) exit 1}' "$config") || {
+        echo "错误：检测到自定义 Caddy 续期选项，无法确认其作用域；原配置保留，未自动覆盖。"; return 1
+      } ;;
+    *) echo "错误：Caddy 配置有多个续期比例，未自动覆盖自定义策略。"; return 1 ;;
+  esac
+  [[ "$current" =~ ^(0?\.[0-9]+|0)$ ]] || { echo "错误：无法识别现有 Caddy 续期比例。"; return 1; }
+  desired=$(LC_ALL=C awk -v current="$current" -v lifetime="$lifetime" 'BEGIN {
+    if(current<=0 || current>=1) exit 1
+    floor=627000/lifetime
+    if(current<floor) printf "%.10f", floor+0.0000000001
+  }') || return 1
+  # 常规 90 天证书的默认比例约提前 30 天，已满足下限，无需改配置或重载。
+  [ -n "$desired" ] || return 0
+  command -v timeout >/dev/null 2>&1 || { echo "错误：缺少 timeout，未调整 Caddy 续期策略。"; return 1; }
+  stage=$(mktemp -d "$HOME/agsbx/.caddy-renewal.XXXXXX") || return 1
+  if ! awk -v ratio="$desired" -v existing="$count" '
+    existing==1 && /^[[:space:]]*renewal_window_ratio[[:space:]]+/ && /# AIRGOSBX_RENEWAL_FLOOR$/ {print "    renewal_window_ratio " ratio " # AIRGOSBX_RENEWAL_FLOOR"; changed++; next}
+    existing==0 && /^[[:space:]]*tls[[:space:]]+[^[:space:]{}]+[[:space:]]*$/ {
+      print $0 " {"; print "    renewal_window_ratio " ratio " # AIRGOSBX_RENEWAL_FLOOR"; print "  }"; changed++; next
+    }
+    existing==0 && /^[[:space:]]*tls[[:space:]]+[^[:space:]{}]+[[:space:]]*\{[[:space:]]*$/ {
+      print; print "    renewal_window_ratio " ratio " # AIRGOSBX_RENEWAL_FLOOR"; changed++; next
+    }
+    {print}
+    END {if(changed!=1) exit 1}' "$config" > "$stage/Caddyfile" \
+    || ! chmod 600 "$stage/Caddyfile" \
+    || ! timeout -k 2 30 "$HOME/agsbx/caddy" validate --config "$stage/Caddyfile" --adapter caddyfile >/dev/null 2>&1; then
+    rm -rf -- "$stage"
+    echo "错误：七天续期兜底未通过当前 Caddy 的配置检查；原配置保留。调整此比例需要支持 renewal_window_ratio 的 Caddyfile 版本。"
+    return 1
+  fi
+  if ! cp -p "$config" "$stage/previous" || ! mv -f "$stage/Caddyfile" "$config"; then rm -rf -- "$stage"; return 1; fi
+  if agsbx_component_running caddy && ! kctl reload caddy; then
+    if ! mv -f "$stage/previous" "$config"; then
+      echo "错误：Caddy 续期配置恢复失败，备份保留在 $stage。"; return 1
+    fi
+    kctl reload caddy || { echo "错误：原配置已恢复，但重新加载失败。"; rm -rf -- "$stage"; return 1; }
+    rm -rf -- "$stage"; return 1
+  fi
+  rm -rf -- "$stage"
+  echo "Caddy 续期比例已提高为 $desired；保留更早的原生调度，并加入七天安全下限。"
+}
+
+# 每六小时检查续期安全窗口和共享证书指纹，不另建后台重试进程。
+register_caddy_cert_cron(){
   local script_path
   script_path=$(managed_script_path) || return 1
   write_managed_cron AIRGOSBX_CERT_RELOAD \
-    "20 3 * * * /bin/bash $script_path __cert_reload > /dev/null 2>&1" \
-    "20 3 * * * /bin/bash $HOME/agsbx/caddy_cert_reload.sh > /dev/null 2>&1" || return 1
+    "20 */6 * * * umask 077 && /bin/bash $script_path __cert_reload > $HOME/agsbx/caddy_cert_maintenance.log 2>&1" \
+    "20 3 * * * /bin/bash $HOME/agsbx/caddy_cert_reload.sh > /dev/null 2>&1"
+}
+
+setup_caddy_cert_reload(){
+  register_caddy_cert_cron || return 1
   # 注册时只建立基线，不能启动管理员已停止的内核。
   local cf fp
   cf=$(cat "$HOME/agsbx/cert_file_path") || return 1
+  ensure_caddy_renewal_floor "$cf" || return 1
   fp=$(certificate_fingerprint "$cf") || return 1
   printf '%s\n' "$fp" | ip_policy_atomic_write "$HOME/agsbx/.caddy_cert_fp" 600
 }
@@ -6410,7 +6511,9 @@ record_acme_rate_limit(){
 }
 
 renew_managed_acme_certificate(){
-  local identifier source mode api ca log status conf
+  local identifier source mode api ca log status conf cert lifetime floor_seconds threshold fingerprint now
+  local attempt_file previous_identifier previous_fingerprint previous_time extra floor_attempt=no
+  local -a renew_args
   identifier=$(cat "$HOME/agsbx/cert_identifier") && source=$(cat "$HOME/agsbx/cert_source") || return 1
   valid_domain "$identifier" || valid_ip "$identifier" || return 1
   case "$source" in acme-ip|acme-http|acme-alpn|acme-dns) mode=${source#acme-} ;; *) return 1 ;; esac
@@ -6423,12 +6526,46 @@ renew_managed_acme_certificate(){
     https://acme.ssl.com/sslcom-dv-ecc) ca=sslcom ;;
     *) echo "错误：无法确认原签发 CA，保留证书与账户，未发起续期。"; return 1 ;;
   esac
+  register_acme_cron || return 1
   acme_ca_retry_ready "$ca" || return 1
   command -v timeout >/dev/null 2>&1 || { echo "错误：缺少 timeout，未启动续期。"; return 1; }
   neutralize_legacy_acme_reload "$identifier" && ensure_official_acme "$mode" || return 1
+  renew_args=(--home "$HOME/agsbx/acme" --renew -d "$identifier" --ecc)
+  cert="$HOME/agsbx/acme/${identifier}_ecc/fullchain.cer"
+  floor_seconds=604800
+  [ "$source" != acme-ip ] || floor_seconds=86400
+  # 六小时检查一次，提前预留一个检查周期，避免跨过 7 天 / 24 小时底线才首次触发。
+  threshold=$((floor_seconds + 21600))
+  if lifetime=$(certificate_lifetime_seconds "$cert"); then
+    if [ "$lifetime" -le "$threshold" ]; then
+      echo "提示：证书总有效期不足安全窗口，不强制重复签发；保留客户端原续期判断。"
+    elif ! openssl x509 -in "$cert" -noout -checkend "$threshold" >/dev/null 2>&1; then
+      # 使用 ACME 工作区的最新证书，避免部署副本未更新时对已续出的证书再次下单。
+      fingerprint=$(certificate_fingerprint "$cert") && now=$(date +%s) || return 1
+      attempt_file="$HOME/agsbx/acme/.renew_floor_attempt"
+      if [ -e "$attempt_file" ] || [ -L "$attempt_file" ]; then
+        [ -f "$attempt_file" ] && [ ! -L "$attempt_file" ] || return 1
+        previous_identifier='' previous_fingerprint='' previous_time='' extra=''
+        read -r previous_identifier previous_fingerprint previous_time extra < "$attempt_file" || [ -n "$previous_time" ] || return 1
+        { valid_ip "$previous_identifier" || valid_domain "$previous_identifier"; } || return 1
+        [[ "$previous_fingerprint" =~ ^[0-9a-f]{64}$ ]] && [[ "$previous_time" =~ ^[0-9]{1,12}$ ]] && [ -z "$extra" ] || return 1
+        if [ "$previous_identifier" = "$identifier" ] && [ "$now" -lt "$((previous_time + 21600))" ]; then
+          echo "该域名或 IP 最近六小时内已尝试过兜底续期，本次不重复下单。"; return 1
+        fi
+      fi
+      floor_attempt=yes
+      renew_args+=(--force)
+      echo "进入续期安全窗口：至少提前 $((floor_seconds / 86400)) 天启动兜底续期，并预留六小时检查间隔。"
+    fi
+  else
+    echo "警告：无法读取证书有效期，本次只能使用客户端原续期判断。"
+  fi
   log=$(mktemp "$HOME/agsbx/acme/.renew.XXXXXX") || return 1
-  # 续期只使用原账户和原验证方式，最多 600 秒；不在后台循环或强制重新下单。
-  timeout -k 2 600 bash 8>&- "$HOME/agsbx/acme.sh" --home "$HOME/agsbx/acme" --renew -d "$identifier" --ecc > "$log" 2>&1
+  if [ "$floor_attempt" = yes ] && ! atomic_text_file "$attempt_file" "$identifier $fingerprint $now"; then
+    rm -f -- "$log"; return 1
+  fi
+  # 保留更早的原生调度，仅安全窗口内强制本次 --renew；不改持久化 --days，不切换 CA。
+  timeout -k 2 600 bash 8>&- "$HOME/agsbx/acme.sh" "${renew_args[@]}" > "$log" 2>&1
   status=$?
   cat "$log" >> "$HOME/agsbx/acme_issue.log" || { rm -f -- "$log"; return 1; }
   chmod 600 "$HOME/agsbx/acme_issue.log" || { rm -f -- "$log"; return 1; }
@@ -7164,7 +7301,117 @@ require_xray_special_version(){
 
 validate_xray_special_version(){
   # 仅限制新版配套配置，旧部署仍可按原版本回滚。
-  if grep -Eq 'agsbx-profile-x(dns|icmp)-v1' "$2"; then require_xray_special_version "$1"; fi
+  if grep -Eq 'agsbx-profile-x(dns|icmp)-v1' "$2"; then require_xray_special_version "$1" || return 1; fi
+  if grep -Fq 'agsbx-profile-xdrive-v1' "$2"; then require_xray_xdrive_support "$1" || return 1; fi
+  return 0
+}
+
+# XDRIVE 于 2026-09-19 合并；v26.9.9 尚不支持，不能用日期版本号猜测能力。
+# 官方字段依据：https://github.com/XTLS/Xray-core/pull/6748
+# 最小配置的 -test 在 server.Start 前退出，不启动存储后端、不创建目录或联网。
+require_xray_xdrive_support(){
+  # 空目录覆盖环境中的配置目录，确保探测只加载这份无凭据配置。
+  env 'xray.location.confdir=' "$1" run -test -c stdin: >/dev/null 2>&1 <<'EOF' && return 0
+{
+  "log": {"loglevel": "none"},
+  "inbounds": [{
+    "listen": "127.0.0.1", "port": 1, "protocol": "vless",
+    "settings": {"clients": [{"id": "00000000-0000-4000-8000-000000000001"}], "decryption": "none"},
+    "streamSettings": {"network": "xdrive", "xdriveSettings": {"service": "local", "remoteFolder": "/agsbx-xdrive-capability-probe"}}
+  }],
+  "outbounds": [{"protocol": "freedom"}]
+}
+EOF
+  echo "错误：此 Xray 核心未通过 XDRIVE 能力检查；需要包含官方 XDRIVE 实现的核心，v26.9.9 不支持。" >&2
+  return 1
+}
+
+xdrive_private_file(){
+  local target="$1" maximum="${2:-16384}" owner mode size
+  [ -f "$target" ] && [ ! -L "$target" ] && [ -r "$target" ] || return 1
+  owner=$(stat -c '%u' -- "$target" 2>/dev/null) && [ "$owner" = "$EUID" ] || return 1
+  mode=$(stat -c '%a' -- "$target" 2>/dev/null) || return 1
+  case "$mode" in 400|600) ;; *) return 1 ;; esac
+  size=$(stat -c '%s' -- "$target" 2>/dev/null) || return 1
+  [[ "$size" =~ ^[0-9]+$ ]] && [ "$size" -gt 0 ] && [ "$size" -le "$maximum" ]
+}
+
+validate_xdrive_inputs(){
+  local extra field
+  # 已发布的 v26.9.9 不含此功能；缺核心时提前停止，避免默认下载后才发现不兼容。
+  [ -x "$HOME/agsbx/xray" ] || {
+    echo "错误：XDRIVE 需要先在 $HOME/agsbx/xray 准备支持该功能的核心与部署依赖，再用完整参数执行 rep；不自动下载开发版核心。"
+    return 1
+  }
+  require_xray_xdrive_support "$HOME/agsbx/xray" || return 1
+  xdriveservice=${xdriveservice:-'Google Drive'}
+  xdrive_client_id='' xdrive_client_secret='' xdrive_refresh_token=''
+  valid_plain_text "${xdrivefolder:-}" 2048 && [ -n "${xdrivefolder:-}" ] \
+    || { echo "错误：XDRIVE 必须提供不含控制字符的 xdrivefolder。"; return 1; }
+  case "$xdriveservice" in
+    'Google Drive')
+      [[ "$xdrivefolder" =~ ^[A-Za-z0-9_-]{1,256}$ ]] \
+        || { echo "错误：Google Drive 的 xdrivefolder 必须是文件夹 ID，不是名称或 URL。"; return 1; }
+      [ -z "${xdriveclientfolder:-}" ] || { echo "错误：xdriveclientfolder 仅适用于 local 后端。"; return 1; }
+      valid_plain_text "${xdriveauthfile:-}" 4096 || { echo "错误：xdriveauthfile 路径太长或包含控制字符。"; return 1; }
+      case "${xdriveauthfile:-}" in /*) ;; *) echo "错误：请用 xdriveauthfile 指定 VPS 上凭据文件的绝对路径。"; return 1 ;; esac
+      xdrive_private_file "$xdriveauthfile" \
+        || { echo "错误：XDRIVE 凭据文件须为当前用户所有、权限 600 或 400 的非链接普通文件，大小不超过 16 KiB。"; return 1; }
+      # 先拒绝 NUL/非 ASCII 字节，避免 Bash read 丢弃 NUL 后悄悄改变凭据。
+      [ "$(LC_ALL=C tr -d '\012\040-\176' < "$xdriveauthfile" | wc -c)" -eq 0 ] \
+        || { echo "错误：XDRIVE 凭据文件只接受 ASCII 文本及 LF 换行。"; return 1; }
+      if ! {
+        IFS= read -r xdrive_client_id && IFS= read -r xdrive_client_secret \
+          && { IFS= read -r xdrive_refresh_token || [ -n "$xdrive_refresh_token" ]; } \
+          && ! { IFS= read -r extra || [ -n "$extra" ]; }
+      } < "$xdriveauthfile"; then
+        echo "错误：XDRIVE 凭据文件必须恰有三行，依次为 ClientID、ClientSecret、RefreshToken。"
+        return 1
+      fi
+      for field in xdrive_client_id xdrive_client_secret xdrive_refresh_token; do
+        [ -n "${!field}" ] && valid_plain_text "${!field}" 4096 \
+          && [[ "${!field}" != *[[:space:]]* ]] \
+          || { echo "错误：XDRIVE 三项凭据均须非空、不含空白且每项不超过 4096 字符。"; return 1; }
+      done
+      ;;
+    local)
+      [ -z "${xdriveauthfile:-}" ] || { echo "错误：local 后端不使用 xdriveauthfile。"; return 1; }
+      xdriveclientfolder=${xdriveclientfolder:-$xdrivefolder}
+      for field in xdrivefolder xdriveclientfolder; do
+        valid_plain_text "${!field}" 2048 || return 1
+        case "${!field}" in /*) ;; *) echo "错误：local 的两端目录均须使用绝对路径。"; return 1 ;; esac
+        case "${!field}" in /|*//*|*/../*|*/./*|*/..|*/.) echo "错误：local 须使用独立的数据目录，不能指向根目录或含重复斜杠、. / .. 路径段。"; return 1 ;; esac
+      done
+      ;;
+    *) echo "错误：xdriveservice 仅支持 'Google Drive' 或 local，暂不支持 template。"; return 1 ;;
+  esac
+  return 0
+}
+
+render_xdrive_settings(){
+  local folder="$1"
+  printf '{"service":"%s","remoteFolder":"%s"' "$(json_escape "$xdriveservice")" "$(json_escape "$folder")"
+  if [ "$xdriveservice" = 'Google Drive' ]; then
+    printf ',"secrets":["%s","%s","%s"]' "$(json_escape "$xdrive_client_id")" \
+      "$(json_escape "$xdrive_client_secret")" "$(json_escape "$xdrive_refresh_token")"
+  fi
+  printf '}'
+}
+
+render_xdrive_client(){
+  case "$enkey" in mlkem768x25519plus.*) ;; *) echo "错误：XDRIVE 缺少配套 VLESS Encryption 公钥。" >&2; return 1 ;; esac
+  cat <<EOF
+{
+  "log": {"loglevel": "none"},
+  "inbounds": [{"listen": "127.0.0.1", "port": 10808, "protocol": "socks", "settings": {"auth": "noauth", "udp": true}}],
+  "outbounds": [{
+    "tag": "xdrive", "protocol": "vless",
+    "settings": {"address": "127.0.0.1", "port": 1, "id": "$(json_escape "$uuid")", "encryption": "$(json_escape "$enkey")"},
+    "streamSettings": {"network": "xdrive", "security": "none", "xdriveSettings": $1},
+    "mux": {"enabled": true, "concurrency": 8}
+  }]
+}
+EOF
 }
 
 require_xicmp_capability(){
@@ -7239,8 +7486,14 @@ xray_version=$("$HOME/agsbx/xray" version 2>/dev/null | awk '/^Xray/{print $2}')
 [[ "$xray_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && [ "$(vercmp "$xray_version" 26.3.27)" != lt ] \
   || { echo "错误：当前配置需要 Xray 26.3.27 或更新版本；请先更新核心。"; return 1; }
 if [ "$xdns" = yes ] || [ "$xicp" = yes ]; then require_xray_special_version "$HOME/agsbx/xray" || return 1; fi
+[ "$xdrp" != yes ] || require_xray_xdrive_support "$HOME/agsbx/xray" || return 1
 # 兼容旧脚本遗留状态；新版 XICMP 会识别系统 Echo，无需关闭全局 Ping。
 restore_xicmp_state || return 1
+if [ "$xdrp" = yes ]; then
+  [ ! -L "$HOME/agsbx/xr.json" ] && { [ ! -e "$HOME/agsbx/xr.json" ] || [ -f "$HOME/agsbx/xr.json" ]; } \
+    || { echo "错误：XDRIVE 的 Xray 配置路径不是安全的普通文件。"; return 1; }
+  [ ! -e "$HOME/agsbx/xr.json" ] || chmod 600 "$HOME/agsbx/xr.json" || return 1
+fi
 cat > "$HOME/agsbx/xr.json" <<EOF
 {
   "log": {
@@ -7268,7 +7521,7 @@ private_key_x=$(cat "$HOME/agsbx/xrk/private_key")
 public_key_x=$(cat "$HOME/agsbx/xrk/public_key")
 short_id_x=$(cat "$HOME/agsbx/xrk/short_id")
 fi
-if [ -n "$xhp" ] || [ -n "$vxp" ] || [ -n "$vwp" ] || [ "$xvcdn" = yes ] || [ "$xvargo" = yes ] || [ "$xdns" = yes ] || [ "$xicp" = yes ]; then
+if [ -n "$xhp" ] || [ -n "$vxp" ] || [ -n "$vwp" ] || [ "$xvcdn" = yes ] || [ "$xvargo" = yes ] || [ "$xdns" = yes ] || [ "$xicp" = yes ] || [ "$xdrp" = yes ]; then
 [ ! -L "$HOME/agsbx/xrk/dekey" ] && [ ! -L "$HOME/agsbx/xrk/enkey" ] || { echo "错误：ENC 密钥文件不能是符号链接。"; return 1; }
 if [ ! -e "$HOME/agsbx/xrk/dekey" ] && [ ! -e "$HOME/agsbx/xrk/enkey" ]; then
 vlkey=$("$HOME/agsbx/xray" vlessenc) || { echo "错误：无法生成 VLESS Encryption 密钥。"; return 1; }
@@ -7572,6 +7825,33 @@ cat >> "$HOME/agsbx/xr.json" <<EOF || return 1
       }
     },
 EOF
+fi
+if [ "$xdrp" = yes ]; then
+local xdrive_server_settings='' xdrive_client_settings='' xdrive_client_json=''
+export -n xdrive_server_settings xdrive_client_settings xdrive_client_json 2>/dev/null || true
+xdrive_server_settings=$(render_xdrive_settings "$xdrivefolder") || return 1
+xdrive_client_settings=$(render_xdrive_settings "${xdriveclientfolder:-$xdrivefolder}") || return 1
+xdrive_client_json=$(render_xdrive_client "$xdrive_client_settings") || return 1
+atomic_text_file "$HOME/agsbx/xdrive-client.json" "$xdrive_client_json" || return 1
+env 'xray.location.confdir=' "$HOME/agsbx/xray" run -test -c "$HOME/agsbx/xdrive-client.json" >/dev/null 2>&1 \
+  || { echo "错误：核心无法解析 XDRIVE 客户端配置，已停止部署；原始错误输出已隐藏。"; return 1; }
+# XDRIVE 不打开监听套接字；地址和端口仅满足 Xray 通用入站解析要求。
+# 不设置 streamSettings.address/port，以免覆盖存储服务的 HTTPS 目标。
+cat >> "$HOME/agsbx/xr.json" <<EOF || return 1
+    {
+      "tag": "vless-xdrive",
+      "listen": "127.0.0.1",
+      "port": 1,
+      "protocol": "vless",
+      "settings": {
+        "clients": [{"id": "$(json_escape "$uuid")", "email": "agsbx-profile-xdrive-v1"}],
+        "decryption": "${dekey}"
+      },
+      "streamSettings": {"network": "xdrive", "security": "none", "xdriveSettings": $xdrive_server_settings}
+    },
+EOF
+unset xdrive_client_id xdrive_client_secret xdrive_refresh_token xdrive_server_settings xdrive_client_settings xdrive_client_json
+echo "已生成 VLESS Encryption + XDRIVE 配置；不新增公网监听端口。"
 fi
 if [ "$xvcdn" = yes ]; then
 port_xvcdn=$(init_port "$port_xvcdn" port_xvcdn)
@@ -8636,6 +8916,7 @@ secondary_protocol_is_active(){
     xhypt)    [ "$xhyp" = yes ] ;;
     xdns)     [ "$xdns" = yes ] ;;
     xicmp)    [ "$xicp" = yes ] ;;
+    xdrive)   [ "$xdrp" = yes ] ;;
     xvcdnpt)  [ "$xvcdn" = yes ] ;;
     xvargopt) [ "$xvargo" = yes ] ;;
     shypt)    [ "$hyp" = yes ] ;;
@@ -8654,7 +8935,7 @@ secondary_protocol_is_active(){
 determine_secondary_common_core(){
   local has_xray_fixed=no has_singbox_fixed=no
   if [ "$xhp" = yes ] || [ "$vlp" = yes ] || [ "$vxp" = yes ] || [ "$vwp" = yes ] || \
-    [ "$xhyp" = yes ] || [ "$xdns" = yes ] || [ "$xicp" = yes ] || \
+    [ "$xhyp" = yes ] || [ "$xdns" = yes ] || [ "$xicp" = yes ] || [ "$xdrp" = yes ] || \
     [ "$xvcdn" = yes ] || [ "$xvargo" = yes ]; then
     has_xray_fixed=yes
   fi
@@ -8671,7 +8952,7 @@ determine_secondary_common_core(){
 
 secondary_protocol_core(){
   case "$1" in
-    xhpt|vlpt|vxpt|vwpt|xhypt|xdns|xicmp|xvcdnpt|xvargopt) printf 'xr' ;;
+    xhpt|vlpt|vxpt|vwpt|xhypt|xdns|xicmp|xdrive|xvcdnpt|xvargopt) printf 'xr' ;;
     shypt|tupt|anpt|arpt|sspt) printf 'sb' ;;
     # Naive 入站仍由 Caddy 驱动；这里的 sb 仅表示本地转交和二级出站由 Sing-box 承载。
     naive) printf 'sb' ;;
@@ -8683,7 +8964,7 @@ secondary_protocol_core(){
 
 secondary_expand_group(){
   local group="$1" protocol matched=no
-  for protocol in xhpt vlpt vxpt vwpt xhypt xdns xicmp xvcdnpt xvargopt shypt tupt anpt arpt vmpt sspt sopt; do
+  for protocol in xhpt vlpt vxpt vwpt xhypt xdns xicmp xdrive xvcdnpt xvargopt shypt tupt anpt arpt vmpt sspt sopt; do
     secondary_protocol_is_active "$protocol" || continue
     [ "$(secondary_protocol_core "$protocol")" = "$group" ] || continue
     matched=yes
@@ -8728,7 +9009,7 @@ normalize_secondary_selectors(){
         secondary_error "secp 需要 A 入站选择名；SS/SOCKS5 入站用 sspt/sopt，B 的地址填 securl。"
         return 1
         ;;
-      xhpt|vlpt|vxpt|vwpt|xhypt|xdns|xicmp|xvcdnpt|xvargopt|shypt|tupt|anpt|arpt|vmpt|sspt|sopt)
+      xhpt|vlpt|vxpt|vwpt|xhypt|xdns|xicmp|xdrive|xvcdnpt|xvargopt|shypt|tupt|anpt|arpt|vmpt|sspt|sopt)
         secondary_protocol_is_active "$normalized" || {
           secondary_error "secp=$normalized 已被选择，但本次没有启用对应协议变量。"
           return 1
@@ -9914,6 +10195,7 @@ secondary_tag_for_protocol(){
     xr:xhypt) printf 'hy2-xr' ;;
     xr:xdns) printf 'vless-kcp-xdns' ;;
     xr:xicmp) printf 'vless-kcp-xicmp' ;;
+    xr:xdrive) printf 'vless-xdrive' ;;
     xr:xvcdnpt) printf 'vlessenc-xhttp-cdn' ;;
     xr:xvargopt) printf 'vlessenc-xhttp-argo' ;;
     xr:vmpt) printf 'vmess-xr' ;;
@@ -10387,7 +10669,11 @@ validate_generated_core_config(){
       if grep -Fq 'agsbx-profile-xicmp-v1' "$config"; then require_xicmp_capability || return 1; fi
       output=$("$binary" run -test -c "$config" 2>&1) || {
         echo "错误：Xray 配置检查失败，未注册服务。"
-        printf '%s\n' "$output" | tail -n 5
+        if grep -Fq 'agsbx-profile-xdrive-v1' "$config"; then
+          echo "XDRIVE 配置含存储凭据，已隐藏核心原始错误输出；请核对核心能力与配置字段。"
+        else
+          printf '%s\n' "$output" | tail -n 5
+        fi
         return 1
       }
       ;;
@@ -11161,7 +11447,7 @@ local need_xray=no need_singbox=no
 # 先按阶段一既有规则决定原生协议归属，再额外加入 Naive sidecar 的 Sing-box 需求；
 # 这样仅启用 vmpt/sopt 时仍默认落在 Xray，不会因 sidecar 被悄悄迁移到 Sing-box。
 if [ "$xhp" = yes ] || [ "$vlp" = yes ] || [ "$vxp" = yes ] || [ "$vwp" = yes ] || \
-  [ "$xhyp" = yes ] || [ "$xdns" = yes ] || [ "$xicp" = yes ] || [ "$xvcdn" = yes ] || [ "$xvargo" = yes ]; then
+  [ "$xhyp" = yes ] || [ "$xdns" = yes ] || [ "$xicp" = yes ] || [ "$xdrp" = yes ] || [ "$xvcdn" = yes ] || [ "$xvargo" = yes ]; then
   need_xray=yes
 fi
 if [ "$hyp" = yes ] || [ "$tup" = yes ] || [ "$anp" = yes ] || [ "$arp" = yes ] || [ "$ssp" = yes ]; then
@@ -11199,7 +11485,7 @@ if [ "$need_xray" = yes ] || [ "$need_singbox" = yes ]; then
     xrsbso || return 1
     warpsx || return 1
     xrsbout || return 1
-    xhp="xhptargo"; vlp="vlptargo"; vxp="vxptargo"; vwp="vwptargo"; xhyp="xhyptargo"; xdns="xdnstargo"; xicp="xicptargo"; xvcdn="xvcdnptargo"; xvargo="xvargoptargo"
+    xhp="xhptargo"; vlp="vlptargo"; vxp="vxptargo"; vwp="vwptargo"; xhyp="xhyptargo"; xdns="xdnstargo"; xicp="xicptargo"; xdrp="xdrivetargo"; xvcdn="xvcdnptargo"; xvargo="xvargoptargo"
   else
     installsb || return 1
     installxray || return 1
@@ -11659,6 +11945,19 @@ printf -- '- "%s"\n' "$(json_escape "$direct_vl_title")"
 elif [ "$sub" = yes ]; then
 echo "提示：带 FM 的 vlpt 请使用完整 VLESS URL 或聚合订阅；当前 Clash 模板不输出缺少掩码的节点。"
 fi
+fi
+if grep -Fq 'agsbx-profile-xdrive-v1' "$HOME/agsbx/xr.json" 2>/dev/null; then
+  node_title "💣【 VLESS Encryption + XDRIVE 】"
+  if xdrive_private_file "$HOME/agsbx/xdrive-client.json" 65536; then
+    echo "完整客户端配置：$HOME/agsbx/xdrive-client.json（生成权限 600；含节点及存储凭据，仅交给可信客户端）。"
+  else
+    echo "XDRIVE 客户端文件缺失或权限不安全；可用完整参数执行 rep 重建，不影响现有服务端配置。"
+    [ "$cip_mode" != publish ] || return 1
+  fi
+  echo "两端均需包含 XDRIVE 功能的 Xray 核心；客户端 SOCKS 入口为 127.0.0.1:10808。"
+  echo "此配置不在终端展开，不加入通用 URL/Clash 订阅。更改存储参数须用完整参数执行 rep。"
+  echo "Google Drive 两端须能读写同一专用文件夹；local 两端目录须由外部同步工具映射到同一数据目录。"
+  echo "核心运行状态不代表存储认证、同步或隧道连通已验证。"
 fi
 for special_protocol in xdns xicmp; do
   grep -Fq "vless-kcp-$special_protocol" "$HOME/agsbx/xr.json" 2>/dev/null || continue
@@ -13247,8 +13546,14 @@ case "$1" in
     renew_managed_acme_certificate
     exit $? ;;
   __cert_reload)
-    reload_shared_certificate
-    exit $? ;;
+    cert_maintenance_status=0
+    if [ "$(cat "$HOME/agsbx/cert_source" 2>/dev/null)" = caddy ]; then
+      register_caddy_cert_cron || cert_maintenance_status=1
+      ensure_caddy_renewal_floor "$(cat "$HOME/agsbx/cert_file_path" 2>/dev/null)" || cert_maintenance_status=1
+    fi
+    # 调度调整失败也不能阻止仍有效的新证书交给共享核心使用。
+    reload_shared_certificate || cert_maintenance_status=1
+    exit "$cert_maintenance_status" ;;
   __restore_hops)
     for hop_spec in shyjpt:port_hy2 xhyjpt:port_xhy2; do
       hop_value=$(cat "$HOME/agsbx/${hop_spec%:*}" 2>/dev/null)
@@ -13293,7 +13598,8 @@ secondary_clear_numbered_state || { echo "错误：rep 无法清理旧的编号�
 rm -rf "$HOME/agsbx"/{sb.json,xr.json,sbargoym.log,sbargotoken.log,argo.log,argoport.log,cdnym,name,secondary_secp,secondary_meta,secondary_backends,secondary_bridge_port,secondary_bridge_pass,direct_xh_profile,direct_vl_profile,xray_xh_profile,xray_vl_profile,xray_vx_profile,xray_vw_profile,xray_vm_profile,xray_hy_profile,xray_xvd_profile,xray_xva_profile,mita.json,mieru_user,mieru_pass,port_mieru,mieru_protocol,mieru_traffic_seed,mieru_traffic_pattern,mieru_ufw_rule,shyjpt,xhyjpt,socks_user,socks_pass,transport_vm,transport_vw,transport_vx,transport_xh,transport_xvd,transport_xva} \
   || { echo "错误：rep 无法清理旧的可变协议状态。"; exit 1; }
 rm -f -- "$HOME/agsbx/xdns-client.json" "$HOME/agsbx/xicmp-client.json" "$HOME/agsbx/xdns_domain" "$HOME/agsbx/xdns_resolver" \
-  || { echo "错误：rep 无法清理旧 XDNS/XICMP 客户端状态。"; exit 1; }
+  "$HOME/agsbx/xdrive-client.json" \
+  || { echo "错误：rep 无法清理旧 XDNS/XICMP/XDRIVE 客户端状态。"; exit 1; }
 echo "Airgosbx重置协议完成，开始更新相关协议变量……" && sleep 2
 echo
 elif [ "$1" = "list" ]; then

@@ -9,3 +9,6 @@
 
 # 本地审计报告，不同步到远程仓库
 /auditreport.md
+
+# 项目局部 Agent 规则，仅保留在本地
+/AGENTS.md
