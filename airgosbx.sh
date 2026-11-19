@@ -2,7 +2,7 @@
 # 配套维护：airgosbx.sh 与 airgosbx-gui.html 是同一套工具，必须成套维护、提交和发布。
 # 修改任一文件时，须同步核对并修改另一文件的对应内容。
 # 参数、默认值、协议归属、开关与互斥、校验、命令生成与还原及功能说明必须保持一致。
-AIRGOSBX_VERSION='v1.3 (20261119.03)'
+AIRGOSBX_VERSION='v1.3.1 (20261119.04)'
 # 仅在内置 XHTTP 默认参数改变时更新此标记，普通脚本版本更新不使旧命令失效。
 XHTTP_DEFAULTS_VERSION='V26.09.08.1'
 agsbxurl="${agsbxurl:-https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/main/airgosbx.sh}"
@@ -5871,17 +5871,17 @@ init_mita_port(){
 
 ufw_is_active(){
   command -v ufw >/dev/null 2>&1 || return 1
-  ufw status 2>/dev/null | head -1 | grep -qi '^Status:[[:space:]]*active'
+  LC_ALL=C ufw status 2>/dev/null | head -1 | grep -qi '^Status:[[:space:]]*active'
 }
 
 ufw_rule_is_allowed(){
-  local rule="$1"
-  ufw status 2>/dev/null | awk -v rule="$rule" '$1 == rule && $0 ~ /ALLOW/ {found=1} END {exit !found}'
+  local rule="$1" port="${1%%/*}"
+  LC_ALL=C ufw status 2>/dev/null | awk -v rule="$rule" -v port="$port" '($1 == rule || $1 == port) && $0 ~ /ALLOW/ && $0 !~ /ALLOW OUT/ {found=1} END {exit !found}'
 }
 
 ufw_rule_is_configured(){
   local rule="$1"
-  ufw show added 2>/dev/null | awk -v rule="$rule" '$0 ~ ("^ufw allow " rule "([[:space:]]|$)") {found=1} END {exit !found}'
+  LC_ALL=C ufw show added 2>/dev/null | awk -v rule="$rule" '$0 ~ ("^ufw allow " rule "([[:space:]]|$)") {found=1} END {exit !found}'
 }
 
 cleanup_mieru_ufw(){
@@ -5892,7 +5892,7 @@ cleanup_mieru_ufw(){
     echo "错误：找不到 ufw，无法回收 Airgosbx 创建的 Mieru 防火墙规则。"
     return 1
   fi
-  if ufw_rule_is_configured "$rule" && ! ufw --force delete allow "$rule" >/dev/null 2>&1; then
+  if ufw_rule_is_configured "$rule" && ! ufw delete allow "$rule" >/dev/null 2>&1; then
     echo "错误：无法删除 Airgosbx 创建的 Mieru UFW 规则。"
     return 1
   fi
@@ -5914,13 +5914,13 @@ ensure_mieru_ufw(){
   fi
   # 已有管理员规则时直接复用，不记录归属，del 时也不会删除它。
   ufw_rule_is_allowed "$rule" && return 0
-  if ! ufw --force allow "$rule" comment 'Airgosbx-Mieru' >/dev/null 2>&1; then
+  if ! ufw allow "$rule" comment 'Airgosbx-Mieru' >/dev/null 2>&1; then
     echo "错误：UFW 已启用，但无法静默放行 Mieru 的 $rule。"
     return 1
   fi
   printf '%s\n' "$rule" > "$marker"
   if ! ufw_rule_is_allowed "$rule" || ! ufw_rule_is_configured "$rule"; then
-    ufw --force delete allow "$rule" >/dev/null 2>&1 || true
+    ufw delete allow "$rule" >/dev/null 2>&1 || true
     rm -f "$marker"
     echo "错误：已执行 UFW 放行，但复查时未发现 Mieru 的 $rule。"
     return 1
