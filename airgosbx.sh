@@ -2,7 +2,7 @@
 # 配套维护：airgosbx.sh 与 airgosbx-gui.html 是同一套工具，必须成套维护、提交和发布。
 # 修改任一文件时，须同步核对并修改另一文件的对应内容。
 # 参数、默认值、协议归属、开关与互斥、校验、命令生成与还原及功能说明必须保持一致。
-AIRGOSBX_VERSION='v1.1 (20261118)'
+AIRGOSBX_VERSION='v1.1.1 (20261119)'
 # 仅在内置 XHTTP 默认参数改变时更新此标记，普通脚本版本更新不使旧命令失效。
 XHTTP_DEFAULTS_VERSION='V26.09.08.1'
 agsbxurl="${agsbxurl:-https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/main/airgosbx.sh}"
@@ -1612,16 +1612,23 @@ fi
 hr(){ printf '%s\n' "${C_DIM}${C_CYAN}----------------------------------------------------------------${C_RESET}"; }
 hr2(){ printf '%s\n' "${C_CYAN}================================================================${C_RESET}"; }
 section(){
-  echo
+  printf '\n\n'
   hr2
   printf '  %s\n' "${C_BOLD}$1${C_RESET}"
   hr2
 }
 subsection(){
   echo
-  printf '%s\n' "${C_CYAN}${C_BOLD}── $1 ──${C_RESET}"
+  printf '%s\n' "${C_CYAN}── $1 ──${C_RESET}"
 }
-node_title(){ printf '%s\n' "${C_BOLD}${C_CYAN}$1${C_RESET}"; }
+node_title(){
+  local title="$1" badge="${2:-}"
+  if [ -n "$badge" ]; then
+    printf '%s  %s\n' "${C_BOLD}${C_CYAN}${title}${C_RESET}" "$badge"
+  else
+    printf '%s\n' "${C_BOLD}${C_CYAN}${title}${C_RESET}"
+  fi
+}
 note_line(){ printf '  %s· %s%s\n' "$C_DIM" "$1" "$C_RESET"; }
 warn_line(){ printf '  %s! %s%s\n' "$C_YELLOW" "$1" "$C_RESET"; }
 
@@ -1638,6 +1645,36 @@ kv_row(){
     printf '  %s%*s%s%s%s\n' "$label" "$pad" '' "$color" "$value" "$C_RESET"
   else
     printf '  %s%*s%s\n' "$label" "$pad" '' "$value"
+  fi
+}
+
+# 带二级子标签的对齐输出：同时按终端显示列宽对齐主标签与子标签，用于多来源地区、二级代理 IP 与 IP 质量属性。
+# 用法：kv_sub_row "主标签(续行留空)" "子标签(续行留空)" "值" [主标签栏宽=16] [子标签栏宽=16] [值颜色码]
+kv_sub_row(){
+  local main_label="$1" sub_label="$2" value="$3" main_w="${4:-16}" sub_w="${5:-16}" color="${6:-}"
+  local ascii non_ascii_bytes display_width main_pad sub_pad LC_ALL=C
+  if [ -n "$main_label" ]; then
+    ascii=${main_label//[! -~]/}
+    non_ascii_bytes=$(( ${#main_label} - ${#ascii} ))
+    display_width=$(( ${#ascii} + (non_ascii_bytes / 3) * 2 ))
+    main_pad=$(( main_w - display_width ))
+    [ "$main_pad" -ge 1 ] || main_pad=1
+  else
+    main_pad="$main_w"
+  fi
+  if [ -n "$sub_label" ]; then
+    ascii=${sub_label//[! -~]/}
+    non_ascii_bytes=$(( ${#sub_label} - ${#ascii} ))
+    display_width=$(( ${#ascii} + (non_ascii_bytes / 3) * 2 ))
+    sub_pad=$(( sub_w - display_width ))
+    [ "$sub_pad" -ge 1 ] || sub_pad=1
+  else
+    sub_pad="$sub_w"
+  fi
+  if [ -n "$color" ]; then
+    printf '  %s%*s%s%s%s%*s%s%s%s\n' "$main_label" "$main_pad" '' "$C_DIM" "$sub_label" "$C_RESET" "$sub_pad" '' "$color" "$value" "$C_RESET"
+  else
+    printf '  %s%*s%s%s%s%*s%s\n' "$main_label" "$main_pad" '' "$C_DIM" "$sub_label" "$C_RESET" "$sub_pad" '' "$value"
   fi
 }
 
@@ -3443,27 +3480,297 @@ ensure_deps(){
 # - 本大段包含 IPv4/IPv6 双栈网络探测函数 v4v6()、WARP 住宅网络出口配置函数 warpsx()。
 # - 关联性：探测并取得的真实公网 IP `$server_ip` 将作为后续第 9 段（卡片打印）和第 10 段（Web 订阅链接拼接）的数据基础。
 #============================================================
+ip_probe_http_get(){
+  local url="$1" family="${2:-}"
+  if command -v curl >/dev/null 2>&1; then
+    case "$family" in
+      4|6) curl -fsSL -"$family" --connect-timeout 2 --max-time 4 -H 'Accept: application/json' "$url" 2>/dev/null ;;
+      *)   curl -fsSL --connect-timeout 2 --max-time 4 -H 'Accept: application/json' "$url" 2>/dev/null ;;
+    esac
+  elif command -v wget >/dev/null 2>&1; then
+    case "$family" in
+      4|6) timeout 5 wget -"$family" --tries=1 --timeout=4 -U 'curl/8.0' --header='Accept: application/json' -qO- "$url" 2>/dev/null ;;
+      *)   timeout 5 wget --tries=1 --timeout=4 -U 'curl/8.0' --header='Accept: application/json' -qO- "$url" 2>/dev/null ;;
+    esac
+  else
+    return 1
+  fi
+}
+
+ip_probe_public_addr(){
+  local family="$1" url candidate=''
+  for url in "$v46url" 'https://api64.ipify.org'; do
+    candidate=$(ip_probe_http_get "$url" "$family" | sed -n '1{s/[[:space:]]//g;p;}')
+    if [ "$family" = 4 ] && valid_ipv4 "$candidate"; then
+      printf '%s' "$candidate"; return 0
+    elif [ "$family" = 6 ] && valid_ipv6 "$candidate"; then
+      printf '%s' "$candidate"; return 0
+    fi
+  done
+  return 1
+}
+
+# 纯 awk 提取 JSON 字段（不依赖 jq/python3）；top_only=1 仅匹配顶层（depth==1），用于 RDAP 注册国。
+ip_geo_json_str(){
+  local key="$1" top_only="${2:-0}"
+  LC_ALL=C awk -v k="$key" -v top="$top_only" '
+    { s = s $0 }
+    END {
+      n = length(s); depth = 0; in_str = 0; esc = 0; klen = length(k)
+      for (i = 1; i <= n; i++) {
+        c = substr(s, i, 1)
+        if (in_str) {
+          if (esc) { esc = 0 }
+          else if (c == "\\") { esc = 1 }
+          else if (c == "\"") { in_str = 0 }
+          continue
+        }
+        if (c == "{") { depth++; continue }
+        if (c == "}") { depth--; continue }
+        if (c == "\"") {
+          if ((top == 0 || depth == 1) && substr(s, i + 1, klen) == k && substr(s, i + 1 + klen, 1) == "\"") {
+            j = i + klen + 2
+            while (j <= n && substr(s, j, 1) ~ /[ \t\r\n]/) j++
+            if (substr(s, j, 1) == ":") {
+              j++
+              while (j <= n && substr(s, j, 1) ~ /[ \t\r\n]/) j++
+              if (substr(s, j, 1) == "\"") {
+                j++; out = ""; vesc = 0
+                while (j <= n) {
+                  vc = substr(s, j, 1)
+                  if (vesc) {
+                    if (vc == "/" || vc == "\"" || vc == "\\") out = out vc
+                    vesc = 0
+                  } else if (vc == "\\") {
+                    vesc = 1
+                  } else if (vc == "\"") {
+                    break
+                  } else {
+                    out = out vc
+                  }
+                  j++
+                }
+                gsub(/[\r\n\t]+/, " ", out)
+                gsub(/^[[:space:]]+|[[:space:]]+$/, "", out)
+                if (out != "" && out != "-" && out != "null" && out != "None") print out
+                exit
+              }
+            }
+          }
+          in_str = 1
+        }
+      }
+    }
+  '
+}
+
+ip_geo_json_atom(){
+  local key="$1"
+  LC_ALL=C awk -v k="$key" '
+    { s = s $0 }
+    END {
+      if (match(s, "\"" k "\"[[:space:]]*:[[:space:]]*(true|false|[0-9]+)")) {
+        m = substr(s, RSTART, RLENGTH)
+        sub(/^[^:]*:[[:space:]]*/, "", m)
+        print m
+      }
+    }
+  '
+}
+
+ip_geo_format_loc(){
+  local cc="$1" region="$2" city="$3" country_name="$4" head parts=''
+  [ "$cc" = '-' ] && cc=''
+  [ "$region" = '-' ] && region=''
+  [ "$city" = '-' ] && city=''
+  [ "$country_name" = '-' ] && country_name=''
+  head="${cc:-$country_name}"
+  [ -z "$head" ] || parts="$head"
+  if [ -n "$region" ] && [ "$region" != "$head" ] && [ "$region" != "$country_name" ]; then
+    parts="${parts:+$parts, }$region"
+  fi
+  if [ -n "$city" ] && [ "$city" != "$region" ] && [ "$city" != "$head" ] && [ "$city" != "$country_name" ]; then
+    parts="${parts:+$parts, }$city"
+  fi
+  printf '%s' "$parts"
+}
+
+ip_probe_geo_for_family(){
+  local fam="$1" ip="$2" tmp_dir=''
+  local f_ipinfo f_ip2loc f_ipsb f_ipquery f_rdap
+  local cc reg city cname org asn as_name is_dc is_mob is_vpn is_proxy is_tor risk_score ip2_proxy rdap_cc
+  local loc_ipinfo='' loc_ip2loc='' loc_ipsb='' primary_cc='' primary_loc=''
+  local asn_str='' type_str='' native_str='' native_state='unknown' risk_str=''
+  local p_proxy p_vpn p_tor
+  tmp_dir=$(mktemp -d 2>/dev/null) || return 0
+  f_ipinfo="$tmp_dir/ipinfo.json"
+  f_ip2loc="$tmp_dir/ip2loc.json"
+  f_ipsb="$tmp_dir/ipsb.json"
+  f_ipquery="$tmp_dir/ipquery.json"
+  f_rdap="$tmp_dir/rdap.json"
+  (
+    if ! ip_probe_http_get "https://ipinfo.io/${ip}/json" > "$f_ipinfo" || [ ! -s "$f_ipinfo" ]; then
+      ip_probe_http_get "https://v6.ipinfo.io/${ip}/json" > "$f_ipinfo" || :
+    fi
+  ) &
+  ( ip_probe_http_get "https://api.ip2location.io/?ip=${ip}" > "$f_ip2loc" || : ) &
+  ( ip_probe_http_get "https://api.ip.sb/geoip/${ip}" > "$f_ipsb" || : ) &
+  ( ip_probe_http_get "https://api.ipquery.io/${ip}" > "$f_ipquery" || : ) &
+  ( ip_probe_http_get "https://rdap.org/ip/${ip}" > "$f_rdap" || : ) &
+  wait
+
+  if [ -s "$f_ipinfo" ]; then
+    cc=$(ip_geo_json_str country < "$f_ipinfo")
+    reg=$(ip_geo_json_str region < "$f_ipinfo")
+    city=$(ip_geo_json_str city < "$f_ipinfo")
+    org=$(ip_geo_json_str org < "$f_ipinfo")
+    if printf '%s' "$cc" | grep -Eq '^[A-Z]{2}$'; then
+      loc_ipinfo=$(ip_geo_format_loc "$cc" "$reg" "$city" '')
+      [ -n "$primary_cc" ] || primary_cc="$cc"
+    fi
+    [ -z "$org" ] || asn_str="$org"
+  fi
+
+  if [ -s "$f_ip2loc" ]; then
+    cc=$(ip_geo_json_str country_code < "$f_ip2loc")
+    cname=$(ip_geo_json_str country_name < "$f_ip2loc")
+    reg=$(ip_geo_json_str region_name < "$f_ip2loc")
+    city=$(ip_geo_json_str city_name < "$f_ip2loc")
+    asn=$(ip_geo_json_str asn < "$f_ip2loc")
+    [ -n "$asn" ] || asn=$(ip_geo_json_atom asn < "$f_ip2loc")
+    as_name=$(ip_geo_json_str as < "$f_ip2loc")
+    ip2_proxy=$(ip_geo_json_atom is_proxy < "$f_ip2loc")
+    if printf '%s' "$cc" | grep -Eq '^[A-Z]{2}$'; then
+      loc_ip2loc=$(ip_geo_format_loc "$cc" "$reg" "$city" "$cname")
+      [ -n "$primary_cc" ] || primary_cc="$cc"
+    fi
+    if [ -z "$asn_str" ] && [ -n "$asn$as_name" ]; then
+      asn_str="${asn:+AS${asn#AS} }${as_name}"
+      asn_str=${asn_str% }
+    fi
+  fi
+
+  if [ -s "$f_ipsb" ]; then
+    cc=$(ip_geo_json_str country_code < "$f_ipsb")
+    cname=$(ip_geo_json_str country < "$f_ipsb")
+    reg=$(ip_geo_json_str region < "$f_ipsb")
+    city=$(ip_geo_json_str city < "$f_ipsb")
+    asn=$(ip_geo_json_atom asn < "$f_ipsb")
+    as_name=$(ip_geo_json_str organization < "$f_ipsb")
+    [ -n "$as_name" ] || as_name=$(ip_geo_json_str isp < "$f_ipsb")
+    if printf '%s' "$cc" | grep -Eq '^[A-Z]{2}$'; then
+      loc_ipsb=$(ip_geo_format_loc "$cc" "$reg" "$city" "$cname")
+      [ -n "$primary_cc" ] || primary_cc="$cc"
+    fi
+    if [ -z "$asn_str" ] && [ -n "$asn$as_name" ]; then
+      asn_str="${asn:+AS${asn#AS} }${as_name}"
+      asn_str=${asn_str% }
+    fi
+  fi
+
+  if [ -s "$f_ipquery" ]; then
+    is_dc=$(ip_geo_json_atom is_datacenter < "$f_ipquery")
+    is_mob=$(ip_geo_json_atom is_mobile < "$f_ipquery")
+    is_vpn=$(ip_geo_json_atom is_vpn < "$f_ipquery")
+    is_proxy=$(ip_geo_json_atom is_proxy < "$f_ipquery")
+    is_tor=$(ip_geo_json_atom is_tor < "$f_ipquery")
+    risk_score=$(ip_geo_json_atom risk_score < "$f_ipquery")
+    if [ -z "$asn_str" ]; then
+      asn=$(ip_geo_json_str asn < "$f_ipquery")
+      as_name=$(ip_geo_json_str org < "$f_ipquery")
+      [ -n "$as_name" ] || as_name=$(ip_geo_json_str isp < "$f_ipquery")
+      if [ -n "$asn$as_name" ]; then
+        asn_str="${asn:+$asn }${as_name}"
+        asn_str=${asn_str% }
+      fi
+    fi
+    if [ "$is_dc" = true ]; then
+      type_str='机房 / 托管（Datacenter）'
+    elif [ "$is_mob" = true ]; then
+      type_str='移动蜂窝网络（Mobile）'
+    elif [ "$is_dc" = false ] && [ "$is_mob" = false ]; then
+      type_str='非机房 / 家宽或商业（ISP）'
+    fi
+    if [ -n "$is_proxy$is_vpn$is_tor$risk_score" ]; then
+      case "$is_proxy" in true) p_proxy='是' ;; false) p_proxy='否' ;; *) p_proxy='未知' ;; esac
+      case "$is_vpn"   in true) p_vpn='是'   ;; false) p_vpn='否'   ;; *) p_vpn='未知'   ;; esac
+      case "$is_tor"   in true) p_tor='是'   ;; false) p_tor='否'   ;; *) p_tor='未知'   ;; esac
+      risk_str="代理: ${p_proxy} ｜ VPN: ${p_vpn} ｜ Tor: ${p_tor}${risk_score:+ ｜ 风险分: ${risk_score}/100}"
+    fi
+  fi
+  if [ -z "$risk_str" ] && [ -n "$ip2_proxy" ]; then
+    case "$ip2_proxy" in
+      true)  risk_str='代理: 是（IP2Location）' ;;
+      false) risk_str='代理: 否（IP2Location）' ;;
+    esac
+  fi
+
+  if [ -s "$f_rdap" ]; then
+    rdap_cc=$(ip_geo_json_str country 1 < "$f_rdap")
+    if printf '%s' "$rdap_cc" | grep -Eq '^[A-Z]{2}$' && [ -n "$primary_cc" ]; then
+      if [ "$rdap_cc" = "$primary_cc" ]; then
+        native_str="原生 IP（RIR 注册 ${rdap_cc} = 定位 ${primary_cc}）"
+        native_state='native'
+      elif [ "$rdap_cc" = EU ]; then
+        native_str="区域注册（RIR 注册 EU，定位 ${primary_cc}）"
+        native_state='regional'
+      else
+        native_str="广播 IP（RIR 注册 ${rdap_cc} ≠ 定位 ${primary_cc}）"
+        native_state='broadcast'
+      fi
+    fi
+  fi
+  [ -n "$native_str" ] || native_str='未确认（RIR RDAP 未返回注册国）'
+  [ -n "$type_str" ] || type_str='未确认'
+  [ -n "$risk_str" ] || risk_str='未确认'
+  [ -n "$asn_str" ] || asn_str='未确认'
+
+  primary_loc="${loc_ipinfo:-${loc_ip2loc:-$loc_ipsb}}"
+  printf -v "${fam}dq" '%s' "$primary_loc"
+  printf -v "${fam}_geo_ipinfo" '%s' "$loc_ipinfo"
+  printf -v "${fam}_geo_ip2loc" '%s' "$loc_ip2loc"
+  printf -v "${fam}_geo_ipsb" '%s' "$loc_ipsb"
+  printf -v "${fam}_ip_asn" '%s' "$asn_str"
+  printf -v "${fam}_ip_type" '%s' "$type_str"
+  printf -v "${fam}_ip_native" '%s' "$native_str"
+  printf -v "${fam}_ip_native_state" '%s' "$native_state"
+  printf -v "${fam}_ip_risk" '%s' "$risk_str"
+  rm -rf "$tmp_dir"
+}
+
 v4v6(){
-# 结果缓存：同一次运行内 IP 与归属地不会变化，避免重复发起最多 4 次外网探测（每次最长阻塞 5 秒）
-if [ "$v4v6_probed" = yes ]; then
-return
+# 结果缓存：同一次运行内 IP 与归属地/质量属性只探测一次；传入 basic 仅探测公网 IP，不额外请求 GeoIP/RDAP。
+local mode="${1:-full}" ip_tmp=''
+if [ "$v4v6_ip_probed" != yes ]; then
+  v4v6_ip_probed=yes
+  ip_tmp=$(mktemp -d 2>/dev/null)
+  if [ -n "$ip_tmp" ]; then
+    ( ip_probe_public_addr 4 > "$ip_tmp/v4" || : ) &
+    ( ip_probe_public_addr 6 > "$ip_tmp/v6" || : ) &
+    wait
+    v4=$(cat "$ip_tmp/v4" 2>/dev/null)
+    v6=$(cat "$ip_tmp/v6" 2>/dev/null)
+    rm -rf "$ip_tmp"
+  else
+    v4=$(ip_probe_public_addr 4 || :)
+    v6=$(ip_probe_public_addr 6 || :)
+  fi
+  valid_ipv4 "$v4" || v4=''
+  valid_ipv6 "$v6" || v6=''
 fi
+[ "$mode" = basic ] && return 0
+if [ "$v4v6_geo_probed" = yes ]; then
+  return 0
+fi
+v4v6_geo_probed=yes
 v4v6_probed=yes
-v4=$( (command -v curl >/dev/null 2>&1 && curl -s4m5 "$v46url" 2>/dev/null) || (command -v wget >/dev/null 2>&1 && timeout 3 wget -4 --tries=2 -qO- "$v46url" 2>/dev/null) )
-v6=$( (command -v curl >/dev/null 2>&1 && curl -s6m5 "$v46url" 2>/dev/null) || (command -v wget >/dev/null 2>&1 && timeout 3 wget -6 --tries=2 -qO- "$v46url" 2>/dev/null) )
-v4=$(printf '%s\n' "$v4" | sed -n '1{s/[[:space:]]//g;p;}')
-v6=$(printf '%s\n' "$v6" | sed -n '1{s/[[:space:]]//g;p;}')
-valid_ipv4 "$v4" || v4=''
-valid_ipv6 "$v6" || v6=''
 v4dq=''; v6dq=''
-if [ -n "$v4" ]; then
-v4dq=$( (command -v curl >/dev/null 2>&1 && curl -s4m5 https://ip.fm | sed -n 's/.*Location: //p' 2>/dev/null) || (command -v wget >/dev/null 2>&1 && timeout 3 wget -4 --tries=2 -qO- https://ip.fm | grep '<span class="has-text-grey-light">Location:' | tail -n1 | sed -E 's/.*>Location: <\/span>([^<]+)<.*/\1/' 2>/dev/null) )
-fi
-if [ -n "$v6" ]; then
-v6dq=$( (command -v curl >/dev/null 2>&1 && curl -s6m5 https://ip.fm | sed -n 's/.*Location: //p' 2>/dev/null) || (command -v wget >/dev/null 2>&1 && timeout 3 wget -6 --tries=2 -qO- https://ip.fm | grep '<span class="has-text-grey-light">Location:' | tail -n1 | sed -E 's/.*>Location: <\/span>([^<]+)<.*/\1/' 2>/dev/null) )
-fi
-[ -n "$v4" ] || v4dq=''
-[ -n "$v6" ] || v6dq=''
+v4_geo_ipinfo=''; v4_geo_ip2loc=''; v4_geo_ipsb=''
+v6_geo_ipinfo=''; v6_geo_ip2loc=''; v6_geo_ipsb=''
+v4_ip_asn=''; v4_ip_type=''; v4_ip_native=''; v4_ip_native_state=''; v4_ip_risk=''
+v6_ip_asn=''; v6_ip_type=''; v6_ip_native=''; v6_ip_native_state=''; v6_ip_risk=''
+[ -z "$v4" ] || ip_probe_geo_for_family v4 "$v4"
+[ -z "$v6" ] || ip_probe_geo_for_family v6 "$v6"
 }
 # DNS 服务商仅按已知公共地址识别，不联网查询归属，也不凭地址推断加密协议。
 system_dns_provider(){
@@ -4037,13 +4344,13 @@ local method="$naivebuild" ans
 if [ -z "$method" ]; then
   if [ -t 1 ] || [ -t 2 ]; then
     if [ "$cpu" = amd64 ]; then
-      subsection "NaiveProxy (Caddy) 内核获取方式"
+      subsection "Caddy(naive) 内核获取方式"
       echo "  [1] 下载官方预编译二进制（推荐，1C1G 小机友好，零编译）"
       echo "  [2] 用 xcaddy 现场编译（需下载 Go，耗时数分钟）"
       printf "  输入 1 或 2（默认 1）："; read -r ans
       case "$ans" in 2) method=build ;; *) method=dl ;; esac
     else
-      subsection "NaiveProxy (Caddy) 内核获取方式"
+      subsection "Caddy(naive) 内核获取方式"
       note_line "检测到 $cpu 架构：官方未提供预编译二进制，只能现场编译。"
       echo "  [1] 用 xcaddy 现场编译（需下载 Go，arm 性能足够，耗时数分钟）"
       echo "  [2] 放弃安装 NaiveProxy"
@@ -4442,8 +4749,7 @@ fi
 validate_naive_credentials || return 1
 atomic_text_file "$HOME/agsbx/naive_user" "$naiveuser" && \
   atomic_text_file "$HOME/agsbx/naive_pass" "$naivepass" || return 1
-echo "NaiveProxy 账号：$naiveuser"
-echo "NaiveProxy 密码：$naivepass"
+echo "NaiveProxy 凭据已生成并保存。"
 }
 fetch_file(){
   local fetch_url="$1" fetch_out="$2"
@@ -4612,7 +4918,13 @@ ip_policy_remove_state(){
 
 reset_v4v6_probe(){
   v4v6_probed=''
+  v4v6_ip_probed=''
+  v4v6_geo_probed=''
   v4=''; v6=''; v4dq=''; v6dq=''
+  v4_geo_ipinfo=''; v4_geo_ip2loc=''; v4_geo_ipsb=''
+  v6_geo_ipinfo=''; v6_geo_ip2loc=''; v6_geo_ipsb=''
+  v4_ip_asn=''; v4_ip_type=''; v4_ip_native=''; v4_ip_native_state=''; v4_ip_risk=''
+  v6_ip_asn=''; v6_ip_type=''; v6_ip_native=''; v6_ip_native_state=''; v6_ip_risk=''
 }
 
 ip_family_topology(){
@@ -4636,7 +4948,7 @@ ip_family_topology(){
 probe_ip_capabilities(){
   local top4 top6
   reset_v4v6_probe
-  v4v6
+  v4v6 basic
   top4=$(ip_family_topology 4)
   top6=$(ip_family_topology 6)
   case "$top4:${v4:+yes}" in yes:yes) ipv4_capability=yes ;; no:) ipv4_capability=no ;; *) ipv4_capability=unknown ;; esac
@@ -5386,7 +5698,7 @@ configure_mieru_inputs(){
     printf "  用户名（回车＝自动生成或沿用已有值）："; read -r mieruuser
   fi
   if [ "$mieru_pass_preset" != yes ]; then
-    printf "  密码（回车＝自动生成或沿用已有值）："; IFS= read -r -s mierupass; echo
+    printf "  密码（回车＝自动生成或沿用已有值，输入隐藏）："; IFS= read -r -s mierupass; echo
   fi
   hr
 }
@@ -5732,7 +6044,7 @@ EOF
 
 installmita(){
   local apply_out status_out mita_version
-  subsection "启用 Mieru (Mita) 代理"
+  section "启用 Mita 内核"
   validate_mita_platform || return 1
   configure_mieru_inputs
   reset_mita_config || return 1
@@ -7850,7 +8162,7 @@ EOF
 }
 
 installxray(){
-subsection "启用 Xray 内核"
+section "启用 Xray 内核"
 mkdir -p "$HOME/agsbx/xrk"
 if [ ! -e "$HOME/agsbx/xray" ]; then
 upxray || return 1
@@ -8336,7 +8648,7 @@ fi
 }
 
 installsb(){
-subsection "启用 Sing-box 内核"
+section "启用 Sing-box 内核"
 local min_sb_ver="1.12.0" local_sb_ver sb_version_state sub_tls_guard
 if [ ! -e "$HOME/agsbx/sing-box" ]; then
 upsingbox || return 1
@@ -8625,7 +8937,7 @@ append_secondary_bridge_inbound || return 1
 }
 
 installcaddy(){
-subsection "启用 NaiveProxy (Caddy) 内核"
+section "启用 Caddy(naive) 内核"
 # 关键参数（域名/伪装站/账号/密码）两种来源任选：环境变量预置，或交互终端按提示输入。
 # naive=<域名> 既是开关也是域名；若传入的不是合法域名(如 naive=on)，交互终端会提示补输。
 # NaiveProxy 必须有真实域名 + DNS 指向本机（不同于 reality 可裸 IP）。
@@ -11924,7 +12236,7 @@ if [ -n "${ARGO_DOMAIN}" ] && [ -n "${ARGO_AUTH}" ]; then
   *$'\n'*|*$'\r'*) echo "错误：Argo token 不得包含换行符。"; return 1 ;;
   esac
 fi
-subsection "启用 Cloudflared Argo 内核"
+section "启用 Cloudflared 内核"
 if [ ! -e "$HOME/agsbx/cloudflared" ]; then
 local metadata tag expected actual stage asset="cloudflared-linux-$cpu"
 metadata=$(release_json cloudflare/cloudflared latest) && tag=$(release_tag "$metadata") \
@@ -12066,10 +12378,10 @@ kstat(){
     fi
   fi
 }
-kstat "Sing-box" "$HOME/agsbx/sing-box"    "$HOME/agsbx/sb.json"      'agsbx/sing-box'   sb   "$HOME/agsbx/sing-box.log"
-kstat "Xray"     "$HOME/agsbx/xray"        "$HOME/agsbx/xr.json"      'agsbx/xray'       xray "$HOME/agsbx/xray.log"
-kstat "Caddy"    "$HOME/agsbx/caddy"       "$HOME/agsbx/Caddyfile"    'agsbx/caddy'      caddy "$HOME/agsbx/caddy.log"
-kstat "Argo"     "$HOME/agsbx/cloudflared" "$HOME/agsbx/argoport.log" 'agsbx/cloudflared' argo "$HOME/agsbx/argo.log"
+kstat "Sing-box"    "$HOME/agsbx/sing-box"    "$HOME/agsbx/sb.json"      'agsbx/sing-box'    sb   "$HOME/agsbx/sing-box.log"
+kstat "Xray"        "$HOME/agsbx/xray"        "$HOME/agsbx/xr.json"      'agsbx/xray'        xray "$HOME/agsbx/xray.log"
+kstat "Caddy"       "$HOME/agsbx/caddy"       "$HOME/agsbx/Caddyfile"    'agsbx/caddy'       caddy "$HOME/agsbx/caddy.log"
+kstat "Cloudflared" "$HOME/agsbx/cloudflared" "$HOME/agsbx/argoport.log" 'agsbx/cloudflared' argo "$HOME/agsbx/argo.log"
 if [ -f "$HOME/agsbx/mita_managed" ]; then
   if [ ! -s "$HOME/agsbx/mita.json" ]; then
     kv_row "Mita：" "${C_DIM}已安装但未启用（执行 mieru=y agsbx rep 可重新启用）${C_RESET}" 18
@@ -12112,8 +12424,145 @@ if secondary_saved_protocol_is_selected naive; then
 fi
 show_secondary_backend_status
 }
+# 从磁盘已保存的 xr.json / sb.json 路由规则准确判定各内核默认出站是否走 WARP（both / v4 / v6 / direct）。
+core_warp_route_mode(){
+  local core="$1" cfg=''
+  case "$core" in
+    xray)     cfg="$HOME/agsbx/xr.json" ;;
+    sing-box) cfg="$HOME/agsbx/sb.json" ;;
+    *) printf direct; return 0 ;;
+  esac
+  [ -s "$cfg" ] || { printf direct; return 0; }
+  if [ "$core" = xray ]; then
+    LC_ALL=C awk '
+      function check_rule(r) {
+        if (r !~ /"inboundTag"/ && r ~ /"outboundTag"[[:space:]]*:[[:space:]]*"warp-out"/) {
+          if (r !~ /"ip"[[:space:]]*:/) { has_v4 = 1; has_v6 = 1 }
+          else {
+            if (r ~ /0\.0\.0\.0\/0/) has_v4 = 1
+            if (r ~ /::\/0/) has_v6 = 1
+          }
+        }
+      }
+      /"routing"[[:space:]]*:/ { in_route = 1 }
+      !in_route { next }
+      /"rules"[[:space:]]*:/ { in_rules = 1; next }
+      !in_rules { next }
+      !in_obj && /\{/ {
+        if (/\}/) { check_rule($0); next }
+        in_obj = 1; obj = $0; next
+      }
+      in_obj {
+        obj = obj " " $0
+        if (/\}/) { in_obj = 0; check_rule(obj) }
+      }
+      END {
+        if (has_v4 && has_v6) print "both"
+        else if (has_v4) print "v4"
+        else if (has_v6) print "v6"
+        else print "direct"
+      }
+    ' "$cfg" 2>/dev/null
+  else
+    LC_ALL=C awk '
+      function check_rule(r) {
+        if (r !~ /"inbound"/ && r !~ /"action"/ && r ~ /"outbound"[[:space:]]*:[[:space:]]*"warp-out"/) {
+          if (r !~ /"ip_cidr"[[:space:]]*:/) { has_v4 = 1; has_v6 = 1 }
+          else {
+            if (r ~ /0\.0\.0\.0\/0/) has_v4 = 1
+            if (r ~ /::\/0/) has_v6 = 1
+          }
+        }
+      }
+      /"route"[[:space:]]*:/ { in_route = 1 }
+      !in_route { next }
+      /"rules"[[:space:]]*:/ { in_rules = 1; next }
+      !in_rules { next }
+      !in_obj && /\{/ {
+        if (/\}/) { check_rule($0); next }
+        in_obj = 1; obj = $0; next
+      }
+      in_obj {
+        obj = obj " " $0
+        if (/\}/) { in_obj = 0; check_rule(obj) }
+      }
+      END {
+        if (has_v4 && has_v6) print "both"
+        else if (has_v4) print "v4"
+        else if (has_v6) print "v6"
+        else print "direct"
+      }
+    ' "$cfg" 2>/dev/null
+  fi
+}
+
+# 从已保存配置读取 WARP WireGuard 隧道内网 IPv4 / IPv6（v4 优先）。
+warp_saved_addresses(){
+  local cfg addrs='' wv4='' wv6=''
+  for cfg in "$HOME/agsbx/xr.json" "$HOME/agsbx/sb.json"; do
+    [ -s "$cfg" ] || continue
+    addrs=$(LC_ALL=C awk '
+      /"tag"[[:space:]]*:[[:space:]]*"(x-)?warp-out"/ { in_warp = 1; next }
+      in_warp && /"address"[[:space:]]*:/ { in_addr = 1; next }
+      in_addr && /\]/ { exit }
+      in_addr {
+        if (match($0, /"[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+(\/[0-9]+)?"/)) {
+          v4 = substr($0, RSTART + 1, RLENGTH - 2); sub(/\/.*/, "", v4)
+        } else if (match($0, /"[0-9a-fA-F]*:[0-9a-fA-F:]+(\/[0-9]+)?"/)) {
+          v6 = substr($0, RSTART + 1, RLENGTH - 2); sub(/\/.*/, "", v6)
+        }
+      }
+      END { if (v4 != "" || v6 != "") printf "%s|%s", v4, v6 }
+    ' "$cfg" 2>/dev/null)
+    if [ -n "$addrs" ]; then
+      wv4=${addrs%%|*}
+      wv6=${addrs#*|}
+      break
+    fi
+  done
+  if [ -n "$wv4" ] && [ -n "$wv6" ]; then
+    printf 'Cloudflare 动态出口（内网 IPv4: %s，IPv6: %s）' "$wv4" "$wv6"
+  elif [ -n "$wv4" ]; then
+    printf 'Cloudflare 动态出口（内网 IPv4: %s）' "$wv4"
+  elif [ -n "$wv6" ]; then
+    printf 'Cloudflare 动态出口（内网 IPv6: %s）' "$wv6"
+  else
+    printf 'Cloudflare 动态出口'
+  fi
+}
+
+# 生成节点标题右侧的出站方式徽章：精确区分直连 / WARP（含单栈分流） / 二级代理 B<n>。
+protocol_outbound_badge(){
+  local proto="$1" core="$2" ids id saved label warp_mode='direct'
+  if [ -s "$HOME/agsbx/secondary_secp" ] && ids=$(secondary_saved_ids 2>/dev/null); then
+    for id in $ids; do
+      saved=$(tr -d '[:space:]' < "$(secondary_saved_path "$id" secp)" 2>/dev/null) || continue
+      case ",$saved," in
+        *",$proto,"*)
+          if [ "$id" = 0 ]; then label='B1'; else label="B$id"; fi
+          printf '%s[出站：二级代理 %s]%s' "${C_YELLOW}${C_BOLD}" "$label" "$C_RESET"
+          return 0 ;;
+      esac
+    done
+  fi
+  case "$core" in
+    xray)     warp_mode="${cip_xray_warp_mode:-direct}" ;;
+    sing-box) warp_mode="${cip_sb_warp_mode:-direct}" ;;
+    *)        warp_mode='direct' ;;
+  esac
+  case "$warp_mode" in
+    both) printf '%s[出站：WARP]%s' "$C_YELLOW" "$C_RESET" ;;
+    v4)   printf '%s[出站：WARP(IPv4) / 直连(IPv6)]%s' "$C_YELLOW" "$C_RESET" ;;
+    v6)   printf '%s[出站：WARP(IPv6) / 直连(IPv4)]%s' "$C_YELLOW" "$C_RESET" ;;
+    *)    printf '%s[出站：直连]%s' "$C_GREEN" "$C_RESET" ;;
+  esac
+}
+
 cip(){
 local cip_mode="${1:-show}" node_links='' clash_config='' subtoken='' server_host render_cert_hash special_protocol special_client
+local cip_xray_warp_mode='' cip_sb_warp_mode=''
+cip_xray_warp_mode=$(core_warp_route_mode xray)
+cip_sb_warp_mode=$(core_warp_route_mode sing-box)
 if [ "$cip_mode" = publish ]; then
   [ "$sub" != yes ] || setup_tls_certificate || return 1
 else
@@ -12137,8 +12586,7 @@ else
   second_family=6
 fi
 if [ -z "$serip" ]; then
-  serip=$( (command -v curl >/dev/null 2>&1 && (curl -s"$first_family"m5 "$v46url" 2>/dev/null || curl -s"$second_family"m5 "$v46url" 2>/dev/null) ) \
-    || (command -v wget >/dev/null 2>&1 && (timeout 3 wget -"$first_family" -qO- --tries=2 "$v46url" 2>/dev/null || timeout 3 wget -"$second_family" -qO- --tries=2 "$v46url" 2>/dev/null) ) )
+  serip=$(ip_probe_public_addr "$first_family" || ip_probe_public_addr "$second_family" || :)
 fi
 serip=$(printf '%s\n' "$serip" | sed -n '1{s/[[:space:]]//g;p;}')
 valid_ip "$serip" || { echo "错误：无法取得有效的 VPS 公网地址。"; return 1; }
@@ -12151,18 +12599,16 @@ if [ "$cip_mode" = publish ]; then atomic_text_file "$HOME/agsbx/server_ip.log" 
 }
 ipchange(){
 v4v6
+w4=''; w6=''
 if [ -z "$v4" ]; then
 vps_ipv4='无IPV4'
 vps_ipv6="$v6"
-location="$v6dq"
 elif [ -n "$v4" ] && [ -n "$v6" ]; then
 vps_ipv4="$v4"
 vps_ipv6="$v6"
-location="$v4dq"
 else
 vps_ipv4="$v4"
 vps_ipv6='无IPV6'
-location="$v4dq"
 fi
 if echo "$v6" | grep -q '^2a09'; then
 w6="【WARP】"
@@ -12172,9 +12618,57 @@ w4="【WARP】"
 fi
 airgosbxstatus
 subsection "当前服务器本地 IP 情况"
-kv_row "IPv4 地址：" "${vps_ipv4}${w4:+ $w4}" 14
-kv_row "IPv6 地址：" "${vps_ipv6}${w6:+ $w6}" 14
-kv_row "服务器地区：" "${location:-未知}" 14
+kv_row "IPv4 地址：" "${vps_ipv4}${w4:+ $w4}" 16
+kv_row "IPv6 地址：" "${vps_ipv6}${w6:+ $w6}" 16
+local out_printed=no sec_ids sec_id sec_meta sec_srv sec_label warp_desc
+if [ "$cip_xray_warp_mode" != direct ] || [ "$cip_sb_warp_mode" != direct ]; then
+  warp_desc=$(warp_saved_addresses)
+  kv_sub_row "出站 IP：" "WARP" "$warp_desc" 16 16 "$C_YELLOW"
+  out_printed=yes
+fi
+if [ -s "$HOME/agsbx/secondary_secp" ] && sec_ids=$(secondary_saved_ids 2>/dev/null); then
+  for sec_id in $sec_ids; do
+    sec_meta=$(secondary_saved_path "$sec_id" meta)
+    [ -f "$sec_meta" ] || continue
+    sec_srv=$(sed -n '2p' "$sec_meta" 2>/dev/null)
+    [ -n "$sec_srv" ] || continue
+    valid_ipv6 "$sec_srv" && sec_srv="[$sec_srv]"
+    if [ "$sec_id" = 0 ]; then sec_label='二级代理 B1(旧)'; else sec_label="二级代理 B$sec_id"; fi
+    if [ "$out_printed" = no ]; then
+      kv_sub_row "出站 IP：" "$sec_label" "$sec_srv" 16 16 "$C_YELLOW"
+      out_printed=yes
+    else
+      kv_sub_row "" "$sec_label" "$sec_srv" 16 16 "$C_YELLOW"
+    fi
+  done
+fi
+print_ip_detail_row(){
+  local main_l="$1" sub_l="$2" val4="$3" val6="$4" col4="${5:-}" col6="${6:-}"
+  if [ -n "$v4" ] && [ -n "$v6" ]; then
+    if [ -n "$val4" ] && [ "$val4" = "$val6" ]; then
+      kv_sub_row "$main_l" "$sub_l" "$val4" 16 16 "$col4"
+    else
+      kv_sub_row "$main_l" "$sub_l" "v4: ${val4:-查询失败}" 16 16 "$col4"
+      kv_sub_row "" "" "v6: ${val6:-查询失败}" 16 16 "$col6"
+    fi
+  elif [ -n "$v4" ]; then
+    kv_sub_row "$main_l" "$sub_l" "${val4:-查询失败}" 16 16 "$col4"
+  elif [ -n "$v6" ]; then
+    kv_sub_row "$main_l" "$sub_l" "${val6:-查询失败}" 16 16 "$col6"
+  else
+    kv_sub_row "$main_l" "$sub_l" "未检测到公网 IP" 16 16 "$C_DIM"
+  fi
+}
+local nat_col4='' nat_col6=''
+case "$v4_ip_native_state" in native) nat_col4="$C_GREEN" ;; broadcast) nat_col4="$C_YELLOW" ;; esac
+case "$v6_ip_native_state" in native) nat_col6="$C_GREEN" ;; broadcast) nat_col6="$C_YELLOW" ;; esac
+print_ip_detail_row "服务器地区：" "IPinfo"         "$v4_geo_ipinfo" "$v6_geo_ipinfo"
+print_ip_detail_row ""             "IP2Location"    "$v4_geo_ip2loc" "$v6_geo_ip2loc"
+print_ip_detail_row ""             "MaxMind(ip.sb)" "$v4_geo_ipsb"   "$v6_geo_ipsb"
+print_ip_detail_row "IP 质量属性：" "ASN / 组织"    "$v4_ip_asn"     "$v6_ip_asn"
+print_ip_detail_row ""             "IP 类型"        "$v4_ip_type"    "$v6_ip_type"
+print_ip_detail_row ""             "IP 性质"        "$v4_ip_native"  "$v6_ip_native" "$nat_col4" "$nat_col6"
+print_ip_detail_row ""             "风险标记"       "$v4_ip_risk"    "$v6_ip_risk"
 sleep 2
 if [ "$ippz" = "4" ]; then
 if [ -z "$v4" ]; then
@@ -12260,7 +12754,7 @@ node_links=''
 # ─── 常规代理节点：Xray → Sing-box → 通用协议 → 独立服务端（不同协议空 2 行，同协议 CDN 变体空 1 行） ───
 if grep -q xhttp-reality "$HOME/agsbx/xr.json" 2>/dev/null; then
 proto_gap
-node_title "💣【 $direct_xh_title 】"
+node_title "💣【 $direct_xh_title 】" "$(protocol_outbound_badge xhpt xray)"
 port_xh=$(cat "$HOME/agsbx/port_xh")
 vl_xh_link="vless://$(uri_percent_encode "$uuid")@$server_ip:$port_xh?encryption=$(uri_percent_encode "$enkey")&flow=xtls-rprx-vision&security=reality&sni=$(uri_percent_encode "$ym_vl_re")&fp=chrome&pbk=$(uri_percent_encode "$public_key_x")&sid=$(uri_percent_encode "$short_id_x")&type=xhttp&path=$(uri_percent_encode "$(transport_path xh)")&mode=$profile_xh_mode${direct_xh_options}#$(uri_percent_encode "$direct_xh_title")"
 append_node_link "$vl_xh_link" || return 1
@@ -12271,7 +12765,7 @@ fi
 fi
 if grep -q reality-vision "$HOME/agsbx/xr.json" 2>/dev/null; then
 proto_gap
-node_title "💣【 $direct_vl_title 】"
+node_title "💣【 $direct_vl_title 】" "$(protocol_outbound_badge vlpt xray)"
 port_vl_re=$(cat "$HOME/agsbx/port_vl_re")
 vl_link="vless://$(uri_percent_encode "$uuid")@$server_ip:$port_vl_re?encryption=none&flow=xtls-rprx-vision&security=reality&sni=$(uri_percent_encode "$ym_vl_re")&fp=chrome&pbk=$(uri_percent_encode "$public_key_x")&sid=$(uri_percent_encode "$short_id_x")&type=tcp&headerType=none${direct_vl_options}#$(uri_percent_encode "$direct_vl_title")"
 append_node_link "$vl_link" || return 1
@@ -12304,7 +12798,7 @@ fi
 fi
 if grep -q vlessenc-xhttp-cdn "$HOME/agsbx/xr.json" 2>/dev/null; then
 proto_gap
-node_title "💣【 VLESS Encryption＋${profile_xvd_transport}＋TLS＋Vision CDN$profile_xvd_suffix 】"
+node_title "💣【 VLESS Encryption＋${profile_xvd_transport}＋TLS＋Vision CDN$profile_xvd_suffix 】" "$(protocol_outbound_badge xvcdnpt xray)"
 port_xvcdn=$(cat "$HOME/agsbx/port_xvcdn")
 xvvmcdnym=$(cat "$HOME/agsbx/cdnym" 2>/dev/null)
 valid_domain "$xvvmcdnym" || { echo "错误：CDN 域名状态缺失，无法生成正确的 Host/SNI。"; return 1; }
@@ -12315,14 +12809,14 @@ echo "$vl_xvcdn_link"
 fi
 if grep -q vless-xhttp "$HOME/agsbx/xr.json" 2>/dev/null; then
 proto_gap
-node_title "💣【 VLESS Encryption＋${profile_vx_transport}＋Vision$profile_vx_suffix 】"
+node_title "💣【 VLESS Encryption＋${profile_vx_transport}＋Vision$profile_vx_suffix 】" "$(protocol_outbound_badge vxpt xray)"
 port_vx=$(cat "$HOME/agsbx/port_vx")
 vl_vx_link="vless://$(uri_percent_encode "$uuid")@$server_ip:$port_vx?encryption=$(uri_percent_encode "$enkey")&flow=xtls-rprx-vision&security=none&type=xhttp&path=$(uri_percent_encode "$(transport_path vx)")&mode=$profile_vx_mode${profile_vx_options}#$(uri_percent_encode "${sxname}vlessenc-${profile_vx_transport}-vision${profile_vx_suffix}-$hostname")"
 append_node_link "$vl_vx_link" || return 1
 echo "$vl_vx_link"
 if [ -f "$HOME/agsbx/cdnym" ] && [ -z "$profile_vx_fm" ]; then
 echo
-node_title "💣【 VLESS Encryption＋${profile_vx_transport}＋Vision CDN$profile_vx_suffix 】"
+node_title "💣【 VLESS Encryption＋${profile_vx_transport}＋Vision CDN$profile_vx_suffix 】" "$(protocol_outbound_badge vxpt xray)"
 xvvmcdnym=$(cat "$HOME/agsbx/cdnym")
 valid_domain "$xvvmcdnym" || return 1
 vl_vx_cdn_link="vless://$(uri_percent_encode "$uuid")@$xvvmcdnym:$port_vx?encryption=$(uri_percent_encode "$enkey")&flow=xtls-rprx-vision&security=none&type=xhttp&host=$(uri_percent_encode "$xvvmcdnym")&path=$(uri_percent_encode "$(transport_path vx)")&mode=$profile_vx_mode${profile_vx_options}#$(uri_percent_encode "${sxname}vlessenc-${profile_vx_transport}-vision-cdn${profile_vx_suffix}-$hostname")"
@@ -12332,14 +12826,14 @@ fi
 fi
 if grep -q vless-ws "$HOME/agsbx/xr.json" 2>/dev/null; then
 proto_gap
-node_title "💣【 Vlessenc-ws-vision 】（支持 ENC 加密）"
+node_title "💣【 Vlessenc-ws-vision 】（支持 ENC 加密）" "$(protocol_outbound_badge vwpt xray)"
 port_vw=$(cat "$HOME/agsbx/port_vw")
 vl_vw_link="vless://$(uri_percent_encode "$uuid")@$server_ip:$port_vw?encryption=$(uri_percent_encode "$enkey")&flow=xtls-rprx-vision&security=none&type=ws&path=$(uri_percent_encode "$(transport_path vw)")${profile_vw_options}#$(uri_percent_encode "${sxname}vlessenc-ws-vision${profile_vw_suffix}-$hostname")"
 append_node_link "$vl_vw_link" || return 1
 echo "$vl_vw_link"
 if [ -f "$HOME/agsbx/cdnym" ] && [ -z "$profile_vw_fm" ]; then
 echo
-node_title "💣【 Vlessenc-ws-vision-cdn 】（支持 ENC 加密）"
+node_title "💣【 Vlessenc-ws-vision-cdn 】（支持 ENC 加密）" "$(protocol_outbound_badge vwpt xray)"
 vl_vw_cdn_link="vless://$(uri_percent_encode "$uuid")@icook.hk:$port_vw?encryption=$(uri_percent_encode "$enkey")&flow=xtls-rprx-vision&type=ws&host=$xvvmcdnym&path=$(uri_percent_encode "$(transport_path vw)")#$(uri_percent_encode "${sxname}vlessenc-ws-vision-cdn-$hostname")"
 append_node_link "$vl_vw_cdn_link" || return 1
 echo "$vl_vw_cdn_link"
@@ -12348,7 +12842,7 @@ fi
 fi
 if grep -q hy2-xr "$HOME/agsbx/xr.json" 2>/dev/null; then
 proto_gap
-node_title "💣【 Xray-Hysteria2 】"
+node_title "💣【 Xray-Hysteria2 】" "$(protocol_outbound_badge xhypt xray)"
 port_xhy2=$(cat "$HOME/agsbx/port_xhy2")
 cert_hash="$render_cert_hash"
 [[ "$cert_hash" =~ ^[0-9a-f]{64}$ ]] || { echo "错误：当前证书指纹无效，拒绝生成 TLS 链接。"; return 1; }
@@ -12396,7 +12890,7 @@ fi
 fi
 if grep -q hy2-sb "$HOME/agsbx/sb.json" 2>/dev/null; then
 proto_gap
-node_title "💣【 Hysteria2 】"
+node_title "💣【 Hysteria2 】" "$(protocol_outbound_badge shypt sing-box)"
 port_hy2=$(cat "$HOME/agsbx/port_hy2")
 obfs_pass=$(cat "$HOME/agsbx/obfs_pass" 2>/dev/null)
 cert_hash="$render_cert_hash"
@@ -12456,7 +12950,7 @@ fi
 fi
 if grep -q tuic5-sb "$HOME/agsbx/sb.json" 2>/dev/null; then
 proto_gap
-node_title "💣【 Tuic 】"
+node_title "💣【 Tuic 】" "$(protocol_outbound_badge tupt sing-box)"
 port_tu=$(cat "$HOME/agsbx/port_tu")
 cert_hash="$render_cert_hash"
 [[ "$cert_hash" =~ ^[0-9a-f]{64}$ ]] || { echo "错误：当前证书指纹无效，拒绝生成 TLS 链接。"; return 1; }
@@ -12499,7 +12993,7 @@ fi
 fi
 if grep -q anytls-sb "$HOME/agsbx/sb.json" 2>/dev/null; then
 proto_gap
-node_title "💣【 AnyTLS 】"
+node_title "💣【 AnyTLS 】" "$(protocol_outbound_badge anpt sing-box)"
 port_an=$(cat "$HOME/agsbx/port_an")
 ran_sni=$(cat "$HOME/agsbx/sni.txt" 2>/dev/null)
 cert_mode=$(cat "$HOME/agsbx/cert_mode" 2>/dev/null)
@@ -12514,7 +13008,7 @@ echo "$an_link"
 fi
 if grep -q anyreality-sb "$HOME/agsbx/sb.json" 2>/dev/null; then
 proto_gap
-node_title "💣【 Any-Reality 】"
+node_title "💣【 Any-Reality 】" "$(protocol_outbound_badge arpt sing-box)"
 port_ar=$(cat "$HOME/agsbx/port_ar")
 ar_link="anytls://$(uri_percent_encode "$uuid")@$server_ip:$port_ar?security=reality&sni=$(uri_percent_encode "$ym_vl_re")&fp=chrome&pbk=$(uri_percent_encode "$public_key_s")&sid=$(uri_percent_encode "$short_id_s")&type=tcp&headerType=none#$(uri_percent_encode "${sxname}any-reality-$hostname")"
 append_node_link "$ar_link" || return 1
@@ -12522,7 +13016,9 @@ echo "$ar_link"
 fi
 if grep -q vmess-xr "$HOME/agsbx/xr.json" 2>/dev/null || grep -q vmess-sb "$HOME/agsbx/sb.json" 2>/dev/null; then
 proto_gap
-node_title "💣【 Vmess-ws 】"
+local vm_core='sing-box'
+grep -q vmess-xr "$HOME/agsbx/xr.json" 2>/dev/null && vm_core='xray'
+node_title "💣【 Vmess-ws 】" "$(protocol_outbound_badge vmpt "$vm_core")"
 port_vm_ws=$(cat "$HOME/agsbx/port_vm_ws")
 if [ -n "$profile_vm_fm" ]; then
 # v2rayN 的标准 VMess URI 解析器读取 fm；旧 Base64 VMess 格式没有配套字段。
@@ -12558,7 +13054,7 @@ printf -- '- "%s"\n' "$(json_escape "${sxname}vmess-ws-$hostname")"
 fi
 if [ -f "$HOME/agsbx/cdnym" ] && [ -z "$profile_vm_fm" ]; then
 echo
-node_title "💣【 Vmess-ws-cdn 】"
+node_title "💣【 Vmess-ws-cdn 】" "$(protocol_outbound_badge vmpt "$vm_core")"
 vm_cdn_link="vmess://$(vmess_payload "${sxname}vm-ws-cdn-$hostname" "icook.hk" "$port_vm_ws" "$xvvmcdnym" "$(transport_path vm)" "" "")"
 append_node_link "$vm_cdn_link" || return 1
 echo "$vm_cdn_link"
@@ -12608,7 +13104,7 @@ append_node_link "$naive_h2_link" || return 1
 append_node_link "$naive_h3_link" || return 1
 append_node_link "$naive_sr_h2_link" || return 1
 append_node_link "$naive_sr_h3_link" || return 1
-node_title "💣【 NaiveProxy 】（Caddy 转发代理）"
+node_title "💣【 NaiveProxy 】（Caddy 转发代理）" "$(protocol_outbound_badge naive caddy)"
 kv_row "账号：" "$naiveuser" 10
 kv_row "密码：" "$naivepass" 10
 echo "  原生分享（HTTPS · H1/H2，TCP）："
@@ -12664,7 +13160,7 @@ clmierupt1(){
 printf -- '- "%s"\n' "$(json_escape "${sxname}mieru-$hostname")"
 }
 fi
-node_title "💣【 Mieru 】"
+node_title "💣【 Mieru 】" "$(protocol_outbound_badge mieru mita)"
 kv_row "类型：" "Mieru" 19
 kv_row "地址：" "$mieru_address" 19
 kv_row "端口：" "$port_mieru" 19
@@ -12765,23 +13261,31 @@ nametn=""
 fi
 [ "$printed_protocol" = no ] || echo
 subsection "Cloudflare Argo 隧道节点"
+local argo_badge='' argo_vm_core='sing-box'
 if [ "$vlvm" = "Vlessenc-xhttp-tls-vision-fm" ] || [ "$vlvm" = "Vlessenc-xhttp-vision" ]; then
+argo_badge=$(protocol_outbound_badge xvargopt xray)
 kv_row "绑定协议：" "$vlvm（端口 $(cat "$HOME/agsbx/argoport.log" 2>/dev/null)）" 14
 kv_row "Argo 域名：" "$argodomain" 14
 [ -z "$nametn" ] || kv_row "固定 Token：" "$nametn" 14
 echo
-node_title "💣【 VLESS Encryption＋${profile_xva_transport}＋Vision Argo${profile_xva_suffix} 】"
+node_title "💣【 VLESS Encryption＋${profile_xva_transport}＋Vision Argo${profile_xva_suffix} 】" "$argo_badge"
 echo "$vwa_xvargo_link"
 [ "$sub" != yes ] || note_line "Argo ENC 节点通过完整 VLESS URL/聚合订阅导入，不生成缺失 ENC 参数的 Clash 节点。"
 else
+if [ "$vlvm" = "Vless" ]; then
+  argo_badge=$(protocol_outbound_badge vwpt xray)
+else
+  grep -q vmess-xr "$HOME/agsbx/xr.json" 2>/dev/null && argo_vm_core='xray'
+  argo_badge=$(protocol_outbound_badge vmpt "$argo_vm_core")
+fi
 kv_row "绑定协议：" "${vlvm}-ws（端口 $(cat "$HOME/agsbx/argoport.log" 2>/dev/null)）" 14
 kv_row "Argo 域名：" "$argodomain" 14
 [ -z "$nametn" ] || kv_row "固定 Token：" "$nametn" 14
 echo
-node_title "💣【 443 端口 ${vlvm}-ws-tls-argo 】（优选 IP 与 443 系端口可自行替换）"
+node_title "💣【 443 端口 ${vlvm}-ws-tls-argo 】（优选 IP 与 443 系端口可自行替换）" "$argo_badge"
 echo "${vmatls_link1}${vwatls_link1}"
 echo
-node_title "💣【 80 端口 ${vlvm}-ws-argo 】（优选 IP 与 80 系端口可自行替换）"
+node_title "💣【 80 端口 ${vlvm}-ws-argo 】（优选 IP 与 80 系端口可自行替换）" "$argo_badge"
 echo "${vma_link7}${vwa_link2}"
 fi
 printed_protocol=yes
@@ -12798,7 +13302,7 @@ if [ "$has_secondary_entry" = yes ]; then
   printed_protocol=sub_first
   if grep -q ss-2022 "$HOME/agsbx/sb.json" 2>/dev/null; then
   proto_gap
-  node_title "💣【 Shadowsocks-2022 】"
+  node_title "💣【 Shadowsocks-2022 】" "$(protocol_outbound_badge sspt sing-box)"
   load_ss_key || return 1
   port_ss=$(cat "$HOME/agsbx/port_ss") && valid_port "$port_ss" || { echo "错误：SS 端口状态无效，未生成链接。"; return 1; }
   port_ss=$((10#$port_ss))
@@ -12816,7 +13320,9 @@ if [ "$has_secondary_entry" = yes ]; then
   fi
   if grep -q socks5-xr "$HOME/agsbx/xr.json" 2>/dev/null || grep -q socks5-sb "$HOME/agsbx/sb.json" 2>/dev/null; then
   proto_gap
-  node_title "💣【 Socks5 】"
+  local so_core='sing-box'
+  grep -q socks5-xr "$HOME/agsbx/xr.json" 2>/dev/null && so_core='xray'
+  node_title "💣【 Socks5 】" "$(protocol_outbound_badge sopt "$so_core")"
   port_so=$(cat "$HOME/agsbx/port_so")
   load_socks_credentials || return 1
   socks_link="socks5://$(uri_percent_encode "$socks_user"):$(uri_percent_encode "$socks_pass")@$server_ip:$port_so"
@@ -12849,7 +13355,7 @@ if [ "$has_special_tunnel" = yes ]; then
   printed_protocol=sub_first
   if grep -Fq 'agsbx-profile-xdrive-v1' "$HOME/agsbx/xr.json" 2>/dev/null; then
     proto_gap
-    node_title "💣【 VLESS Encryption + XDRIVE 】"
+    node_title "💣【 VLESS Encryption + XDRIVE 】" "$(protocol_outbound_badge xdrive xray)"
     if xdrive_private_file "$HOME/agsbx/xdrive-client.json" 65536; then
       kv_row "客户端配置：" "$HOME/agsbx/xdrive-client.json（权限 600；含节点及存储凭据，仅交给可信客户端）" 14
     else
@@ -12864,7 +13370,7 @@ if [ "$has_special_tunnel" = yes ]; then
   for special_protocol in xdns xicmp; do
     grep -Fq "vless-kcp-$special_protocol" "$HOME/agsbx/xr.json" 2>/dev/null || continue
     proto_gap
-    node_title "💣【 VLESS Encryption + mKCP + $special_protocol 】"
+    node_title "💣【 VLESS Encryption + mKCP + $special_protocol 】" "$(protocol_outbound_badge "$special_protocol" xray)"
     if ! grep -Fq "agsbx-profile-${special_protocol}-v1" "$HOME/agsbx/xr.json"; then
       warn_line "旧版 $special_protocol 尚未迁移，请使用同版本脚本和 GUI 通过 rep 重建；不再输出不完整的分享链接。"
       continue
@@ -13899,22 +14405,22 @@ local clk; clk=$(getconf CLK_TCK 2>/dev/null || echo 100)
 human(){ awk -v b="${1:-0}" 'BEGIN{u="B KiB MiB GiB TiB";n=split(u,a," ");i=1;while(b>=1024&&i<n){b/=1024;i++}printf (i==1?"%d %s":"%.2f %s"),b,a[i]}'; }
 section "Airgosbx 内核资源 / 流量监控"
 printf '\n%s\n' "${C_GREEN}${C_BOLD}【内核进程】${C_RESET}"
-printf "  ${C_CYAN}%-10s %-7s %-7s %-11s %-9s %-6s${C_RESET}\n" Core PID CPU% Mem-RSS Uptime Conn
-printf "  ${C_DIM}%-10s %-7s %-7s %-11s %-9s %-6s${C_RESET}\n" "----------" "-------" "-------" "-----------" "---------" "------"
+printf "  ${C_CYAN}%-12s %-7s %-7s %-11s %-9s %-6s${C_RESET}\n" Core PID CPU% Mem-RSS Uptime Conn
+printf "  ${C_DIM}%-12s %-7s %-7s %-11s %-9s %-6s${C_RESET}\n" "------------" "-------" "-------" "-----------" "---------" "------"
 local any=0 kv k label bin cfg pid s b0 st b1 cpu rss up conn
 for kv in "xray:Xray:$HOME/agsbx/xray:$HOME/agsbx/xr.json" \
   "sing-box:Sing-box:$HOME/agsbx/sing-box:$HOME/agsbx/sb.json" \
   "caddy:Caddy:$HOME/agsbx/caddy:$HOME/agsbx/Caddyfile" \
-  "cloudflared:Argo:$HOME/agsbx/cloudflared:$HOME/agsbx/argoport.log" \
+  "cloudflared:Cloudflared:$HOME/agsbx/cloudflared:$HOME/agsbx/argoport.log" \
   "mita:Mita:$HOME/agsbx/mita_managed:$HOME/agsbx/mita.json"; do
   IFS=: read -r k label bin cfg <<< "$kv"
   if [ "$k" = mita ]; then
     if [ ! -f "$bin" ]; then
-      printf "  %-10s ${C_DIM}%s${C_RESET}\n" "$label" "未配置"
+      printf "  %-12s ${C_DIM}%s${C_RESET}\n" "$label" "未配置"
       continue
     fi
     if [ ! -s "$cfg" ]; then
-      printf "  %-10s ${C_DIM}%s${C_RESET}\n" "$label" "未启用"
+      printf "  %-12s ${C_DIM}%s${C_RESET}\n" "$label" "未启用"
       continue
     fi
     pid=$(pgrep -x mita 2>/dev/null | head -1)
@@ -13923,11 +14429,11 @@ for kv in "xray:Xray:$HOME/agsbx/xray:$HOME/agsbx/xr.json" \
   fi
   if [ -z "$pid" ] || [ ! -d "/proc/$pid" ]; then
     if [ -s "$cfg" ]; then
-      printf "  %-10s ${C_RED}%s${C_RESET}\n" "$label" "未运行"
+      printf "  %-12s ${C_RED}%s${C_RESET}\n" "$label" "未运行"
     elif [ -s "$bin" ]; then
-      printf "  %-10s ${C_DIM}%s${C_RESET}\n" "$label" "未启用"
+      printf "  %-12s ${C_DIM}%s${C_RESET}\n" "$label" "未启用"
     else
-      printf "  %-10s ${C_DIM}%s${C_RESET}\n" "$label" "未配置"
+      printf "  %-12s ${C_DIM}%s${C_RESET}\n" "$label" "未配置"
     fi
     continue
   fi
@@ -13943,7 +14449,7 @@ for kv in "xray:Xray:$HOME/agsbx/xray:$HOME/agsbx/xr.json" \
   rss=$(awk -v kb="${rss:-0}" 'BEGIN{printf "%.1f MiB", kb/1024}')
   up=$(awk -v su="$(awk '{print $1}' /proc/uptime 2>/dev/null)" -v st="$st" -v c="$clk" 'BEGIN{s=su-st/c;d=int(s/86400);h=int((s%86400)/3600);m=int((s%3600)/60); if(d>0)printf "%dd%dh",d,h; else if(h>0)printf "%dh%dm",h,m; else printf "%dm",m}')
   conn=$(ss -tnp 2>/dev/null | grep -c "pid=$pid,")
-  printf "  %-10s %-7s %-7s %-11s %-9s %-6s\n" "$label" "$pid" "$cpu" "$rss" "$up" "${conn:-0}"
+  printf "  %-12s %-7s %-7s %-11s %-9s %-6s\n" "$label" "$pid" "$cpu" "$rss" "$up" "${conn:-0}"
 done
 [ "$any" = 0 ] && note_line "各内核进程均未运行。"
 echo
