@@ -2,7 +2,7 @@
 # 配套维护：airgosbx.sh 与 airgosbx-gui.html 是同一套工具，必须成套维护、提交和发布。
 # 修改任一文件时，须同步核对并修改另一文件的对应内容。
 # 参数、默认值、协议归属、开关与互斥、校验、命令生成与还原及功能说明必须保持一致。
-AIRGOSBX_VERSION='V26.09.28'
+AIRGOSBX_VERSION='v1.1 (20261118)'
 # 仅在内置 XHTTP 默认参数改变时更新此标记，普通脚本版本更新不使旧命令失效。
 XHTTP_DEFAULTS_VERSION='V26.09.08.1'
 agsbxurl="${agsbxurl:-https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/main/airgosbx.sh}"
@@ -378,6 +378,22 @@ write_managed_cron(){
   done < "$before"
   printf '%s # %s\n' "$entry" "$marker" >> "$after" \
     && crontab "$after" >/dev/null 2>&1 || { rm -f "$before" "$after"; return 1; }
+  rm -f "$before" "$after"
+}
+
+remove_managed_cron(){
+  local marker="$1" before after line removed=no
+  command -v crontab >/dev/null 2>&1 || return 0
+  before=$(mktemp) && after=$(mktemp) || return 1
+  read_crontab_or_empty "$before" || { rm -f "$before" "$after"; return 1; }
+  : > "$after" || { rm -f "$before" "$after"; return 1; }
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in *"# $marker") removed=yes; continue ;; esac
+    printf '%s\n' "$line" >> "$after" || { rm -f "$before" "$after"; return 1; }
+  done < "$before"
+  if [ "$removed" = yes ]; then
+    crontab "$after" >/dev/null 2>&1 || { rm -f "$before" "$after"; return 1; }
+  fi
   rm -f "$before" "$after"
 }
 
@@ -1583,28 +1599,56 @@ agsbx_installed(){
 # 避免 ANSI 转义码污染订阅文件（jh.txt / clmi.yaml）。
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
   C_RESET=$(printf '\033[0m');   C_BOLD=$(printf '\033[1m')
+  C_DIM=$(printf '\033[2m')
   C_RED=$(printf '\033[31m');    C_GREEN=$(printf '\033[32m')
   C_YELLOW=$(printf '\033[33m'); C_CYAN=$(printf '\033[36m')
 else
-  C_RESET=''; C_BOLD=''; C_RED=''; C_GREEN=''; C_YELLOW=''; C_CYAN=''
+  C_RESET=''; C_BOLD=''; C_DIM=''; C_RED=''; C_GREEN=''; C_YELLOW=''; C_CYAN=''
 fi
 
-# 终端排版助手：统一全脚本的分隔线、区块标题与节点卡片标题样式，
-# 取代此前手敲长短不一的星号/横线/等号分隔串。仅作用于控制台展示输出，
+# 终端排版助手：统一全脚本的 64 栏分隔线、主/次区块标题、键值列对齐与提示样式，
+# 确保在 80 栏 SSH 终端不意外折行。仅作用于控制台展示输出，
 # 订阅文件 (jh.txt / clmi.yaml) 均为显式重定向写入，不受影响。
-hr(){ printf '%s\n' "${C_CYAN}---------------------------------------------------------${C_RESET}"; }
-hr2(){ printf '%s\n' "${C_CYAN}=========================================================${C_RESET}"; }
+hr(){ printf '%s\n' "${C_DIM}${C_CYAN}----------------------------------------------------------------${C_RESET}"; }
+hr2(){ printf '%s\n' "${C_CYAN}================================================================${C_RESET}"; }
 section(){
+  echo
   hr2
-  printf '%s\n' "${C_BOLD}$1${C_RESET}"
+  printf '  %s\n' "${C_BOLD}$1${C_RESET}"
   hr2
 }
+subsection(){
+  echo
+  printf '%s\n' "${C_CYAN}${C_BOLD}── $1 ──${C_RESET}"
+}
 node_title(){ printf '%s\n' "${C_BOLD}${C_CYAN}$1${C_RESET}"; }
+note_line(){ printf '  %s· %s%s\n' "$C_DIM" "$1" "$C_RESET"; }
+warn_line(){ printf '  %s! %s%s\n' "$C_YELLOW" "$1" "$C_RESET"; }
+
+# 键值对齐输出：按终端显示列宽对齐中文/ASCII 混合标签，避免 Bash printf 按 UTF-8 字节对齐错位。
+# 用法：kv_row "标签" "值" [标签栏宽，默认 16] [值颜色码，可选]
+kv_row(){
+  local label="$1" value="$2" width="${3:-16}" color="${4:-}" ascii non_ascii_bytes display_width pad LC_ALL=C
+  ascii=${label//[! -~]/}
+  non_ascii_bytes=$(( ${#label} - ${#ascii} ))
+  display_width=$(( ${#ascii} + (non_ascii_bytes / 3) * 2 ))
+  pad=$(( width - display_width ))
+  [ "$pad" -ge 1 ] || pad=1
+  if [ -n "$color" ]; then
+    printf '  %s%*s%s%s%s\n' "$label" "$pad" '' "$color" "$value" "$C_RESET"
+  else
+    printf '  %s%*s%s\n' "$label" "$pad" '' "$value"
+  fi
+}
 
 # 变量速查表：按功能分组打印所有可用环境变量，解决"功能多→变量多→记不住/易混淆"的痛点。
-# vg() 打印分组小标题，vrow() 打印对齐的"变量 — 说明"行（变量名为 ASCII，%-11s 列对齐稳定）。
+# vg() 打印分组小标题，vrow() 打印对齐的"变量 — 说明"行（默认 19 列，覆盖最长变量名），vnote() 打印分组附注。
 vg(){ echo; printf '%s\n' "${C_GREEN}${C_BOLD}$1${C_RESET}"; }
-vrow(){ printf "  ${C_YELLOW}%-11s${C_RESET} %s\n" "$1" "$2"; }
+vrow(){
+  local width="${3:-19}"
+  printf "  ${C_YELLOW}%-${width}s${C_RESET} %s\n" "$1" "$2"
+}
+vnote(){ printf '  %s· %s%s\n' "$C_DIM" "$1" "$C_RESET"; }
 # XHTTP 扩展字段清单：变量名|Xray 字段|类型和范围|默认值|作用端。
 # 与本地 GUI 的 XHTTP_EXTRA_FIELDS 同步。置于帮助入口之前，帮助不执行部署逻辑。
 xhttp_extra_schema() {
@@ -1654,11 +1698,11 @@ XHTTP_EXTRA_SCHEMA
 }
 
 showvars(){
-printf '%s\n' "${C_CYAN}~~~~~~~~~~~~~~~~~~~~ Airgosbx 变量速查表 ~~~~~~~~~~~~~~~~~~~~${C_RESET}"
-printf '%s\n' "${C_BOLD}用法：在脚本前以「变量=值」空格分隔传入，可任意组合${C_RESET}"
-echo "示例：xhpt=2087 ipv=\"4;6\" warp=s4x4 sub=y bash <(curl -Ls $agsbxurl)"
-echo "取消IP策略并恢复VPS原状态：ipv= agsbx（list/status 等查看命令不改变网络）"
-echo "说明：端口类变量留空(如 vlpt)即自动随机分配；带 pt 后缀的为可指定端口版"
+section "Airgosbx 变量速查表"
+kv_row "用法：" "在脚本前以「变量=值」空格分隔传入，可任意组合" 8 "$C_BOLD"
+kv_row "示例：" "xhpt=2087 ipv=\"4;6\" warp=s4x4 sub=y bash <(curl -Ls $agsbxurl)" 8
+kv_row "恢复：" "ipv= agsbx（取消 IP 策略并恢复原状态；list/status 等查看命令不改变网络）" 8
+kv_row "说明：" "端口类变量留空（如 vlpt）即自动随机分配；带 pt 后缀的为可指定端口版" 8
 
 vg "① Xray 内核协议（端口留空＝自动分配）"
 vrow "xhpt"     "VLESS Encryption＋XHTTP＋REALITY＋Vision（默认无 extra/FM）"
@@ -1672,9 +1716,9 @@ vrow "vwfm"     "vwpt 的 FM：header-custom、sudoku；CDN/Argo 时关闭"
 vrow "vmfm"     "Xray VMess 的 FM：header-custom、sudoku；Sing-box/CDN/Argo 时关闭"
 vrow "xhmode"   "xhpt 客户端模式：auto/packet-up/stream-up/stream-one；含 extra 默认 auto，服务端接受多种模式"
 vrow "vxmode"   "vxpt 模式；CDN 默认 packet-up，不开放 stream-one"
-echo "             fragment 只进入 TLS/REALITY 客户端，不写入服务端。"
-echo "             示例：xhpt=2087 xhextra=y xhfm=sudoku（完整参数随 VLESS URL 导出）"
-echo "             rep 按本次选项重建；list 使用已保存的配置，不读取本次增强选项。"
+vnote "fragment 只进入 TLS/REALITY 客户端，不写入服务端。"
+vnote "示例：xhpt=2087 xhextra=y xhfm=sudoku（完整参数随 VLESS URL 导出）"
+vnote "rep 按本次选项重建；list 使用已保存的配置，不读取本次增强选项。"
 vrow "vxpt"     "Vlessenc-xhttp-vision（裸ENC，配 cdnym 走CDN）"
 vrow "vwpt"     "Vlessenc-ws-vision（裸ENC，配 cdnym 走CDN）"
 vrow "xhypt"    "Xray-Hysteria2（QUIC，需TLS证书）"
@@ -1683,17 +1727,17 @@ vrow "xdns"     "Vless-kcp-xdns-fm（备用DNS隧道，需配 xdnsym=域名）"
 vrow "xdnsym"   "XDNS 专用域名（最长100字符）；须配置 NS 委派到 VPS，开放 UDP/53"
 vrow "xdnsres"  "XDNS 客户端递归解析器，IP:端口或[IPv6]:端口；默认 8.8.8.8:53"
 vrow "xicmp"    "Vless-kcp-xicmp-fm（ICMP隧道；root/CAP_NET_RAW，不关闭系统 Ping）"
-echo "             XDNS/XICMP 两端需 Xray >=26.7.28；输出完整客户端 JSON，不加入通用链接订阅。"
+vnote "XDNS/XICMP 两端需 Xray >=26.7.28；输出完整客户端 JSON，不加入通用链接订阅。"
 vrow "xdrive"   "VLESS＋XDRIVE（云盘隧道；设置即启用，不监听公网端口）"
 vrow "xdriveservice" "Google Drive（默认）或 local；两端须使用同一专用数据目录，暂不支持 template"
 vrow "xdrivefolder" "必填：Google Drive 文件夹 ID，或 local 模式的 VPS 绝对目录路径"
 vrow "xdriveauthfile" "仅 Google Drive：VPS 绝对文件路径，纯文本三行依次为 ClientID、ClientSecret、RefreshToken"
 vrow "xdriveclientfolder" "仅 local：可选的客户端绝对目录路径，未设置则与 VPS 相同"
-echo "             XDRIVE 两端需包含该功能的 Xray；官方于 2026-09-19 合并，v26.9.9 不支持。"
-echo "             当前需先备好支持核心和部署依赖，再带完整协议参数执行 rep；不自动获取开发版核心。"
-echo "             凭据文件须属运行用户所有、权限 600/400；local 依赖另行配置的双向文件同步。"
-echo "             示例：xdrive= xdrivefolder='文件夹ID' xdriveauthfile=/root/xdrive-auth.txt agsbx rep"
-echo "             XDRIVE 导出权限为 600 的专用客户端 JSON，仅提示文件路径；文件含云盘凭据，不加入订阅。"
+vnote "XDRIVE 两端需包含该功能的 Xray；官方于 2026-09-19 合并，v26.9.9 不支持。"
+vnote "当前需先备好支持核心和部署依赖，再带完整协议参数执行 rep；不自动获取开发版核心。"
+vnote "凭据文件须属运行用户所有、权限 600/400；local 依赖另行配置的双向文件同步。"
+vnote "示例：xdrive= xdrivefolder='文件夹ID' xdriveauthfile=/root/xdrive-auth.txt agsbx rep"
+vnote "XDRIVE 导出权限为 600 的专用客户端 JSON，仅提示文件路径；文件含云盘凭据，不加入订阅。"
 
 vg "② Sing-box 内核协议（端口留空＝自动分配）"
 vrow "shypt"    "Hysteria2（QUIC暴力传输，需TLS证书）"
@@ -1708,19 +1752,19 @@ vrow "sopt"     "Socks5 入站（无加密）；可经 secp 继续连接 B，仅
 
 vg "④ 出站方式（默认直连；可选 WARP 或二级代理）"
 vrow "warp"     "出站经WARP，值选：s/x/sx 或 s4x4/s6x6 等"
-echo "             s=sing-box核走WARP  x=xray核走WARP  4/6=锁IPv4/IPv6"
+vnote "s=sing-box核走WARP  x=xray核走WARP  4/6=锁IPv4/IPv6"
 vrow "secp"     "选择 A 的入站协议，或 xr / sb；Naive/Mieru 显式用 naive/mieru；SS/SOCKS 用 sspt/sopt"
 vrow "securl"   "A→B 分享链接：SS/SOCKS5/HTTP(S)/VLESS/Trojan/Hysteria2/WireGuard（留空隐藏输入）"
 vrow "secuot"   "SS UoT v2：off（默认）或 on；需要时经 A 本机 Sing-box 承载，B 须支持"
 vrow "secpN"    "B1–B16：secp1/securl1/secuot1、secp2/securl2/secuot2 等；编号可跳号"
-echo "             旧 secp/securl/secuot 等同 B1，不可与编号 1 参数混用；每个入站只能选一个 B。"
-echo "             入站流量已配置经所属内核的 WARP 出站时，须先取消该 WARP 出站才能选择 B；B 的 WG URL 是独立上游。"
-echo "             B 可自建或购买，支持 IP/域名；SOCKS 支持明文、整段或认证信息 Base64，以及 remarks 备注、udp=0/1、method=auto。"
-echo "             Base64 是编码；SOCKS/HTTP 本身不加密。客户端仍连接 A，选中流量的目标 DNS 与目标连接都经 B。"
-echo "             B 域名保留到内核配置，运行时解析；Naive 经 A 本机 Sing-box 连接 B，不固定 B 的 IP。"
-echo "             A 内核原生支持则连接 B，否则转接本机 Sing-box；目标域名交给 B，WireGuard 的目标 DNS 经隧道发送。"
-echo "             B 自身域名的引导查询独立留在 A；这与访问网站的目标 DNS 不同。"
-echo "             第三方 B 内部的 DNS、UDP 与访问限制由供应商决定；客户端订阅只描述 A 的入站，与二级出站无关。"
+vnote "旧 secp/securl/secuot 等同 B1，不可与编号 1 参数混用；每个入站只能选一个 B。"
+vnote "入站流量已配置经所属内核的 WARP 出站时，须先取消该 WARP 出站才能选择 B；B 的 WG URL 是独立上游。"
+vnote "B 可自建或购买，支持 IP/域名；SOCKS 支持明文、整段或认证信息 Base64，以及 remarks 备注、udp=0/1、method=auto。"
+vnote "Base64 是编码；SOCKS/HTTP 本身不加密。客户端仍连接 A，选中流量的目标 DNS 与目标连接都经 B。"
+vnote "B 域名保留到内核配置，运行时解析；Naive 经 A 本机 Sing-box 连接 B，不固定 B 的 IP。"
+vnote "A 内核原生支持则连接 B，否则转接本机 Sing-box；目标域名交给 B，WireGuard 的目标 DNS 经隧道发送。"
+vnote "B 自身域名的引导查询独立留在 A；这与访问网站的目标 DNS 不同。"
+vnote "第三方 B 内部的 DNS、UDP 与访问限制由供应商决定；客户端订阅只描述 A 的入站，与二级出站无关。"
 
 vg "⑤ Cloudflare Argo 隧道（纯出站，VPS无需开放端口）"
 vrow "argo"     "指定哪个协议走隧道：vmpt / vwpt / xvargopt"
@@ -1738,9 +1782,9 @@ vrow "xvcdnfm"  "CDN 客户端 FM：none/fragment；禁止私有包头、sudoku"
 vrow "cdnym"    "CDN host域名/优选IP域名（须已解析到CF）"
 
 vg "⑦ TLS 证书（无订阅时可自动自签；开启订阅必须使用公信 CA）"
-vrow "alns"     "acme.sh 证书开关：y＝需要证书时交互选择申请方式"
-vrow "acmemode" "预设方式：ip / http / alpn / dns（留空则交互选择）"
-vrow "acmeca"   "独立 acme.sh：auto / letsencrypt / zerossl / sslcom；不改变 Caddy 的 CA"
+vrow "alns"     "acme.sh 证书开关：y＝需要证书时交互选择 CA 与申请方式"
+vrow "acmemode" "预设方式：ip / http / alpn / dns（留空则按所选 CA 交互选择）"
+vrow "acmeca"   "独立 acme.sh：auto(终端交互/无TTY按默认顺序) / letsencrypt / zerossl / sslcom；不改变 Caddy"
 vrow "certip"   "IP 短期证书的一个或两个公网 IP（空格分隔）"
 vrow "certym"   "域名；兼容旧用法：单独设置时默认 HTTP-01"
 vrow "certwild" "DNS-01 时填 y，同时申请根域名与泛域名"
@@ -1748,11 +1792,11 @@ vrow "certcrt"  "外部导入：证书(fullchain)文件路径"
 vrow "certkey"  "外部导入：私钥文件路径"
 vrow "acmem"    "ACME / Caddy 邮箱（ZeroSSL 无 EAB 时用于自动获取；已有 EAB 可留空）"
 vrow "acmetimeout" "单家 CA 签发超时秒数（默认 HTTP/IP/ALPN 60、DNS 120；范围 5-600）"
-vrow "zerossl_eab_kid" "ZeroSSL 备用 CA 的 EAB Key ID（可选，与 HMAC 成对）"
-vrow "zerossl_eab_hmac" "ZeroSSL 备用 CA 的 EAB HMAC Key（可选，填写后无需邮箱自动获取）"
-echo "             ZeroSSL EAB 仅供 acme.sh 的 HTTP-01/DNS-01 备用流程，不配置 Caddy 自动证书。"
-vrow "sslcom_eab_kid" "SSL.com 第三备用 CA 的 EAB Key ID（可选）"
-vrow "sslcom_eab_hmac" "SSL.com 第三备用 CA 的 EAB HMAC Key（可选）"
+vrow "zerossl_eab_kid" "ZeroSSL EAB Key ID（可选，与 HMAC 成对）"
+vrow "zerossl_eab_hmac" "ZeroSSL EAB HMAC Key（可选，填写后无需邮箱自动获取）"
+vnote "ZeroSSL EAB 仅供 acme.sh 的 HTTP-01/DNS-01 签发，不配置 Caddy 自动证书。"
+vrow "sslcom_eab_kid" "SSL.com EAB Key ID（可选）"
+vrow "sslcom_eab_hmac" "SSL.com EAB HMAC Key（可选）"
 vrow "certdns"  "兼容旧用法：填 cf 走 Cloudflare DNS-01（免占用80/443端口）"
 vrow "CF_Token" "Cloudflare Token（Zone.DNS 编辑；自动发现时还需 Zone.Zone 读取）"
 vrow "CF_Account_ID" "Cloudflare 账户 ID（可选，用于缩小 Zone 查询范围）"
@@ -1764,12 +1808,12 @@ vrow "subpt"    "订阅服务对外端口（留空自动分配）"
 vrow "subid"    "独立订阅 token（16-128 位安全字符；留空自动生成并保存）"
 vrow "subauth"  "订阅密码保护（y/yes/1 开启；n/no/0 关闭；新部署默认关闭）"
 vrow "subpass"  "开启保护时的密码（16-128 位字母、数字或 . _ ~ -；不能与 subid 相同）"
-echo "             subauth 关闭时 YAML/TXT 可直接通过 HTTPS 链接订阅，不生成或输出密码。"
-echo "             开启保护且发布时密码留空，由 VPS 独立随机生成；非空 subpass 未设 subauth 时自动启用。"
-echo "             rep 未指定 subauth/subpass 时沿用已保存的保护开关；res 沿用开关和密码，不轮换。"
-echo "             开启时输出加密订阅，客户端在解密密码栏填同一密码，不需要用户名。"
-echo "             网页查看仅提供 TXT，支持一键复制；关闭保护直接显示，开启后输入同一密码。"
-echo "             客户端须支持订阅内容解密；不同客户端和版本的支持情况可能不同。"
+vnote "subauth 关闭时 YAML/TXT 可直接通过 HTTPS 链接订阅，不生成或输出密码。"
+vnote "开启保护且发布时密码留空，由 VPS 独立随机生成；非空 subpass 未设 subauth 时自动启用。"
+vnote "rep 未指定 subauth/subpass 时沿用已保存的保护开关；res 沿用开关和密码，不轮换。"
+vnote "开启时输出加密订阅，客户端在解密密码栏填同一密码，不需要用户名。"
+vnote "网页查看仅提供 TXT，支持一键复制；关闭保护直接显示，开启后输入同一密码。"
+vnote "客户端须支持订阅内容解密；不同客户端和版本的支持情况可能不同。"
 
 vg "⑨ Hysteria2 端口跳跃（抗QoS限速）"
 vrow "hyjpt"    "全局跳跃端口，自动分配给激活的hy2核"
@@ -1816,10 +1860,10 @@ vrow "fmfragsplit" "TLS 分片数量：1-64，默认 3-6"
 vrow "xhycc"    "Xray Hysteria2 QUIC：auto/bbr/reno/brutal/force-brutal"
 vrow "xhyup"    "客户端上行 Mbps：0-100000；force-brutal 需明确正值"
 vrow "xhydown"  "客户端下行 Mbps：0-100000；force-brutal 需明确正值"
-echo "             FM 多项必须使用匹配的 Xray 客户端实现；完整参数随 URL 导出。"
+vnote "FM 多项必须使用匹配的 Xray 客户端实现；完整参数随 URL 导出。"
 
 vg "⑭ Xray 按协议覆盖（未设置或空值＝沿用上方通用参数）"
-echo "             GUI 为每个协议独立传参；范围与同名通用参数一致。"
+vnote "GUI 为每个协议独立传参；范围与同名通用参数一致。"
 vrow "vl_fmpass" "vlpt 专用 fmpass，仅作用于该协议"
 vrow "vl_fmascii" "vlpt 专用 fmascii，仅作用于该协议"
 vrow "vl_fmpadding" "vlpt 专用 fmpadding，仅作用于该协议"
@@ -1873,16 +1917,16 @@ vrow "xva_fmfragsplit" "xvargopt 专用 fmfragsplit，仅作用于该协议"
 
 vg "⑮ 完整 XHTTP Extra（空值继承默认；GUI 仅传入偏离默认的值）"
 vrow "cfgver" "默认配置版本标记，与脚本/GUI 版本配套，避免历史命令静默套用新默认"
-echo "             通用变量可加 xh_ / vx_ / xvd_ / xva_ 前缀，分别覆盖直连/CDN/Tunnel。"
+vnote "通用变量可加 xh_ / vx_ / xvd_ / xva_ 前缀，分别覆盖直连/CDN/Tunnel。"
 local extra_key extra_name extra_type extra_default extra_side
 while IFS='|' read -r extra_key extra_name extra_type extra_default extra_side; do
   vrow "$extra_key" "$extra_name；默认 ${extra_default:-空}；$extra_type；$extra_side"
 done < <(xhttp_extra_schema)
-echo "             xheaders64：最多 24 行请求头的 Base64；GUI 接受逐行文本，自动编码。"
-echo "             SessionPlacement/Key 兼容输出 sessionIDPlacement/Key；新主分支 Table/Length 暂不生成。"
+vnote "xheaders64：最多 24 行请求头的 Base64；GUI 接受逐行文本，自动编码。"
+vnote "SessionPlacement/Key 兼容输出 sessionIDPlacement/Key；新主分支 Table/Length 暂不生成。"
 echo
 hr
-echo "命令速查见 ${C_YELLOW}agsbx cmds${C_RESET} ｜ 完整帮助 ${C_YELLOW}agsbx help${C_RESET}"
+printf '  命令速查见 %sagsbx cmds%s ｜ 完整帮助 %sagsbx help%s\n' "$C_YELLOW" "$C_RESET" "$C_YELLOW" "$C_RESET"
 hr
 echo
 }
@@ -1890,37 +1934,37 @@ echo
 # 命令速查表：与 vars 同款排版（vg 分组小标题 + vrow 对齐行），把所有子命令按用途分组列清。
 # 与 showvars 配套：agsbx cmds 看命令、agsbx vars 看变量、agsbx help 同时输出两表。
 showcmds(){
-printf '%s\n' "${C_CYAN}~~~~~~~~~~~~~~~~~~~~ Airgosbx 命令速查表 ~~~~~~~~~~~~~~~~~~~~${C_RESET}"
-printf '%s\n' "${C_BOLD}用法：agsbx <命令> [参数]　（已安装后任意目录可直接调用 agsbx）${C_RESET}"
+section "Airgosbx 命令速查表"
+kv_row "用法：" "agsbx <命令> [参数]（已安装后任意目录可直接调用 agsbx）" 8 "$C_BOLD"
 
 vg "① 脚本管理"
-vrow "update"   "更新脚本自身到最新版（不动配置与内核）"
-vrow "rep"      "事务重置非Caddy协议；保留Naive/Caddy，开启订阅时可复用或申请CA证书"
-vrow "cert"     "维护已有证书：接回 Caddy 后台签发结果，或按原 ACME 账户正常续期；不强制重签"
-vrow "del"      "卸载 agsbx（清进程/服务/定时任务/文件）"
+vrow "update"   "更新脚本自身到最新版（不动配置与内核）" 10
+vrow "rep"      "事务重置非Caddy协议；保留Naive/Caddy，开启订阅时可复用或申请CA证书" 10
+vrow "cert"     "维护已有证书：接回 Caddy 后台签发结果，或按原 ACME 账户正常续期；不强制重签" 10
+vrow "del"      "卸载 agsbx（清进程/服务/定时任务/文件）" 10
 
 vg "② 查看 / 信息"
-vrow "list"     "只读展示节点与已发布订阅（ippz=4或6 可只看单栈）"
-vrow "status"   "内核资源 + 流量监控（别名 stats / top）"
-vrow "vars"     "变量速查表"
-vrow "cmds"     "命令速查表（本表）"
-vrow "help"     "完整帮助（vars + cmds）"
+vrow "list"     "只读展示节点与已发布订阅（ippz=4或6 可只看单栈）" 10
+vrow "status"   "内核资源 + 流量监控（别名 stats / top）" 10
+vrow "vars"     "变量速查表" 10
+vrow "cmds"     "命令速查表（本表）" 10
+vrow "help"     "完整帮助（vars + cmds）" 10
 
 vg "③ 内核启停（用法：agsbx <动作> [内核]）"
-echo "             内核 = xray ｜ sb ｜ caddy ｜ mita ｜ all(省略即全部；已配置 Naive 时包含 Caddy，Mita 需单独指定)"
-vrow "start"    "启动内核"
-vrow "stop"     "停止内核（释放其占用的端口）"
-vrow "restart"  "重启内核"
-vrow "reload"   "重载配置（Caddy/Mita 原生重载；Xray/Sing-box 经检查重启，会短暂断连）"
-vrow "res"      "重启 Xray/Sing-box/Argo，并在已配置 Naive 时重启 Caddy（不含 Mita）"
-echo "             同步重启订阅服务，沿用已保存的密码保护开关及密码；随后用 agsbx list 查看链接。"
-echo "             未完成的订阅发布会使用已保存文件、保护状态和证书继续校验；状态不完整会明确报错。"
+vnote "内核 = xray ｜ sb ｜ caddy ｜ mita ｜ all（省略即全部；已配置 Naive 时包含 Caddy，Mita 需单独指定）"
+vrow "start"    "启动内核" 10
+vrow "stop"     "停止内核（释放其占用的端口）" 10
+vrow "restart"  "重启内核" 10
+vrow "reload"   "重载配置（Caddy/Mita 原生重载；Xray/Sing-box 经检查重启，会短暂断连）" 10
+vrow "res"      "重启 Xray/Sing-box/Argo，并在已配置 Naive 时重启 Caddy（不含 Mita）" 10
+vnote "同步重启订阅服务，沿用已保存的密码保护开关及密码；随后用 agsbx list 查看链接。"
+vnote "未完成的订阅发布会使用已保存文件、保护状态和证书继续校验；状态不完整会明确报错。"
 
 vg "④ 内核版本"
-vrow "upx"      "升级 Xray（upx [版本]，不带版本=最新）"
-vrow "ups"      "升级 Sing-box（ups [版本]）"
-vrow "downx"    "降级 Xray（downx <版本>，如 downx v26.2.6）"
-vrow "downs"    "降级 Sing-box（downs <版本>）"
+vrow "upx"      "升级 Xray（upx [版本]，不带版本=最新）" 10
+vrow "ups"      "升级 Sing-box（ups [版本]）" 10
+vrow "downx"    "降级 Xray（downx <版本>，如 downx v26.2.6）" 10
+vrow "downs"    "降级 Sing-box（downs <版本>）" 10
 echo
 hr
 echo
@@ -2540,7 +2584,7 @@ validate_zerossl_eab_inputs(){
   fi
   case "$requested" in 1|ip-http) requested=ip ;; 3|tls-alpn) requested=alpn ;; esac
   if [ -n "${certcrt:-}${certkey:-}" ] || [ "$requested" = ip ] || [ "$requested" = alpn ]; then
-    echo "错误：ZeroSSL EAB 只用于 HTTP-01/DNS-01 的备用签发，不适用于当前证书方式。"
+    echo "错误：ZeroSSL EAB 只用于 HTTP-01/DNS-01 签发，不适用于当前证书方式。"
     return 1
   fi
 }
@@ -2559,7 +2603,7 @@ deployment_port_specs(){
 validate_deployment_inputs(){
   local flag variable file network value key has_link_protocol=no
   validate_zerossl_eab_inputs || return 1
-  case "${acmeca:-auto}" in auto|letsencrypt|zerossl|sslcom) ;; *) echo "错误：acmeca 仅支持 auto/letsencrypt/zerossl/sslcom。"; return 1 ;; esac
+  case "${acmeca:-auto}" in ''|auto|interactive|letsencrypt|zerossl|sslcom) ;; *) echo "错误：acmeca 仅支持 auto/interactive/letsencrypt/zerossl/sslcom。"; return 1 ;; esac
   while IFS=: read -r flag variable file network; do
     [ "${!flag}" = yes ] || continue
     value=${!variable}
@@ -2715,10 +2759,22 @@ validate_hopping_ports_against_plan(){
   done
 }
 
+# 随机分配避开明显 VPN、代理与面板默认端口；用户显式指定的端口仍正常放行。
+port_is_blacklisted() {
+  case "${1:-}" in
+    500|992|1080|1194|1195|1196|1197|1198|1701|1723|2408|3128|4443|4500|5555|\
+    7890|7891|7892|7893|8118|8388|9090|9993|10000|10443|10808|10809|41641|51820|51821|54321)
+      return 0 ;;
+    *)
+      return 1 ;;
+  esac
+}
+
 get_free_port() {
   local allocated_port network="${1:-both}" attempt status
   for attempt in {1..200}; do
     allocated_port=$((15000 + (RANDOM * 32768 + RANDOM) % 45001))
+    port_is_blacklisted "$allocated_port" && continue
     port_plan_conflicts "$allocated_port" "$network" && continue
     port_requested_for_deployment "$allocated_port" "$network" && continue
     if port_in_use "$allocated_port" "$network"; then continue
@@ -2739,6 +2795,7 @@ get_free_privileged_port() {
   for ((attempt=0; attempt<span; attempt++)); do
     allocated_port=$((200 + (start + attempt) % span))
     [ "$allocated_port" -eq 443 ] && continue
+    port_is_blacklisted "$allocated_port" && continue
     port_requested_for_deployment "$allocated_port" tcp && continue
     if ! port_is_listening "$allocated_port"; then
       printf '%s\n' "$allocated_port"
@@ -2788,13 +2845,100 @@ vercmp() {
   }'
 }
 
+net_sysctl_file='/etc/sysctl.d/99-agsbx-net.conf'
+net_sysctl_marker='# AIRGOSBX_NET_TUNING_V1'
+journald_limit_dir='/etc/systemd/journald.conf.d'
+journald_limit_file='/etc/systemd/journald.conf.d/99-agsbx-journal.conf'
+journald_limit_marker='# AIRGOSBX_JOURNALD_V1'
+
+net_sysctl_owned(){
+  [ -f "$net_sysctl_file" ] && [ ! -L "$net_sysctl_file" ] \
+    && grep -Fxq "$net_sysctl_marker" "$net_sysctl_file" 2>/dev/null
+}
+
+journald_limit_owned(){
+  [ -f "$journald_limit_file" ] && [ ! -L "$journald_limit_file" ] \
+    && grep -Fxq "$journald_limit_marker" "$journald_limit_file" 2>/dev/null
+}
+
+cleanup_system_net_tuning(){
+  if [ -e "$net_sysctl_file" ] || [ -L "$net_sysctl_file" ]; then
+    if net_sysctl_owned; then
+      rm -f -- "$net_sysctl_file" || return 1
+    fi
+  fi
+  return 0
+}
+
+configure_system_journald_limit(){
+  local tmp conf
+  pidof systemd >/dev/null 2>&1 && is_root || return 0
+  if [ -L /etc/systemd ] || [ -L "$journald_limit_dir" ] || [ -L "$journald_limit_file" ]; then
+    echo "提示：journald 配置路径存在符号链接，已跳过日志上限配置。"
+    return 0
+  fi
+  if [ -e "$journald_limit_file" ] && ! journald_limit_owned; then
+    echo "提示：检测到外部管理的 $journald_limit_file，已保留原配置。"
+    return 0
+  fi
+  # 若管理员已在主配置或其他 drop-in 中显式设置 SystemMaxUse，尊重原设置不介入。
+  for conf in /etc/systemd/journald.conf "$journald_limit_dir"/*.conf; do
+    [ -f "$conf" ] && [ ! -L "$conf" ] || continue
+    [ "$conf" != "$journald_limit_file" ] || continue
+    if grep -Eq '^[[:space:]]*SystemMaxUse[[:space:]]*=' "$conf" 2>/dev/null; then
+      return 0
+    fi
+  done
+  mkdir -p "$journald_limit_dir" >/dev/null 2>&1 || return 0
+  tmp=$(mktemp "$journald_limit_dir/.agsbx-journal.XXXXXX" 2>/dev/null) || return 0
+  if ! cat > "$tmp" <<EOF
+$journald_limit_marker
+[Journal]
+SystemMaxUse=100M
+MaxRetentionSec=14day
+EOF
+  then
+    rm -f -- "$tmp"
+    return 0
+  fi
+  if ! chmod 644 "$tmp" || ! mv -f -- "$tmp" "$journald_limit_file"; then
+    rm -f -- "$tmp"
+    return 0
+  fi
+  systemctl reload-or-restart systemd-journald >/dev/null 2>&1 || true
+  echo "已为 systemd-journald 设置安全日志上限（100M / 14天），防止长期运行占满系统盘。"
+}
+
+cleanup_system_journald_limit(){
+  if [ -e "$journald_limit_file" ] || [ -L "$journald_limit_file" ]; then
+    if journald_limit_owned; then
+      rm -f -- "$journald_limit_file" || return 1
+      if pidof systemd >/dev/null 2>&1; then
+        systemctl reload-or-restart systemd-journald >/dev/null 2>&1 || true
+      fi
+    fi
+  fi
+  return 0
+}
+
 enable_system_bbr() {
-  # 系统网络加速：① UDP/QUIC 收发缓冲区调优；② 内核 TCP BBR 拥塞控制与自适应系统网络栈加速。
-  # 确保 /etc/sysctl.conf 存在，防止 sed 报 can't read 错误
-  [ -f /etc/sysctl.conf ] || touch /etc/sysctl.conf
+  # 系统网络加速：① UDP/QUIC 收发缓冲区调优；② 通用 TCP/UDP 网络栈调优与内核 TCP BBR 拥塞控制。
+  # 写入 /etc/sysctl.d/99-agsbx-net.conf（兼容 Debian 13 等不再由 systemd-sysctl 读取 /etc/sysctl.conf 的系统）。
+  if [ -L /etc/sysctl.d ] || [ -L "$net_sysctl_file" ]; then
+    echo "警告：/etc/sysctl.d 或 $net_sysctl_file 是符号链接，已跳过系统网络调优。"
+    return 0
+  fi
+  if [ -e "$net_sysctl_file" ] && ! net_sysctl_owned; then
+    echo "警告：检测到外部管理的 $net_sysctl_file，拒绝覆盖，已跳过系统网络调优。"
+    return 0
+  fi
+  mkdir -p /etc/sysctl.d >/dev/null 2>&1 || {
+    echo "警告：无法创建 /etc/sysctl.d，已跳过系统网络调优。"
+    return 0
+  }
 
   # 自适应内存检测：通过 /proc/meminfo 获取 VPS 物理内存总量 (单位: MB)
-  local mem_total_kb mem_total_mb tcp_max_buf udp_buf
+  local mem_total_kb mem_total_mb tcp_max_buf udp_buf default_buf
   mem_total_kb=$(awk '/^MemTotal:/{print $2}' /proc/meminfo 2>/dev/null)
   case "$mem_total_kb" in ''|*[!0-9]*) mem_total_kb=0 ;; esac
   mem_total_mb=$((mem_total_kb / 1024))
@@ -2806,86 +2950,118 @@ enable_system_bbr() {
   if [ "$mem_total_mb" -gt 0 ] && [ "$mem_total_mb" -le 512 ]; then
     tcp_max_buf=8388608
     udp_buf=8388608
+    default_buf=262144
     echo "检测到 VPS 物理内存为 ${mem_total_mb}MB (低配型)，已自适应将网络最大缓冲区限制为 8MB 以防内存溢出(OOM)。🔒"
   elif [ "$mem_total_mb" -gt 512 ] && [ "$mem_total_mb" -le 1536 ]; then
     tcp_max_buf=16777216
     udp_buf=16777216
+    default_buf=524288
     echo "检测到 VPS 物理内存为 ${mem_total_mb}MB (标准型)，已自适应将网络最大缓冲区设置为 16MB (平衡型)。🚀"
   else
     tcp_max_buf=33554432
     udp_buf=33554432
+    default_buf=524288
     if [ "$mem_total_mb" -gt 0 ]; then
       echo "检测到 VPS 物理内存为 ${mem_total_mb}MB (高配型)，已自适应将网络最大缓冲区设置为 32MB 以最大化吞吐性能。🔥"
     else
       # 内存读取异常时兜底采用标准配置
       tcp_max_buf=16777216
       udp_buf=16777216
+      default_buf=524288
     fi
   fi
 
-  # —— ① UDP/QUIC 缓冲区自适应调优 ——
-  # UDP 缓冲区太小时 quic-go 会告警并降速，调大上限可显著提升 QUIC 吞吐。
-  local cur_rmem
-  cur_rmem=$(sysctl -n net.core.rmem_max 2>/dev/null)
-  case "$cur_rmem" in ''|*[!0-9]*) cur_rmem=0 ;; esac
-  if [ "$cur_rmem" -lt "$udp_buf" ]; then
-    sed -i '/net.core.rmem_max/d;/net.core.wmem_max/d' /etc/sysctl.conf
-    echo "net.core.rmem_max = $udp_buf" >> /etc/sysctl.conf
-    echo "net.core.wmem_max = $udp_buf" >> /etc/sysctl.conf
-    sysctl -w net.core.rmem_max=$udp_buf >/dev/null 2>&1
-    sysctl -w net.core.wmem_max=$udp_buf >/dev/null 2>&1
-    echo "已调大 UDP 收发缓冲区至 $((udp_buf / 1024 / 1024))MiB，提升 QUIC(Hysteria2/TUIC/HTTP3)吞吐。🚀"
-  else
-    echo "提示：UDP 缓冲区已为 $((cur_rmem / 1024 / 1024))MiB，无需下调。"
-  fi
+  local cur_rmem cur_wmem cur_rmem_def cur_wmem_def cur_udp_rmin cur_udp_wmin
+  local bbr_available=no udp_raised=no tmp_conf
+  cur_rmem=$(sysctl -n net.core.rmem_max 2>/dev/null); case "$cur_rmem" in ''|*[!0-9]*) cur_rmem=0 ;; esac
+  cur_wmem=$(sysctl -n net.core.wmem_max 2>/dev/null); case "$cur_wmem" in ''|*[!0-9]*) cur_wmem=0 ;; esac
+  cur_rmem_def=$(sysctl -n net.core.rmem_default 2>/dev/null); case "$cur_rmem_def" in ''|*[!0-9]*) cur_rmem_def=0 ;; esac
+  cur_wmem_def=$(sysctl -n net.core.wmem_default 2>/dev/null); case "$cur_wmem_def" in ''|*[!0-9]*) cur_wmem_def=0 ;; esac
+  cur_udp_rmin=$(sysctl -n net.ipv4.udp_rmem_min 2>/dev/null); case "$cur_udp_rmin" in ''|*[!0-9]*) cur_udp_rmin=0 ;; esac
+  cur_udp_wmin=$(sysctl -n net.ipv4.udp_wmem_min 2>/dev/null); case "$cur_udp_wmin" in ''|*[!0-9]*) cur_udp_wmin=0 ;; esac
 
-  # —— ② 内核 TCP BBR 拥塞控制与系统网络栈自适应加速 ——
+  # —— ② 检测内核是否支持 BBR（未内置时先尝试加载模块） ——
   echo "正在为您检测并开启系统级 TCP BBR 与网络栈自适应优化加速..."
-
-  # 内核未内置 bbr 时先尝试加载模块
-  if ! sysctl net.ipv4.tcp_available_congestion_control 2>/dev/null | grep -q "bbr"; then
+  if ! sysctl -n net.ipv4.tcp_available_congestion_control 2>/dev/null | grep -qw "bbr"; then
     modprobe tcp_bbr >/dev/null 2>&1
   fi
+  if sysctl -n net.ipv4.tcp_available_congestion_control 2>/dev/null | grep -qw "bbr"; then
+    bbr_available=yes
+  fi
 
-  if sysctl net.ipv4.tcp_available_congestion_control 2>/dev/null | grep -q "bbr"; then
-    # 批量清理已存在的参数，防止多次运行脚本堆积垃圾配置
-    sed -i '/net.core.default_qdisc/d' /etc/sysctl.conf
-    sed -i '/net.ipv4.tcp_congestion_control/d' /etc/sysctl.conf
-    sed -i '/net.ipv4.tcp_slow_start_after_idle/d' /etc/sysctl.conf
-    sed -i '/net.ipv4.tcp_rmem/d' /etc/sysctl.conf
-    sed -i '/net.ipv4.tcp_wmem/d' /etc/sysctl.conf
-    sed -i '/net.ipv4.tcp_notsent_lowat/d' /etc/sysctl.conf
-    sed -i '/net.ipv4.tcp_fin_timeout/d' /etc/sysctl.conf
-    sed -i '/net.ipv4.tcp_keepalive_time/d' /etc/sysctl.conf
-    sed -i '/net.ipv4.tcp_max_syn_backlog/d' /etc/sysctl.conf
-    sed -i '/net.core.somaxconn/d' /etc/sysctl.conf
-    sed -i '/net.core.netdev_max_backlog/d' /etc/sysctl.conf
+  tmp_conf=$(mktemp /etc/sysctl.d/.agsbx-net.XXXXXX 2>/dev/null) || {
+    echo "警告：无法创建临时 sysctl 配置文件，已跳过系统网络调优。"
+    return 0
+  }
 
-    # 写入自适应和通用加速配置
-    echo "net.core.default_qdisc = fq" >> /etc/sysctl.conf
-    echo "net.ipv4.tcp_congestion_control = bbr" >> /etc/sysctl.conf
-    echo "net.ipv4.tcp_slow_start_after_idle = 0" >> /etc/sysctl.conf
-    echo "net.ipv4.tcp_rmem = 4096 87380 $tcp_max_buf" >> /etc/sysctl.conf
-    echo "net.ipv4.tcp_wmem = 4096 65536 $tcp_max_buf" >> /etc/sysctl.conf
-    echo "net.ipv4.tcp_notsent_lowat = 131072" >> /etc/sysctl.conf
-    echo "net.ipv4.tcp_fin_timeout = 30" >> /etc/sysctl.conf
-    echo "net.ipv4.tcp_keepalive_time = 1200" >> /etc/sysctl.conf
-    echo "net.ipv4.tcp_max_syn_backlog = 8192" >> /etc/sysctl.conf
-    echo "net.core.somaxconn = 8192" >> /etc/sysctl.conf
-    echo "net.core.netdev_max_backlog = 16384" >> /etc/sysctl.conf
+  {
+    printf '%s\n' "$net_sysctl_marker"
+    # —— ① UDP/QUIC 与通用 Socket 缓冲区调优（仅上调、不向下覆盖已有更大配置） ——
+    if [ "$cur_rmem" -lt "$udp_buf" ]; then
+      printf 'net.core.rmem_max = %s\n' "$udp_buf"
+      udp_raised=yes
+    fi
+    if [ "$cur_wmem" -lt "$udp_buf" ]; then
+      printf 'net.core.wmem_max = %s\n' "$udp_buf"
+      udp_raised=yes
+    fi
+    if [ "$cur_rmem_def" -lt "$default_buf" ]; then
+      printf 'net.core.rmem_default = %s\n' "$default_buf"
+    fi
+    if [ "$cur_wmem_def" -lt "$default_buf" ]; then
+      printf 'net.core.wmem_default = %s\n' "$default_buf"
+    fi
+    if [ "$cur_udp_rmin" -lt 16384 ]; then
+      printf 'net.ipv4.udp_rmem_min = 16384\n'
+    fi
+    if [ "$cur_udp_wmin" -lt 16384 ]; then
+      printf 'net.ipv4.udp_wmem_min = 16384\n'
+    fi
+    # —— 通用 TCP 队列、连接超时与跨网路径优化（与 BBR 解耦，无 BBR 时仍生效） ——
+    printf 'net.ipv4.tcp_slow_start_after_idle = 0\n'
+    printf 'net.ipv4.tcp_rmem = 4096 87380 %s\n' "$tcp_max_buf"
+    printf 'net.ipv4.tcp_wmem = 4096 65536 %s\n' "$tcp_max_buf"
+    printf 'net.ipv4.tcp_notsent_lowat = 131072\n'
+    printf 'net.ipv4.tcp_fin_timeout = 30\n'
+    printf 'net.ipv4.tcp_keepalive_time = 1200\n'
+    printf 'net.ipv4.tcp_max_syn_backlog = 8192\n'
+    printf 'net.core.somaxconn = 8192\n'
+    printf 'net.core.netdev_max_backlog = 16384\n'
+    printf 'net.ipv4.tcp_mtu_probing = 1\n'
+    printf 'net.ipv4.tcp_fastopen = 3\n'
+    # —— BBR 拥塞控制（内核可用时启用） ——
+    if [ "$bbr_available" = yes ]; then
+      printf 'net.core.default_qdisc = fq\n'
+      printf 'net.ipv4.tcp_congestion_control = bbr\n'
+    fi
+  } > "$tmp_conf"
 
-    sysctl -p >/dev/null 2>&1
+  if ! chmod 644 "$tmp_conf" || ! mv -f -- "$tmp_conf" "$net_sysctl_file"; then
+    rm -f -- "$tmp_conf"
+    echo "警告：无法写入 $net_sysctl_file，已跳过系统网络调优。"
+    return 0
+  fi
 
+  # 优先使用 -e 忽略旧内核不支持的个别键，兼容 procps 与 busybox sysctl
+  sysctl -e -p "$net_sysctl_file" >/dev/null 2>&1 || sysctl -p "$net_sysctl_file" >/dev/null 2>&1
+
+  if [ "$udp_raised" = yes ]; then
+    echo "已调大 UDP/Socket 收发缓冲区至 $((udp_buf / 1024 / 1024))MiB（持久化于 $net_sysctl_file），提升 QUIC(Hysteria2/TUIC/HTTP3)吞吐。🚀"
+  else
+    echo "提示：UDP 缓冲区已不低于 $((udp_buf / 1024 / 1024))MiB，无需下调。"
+  fi
+
+  if [ "$bbr_available" = yes ]; then
     # 再次读取系统实时拥塞控制算法以验证是否真正启用成功
     local current_congestion_control
-    current_congestion_control=$(sysctl net.ipv4.tcp_congestion_control 2>/dev/null | awk '{print $3}')
+    current_congestion_control=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)
     if [ "${current_congestion_control}" = "bbr" ]; then
-      echo "TCP BBR 拥塞控制及系统网络栈自适应优化已成功应用！🚀"
+      echo "TCP BBR 拥塞控制及系统网络栈自适应优化已成功应用（$net_sysctl_file）！🚀"
     else
-      echo "警告：网络参数配置已写入，但 BBR 实时加载失败，可能处于受限虚拟化环境。😿"
+      echo "警告：网络参数配置已写入 $net_sysctl_file，但 BBR 实时加载失败，可能处于受限虚拟化环境。😿"
     fi
   else
-    echo "警告：当前 VPS 系统内核版本较低，不支持 BBR 模块。建议您升级内核后再开启网络加速。😿"
+    echo "提示：已应用通用 TCP/UDP 网络栈优化，但当前 VPS 内核不支持 BBR 模块，建议升级内核后再开启 BBR 加速。😿"
   fi
 }
 
@@ -3150,15 +3326,17 @@ v46url="https://icanhazip.com"
 # 默认安装、重置和更新 main 分支脚本；显式传入 agsbxurl 时仍允许覆盖默认来源。
 agsbxurl="${agsbxurl:-https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/main/airgosbx.sh}"
 showmode(){
-printf '%s\n' "${C_BOLD}核心命令速查（完整命令 ${C_YELLOW}agsbx cmds${C_RESET}${C_BOLD} ｜ 变量 ${C_YELLOW}agsbx vars${C_RESET}${C_BOLD} ｜ 全部 ${C_YELLOW}agsbx help${C_RESET}${C_BOLD}）：${C_RESET}"
-echo "  · 主脚本：bash <(curl -Ls $agsbxurl)  或  bash <(wget -qO- $agsbxurl)"
-echo "  · 节点信息：agsbx list      ｜ 资源/流量：agsbx status"
-echo "  · 修改型操作需要系统 flock；证书维护任务与部署操作互斥"
-echo "  · rep 后请重新导入链接；新 SOCKS 凭据、传输路径及订阅令牌独立保存"
-echo "  · 重置配置：变量组 agsbx rep ｜ 更新脚本：agsbx update ｜ 卸载：agsbx del"
-echo "    rep 保留 Naive/Caddy 与全部证书；证书维护用 agsbx cert，不要为证书问题卸载重装"
-echo "  · 内核启停：agsbx start｜stop｜restart｜reload [xray｜sb｜caddy｜mita｜all]"
-echo "  · 升级内核：agsbx upx/ups [版本]  ｜ 降级：agsbx downx/downs <版本>"
+subsection "核心命令速查"
+kv_row "主脚本："   "bash <(curl -Ls $agsbxurl)  或  bash <(wget -qO- $agsbxurl)" 12
+kv_row "查看信息：" "agsbx list（节点与订阅） ｜ agsbx status（资源/流量）" 12
+kv_row "重置维护：" "变量组 agsbx rep（重置） ｜ agsbx cert（证书维护）" 12
+kv_row "脚本管理：" "agsbx update（更新脚本） ｜ agsbx del（卸载）" 12
+kv_row "内核启停：" "agsbx start｜stop｜restart｜reload [xray｜sb｜caddy｜mita｜all]" 12
+kv_row "内核版本：" "agsbx upx/ups [版本]（升级） ｜ agsbx downx/downs <版本>（降级）" 12
+kv_row "更多帮助：" "${C_YELLOW}agsbx cmds${C_RESET}（全部命令） ｜ ${C_YELLOW}agsbx vars${C_RESET}（全部变量） ｜ ${C_YELLOW}agsbx help${C_RESET}（完整帮助）" 12
+note_line "修改型操作需要系统 flock；证书维护任务与部署操作互斥。"
+note_line "rep 保留 Naive/Caddy 与全部证书，重建后请重新导入链接（SOCKS 凭据、传输路径与订阅令牌独立保存）。"
+note_line "证书问题请使用 agsbx cert 维护，不要为此卸载重装。"
 hr
 echo
 }
@@ -3169,12 +3347,13 @@ echo
 # - 本大段处理启动的控制台文字渲染、自适应 VPS 架构识别 (amd64/arm64) 以及无人值守依赖静默补全。
 # - 关联性：为后续第 4 段 (ACME证书 socat 依赖) 和第 10 段 (Web订阅 busybox httpd 依赖) 奠定系统级环境基础。
 #============================================================
-printf '%s\n' "${C_CYAN}~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~${C_RESET}"
-printf '%s\n' "${C_BOLD}Airgosbx 小钢炮脚本 💣${C_RESET}"
-echo "项目地址：github.com/hugobaum/sbxrago"
-echo "基于 yonggekkk/argosbx"
-printf '%s\n' "当前版本：${C_GREEN}${AIRGOSBX_VERSION}${C_RESET}"
-printf '%s\n' "${C_CYAN}~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~${C_RESET}"
+hr2
+printf '  %s\n' "${C_BOLD}Airgosbx 小钢炮脚本 💣${C_RESET}"
+hr
+kv_row "项目地址：" "github.com/hugobaum/sbxrago" 12
+kv_row "参考来源：" "yonggekkk/argosbx" 12
+kv_row "当前版本：" "${AIRGOSBX_VERSION}" 12 "$C_GREEN"
+hr2
 hostname=$(uname -n)
 op=$(cat /etc/redhat-release 2>/dev/null || cat /etc/os-release 2>/dev/null | grep -i pretty_name | cut -d \" -f2)
 case $(uname -m) in
@@ -3236,7 +3415,7 @@ ensure_deps(){
   fi
   echo "检测到缺失依赖：$miss，正在通过 $pm 自动安装……"
   case "$pm" in
-    apt)    export DEBIAN_FRONTEND=noninteractive; apt-get update >/dev/null 2>&1 && apt-get install -y $miss >/dev/null 2>&1 ;;
+    apt)    export DEBIAN_FRONTEND=noninteractive; apt-get update >/dev/null 2>&1 && apt-get install -y --no-install-recommends $miss >/dev/null 2>&1 ;;
     dnf)    dnf install -y $miss >/dev/null 2>&1 ;;
     yum)    yum install -y $miss >/dev/null 2>&1 ;;
     pacman) pacman -S --needed --noconfirm $miss >/dev/null 2>&1 ;;
@@ -3244,6 +3423,9 @@ ensure_deps(){
     zypper) zypper --non-interactive install $miss >/dev/null 2>&1 ;;
   esac
   [ $? -eq 0 ] || { echo "错误：依赖安装失败，已停止部署。"; return 1; }
+  if [ "$pm" = apt ] && pidof systemd >/dev/null 2>&1; then
+    case " $miss " in *" cron "*) systemctl enable --now cron >/dev/null 2>&1 || true ;; esac
+  fi
   for cmd in openssl socat iptables unzip tar xz ip ss pgrep crontab; do
     command -v "$cmd" >/dev/null 2>&1 || { echo "错误：仍缺少依赖 $cmd。"; return 1; }
   done
@@ -3380,17 +3562,17 @@ fi
 while IFS= read -r endpoint; do
   [ -n "$endpoint" ] && valid_ip "${endpoint%%%*}" || continue
   provider=$(system_dns_provider "$endpoint")
-  printf '  %-12s %s\n' 'DNS 入口：' "$endpoint（$provider；/etc/resolv.conf）"
+  kv_row 'DNS 入口：' "$endpoint（$provider；/etc/resolv.conf）" 16
   case "$endpoint" in 127.*|::1) local_stub=yes ;; esac
   case "$endpoint" in 127.0.0.53|127.0.0.54) resolved_hint=yes ;; esac
   rows=$((rows + 1))
 done <<< "$nameservers"
-[ "$rows" -gt 0 ] || printf '  %-12s %s\n' 'DNS 入口：' '未读取到有效 nameserver'
+[ "$rows" -gt 0 ] || kv_row 'DNS 入口：' '未读取到有效 nameserver' 16
 if [ "$rows" -gt 0 ]; then
-  printf '  %-12s %s\n' '入口协议：' '按 resolv.conf 使用普通 DNS（UDP/TCP 53）；不代表后续上游协议'
+  kv_row '入口协议：' '按 resolv.conf 使用普通 DNS（UDP/TCP 53）；不代表后续上游协议' 16
 fi
 if [ "$nss_resolve" = yes ]; then
-  printf '  %-12s %s\n' '系统解析：' 'NSS 配置包含 systemd-resolved；程序也可能直接使用上述 DNS 入口'
+  kv_row '系统解析：' 'NSS 配置包含 systemd-resolved；程序也可能直接使用上述 DNS 入口' 16
 fi
 if [ "$resolved_hint" = yes ]; then
   if command -v resolvectl >/dev/null 2>&1; then resolved_tool=resolvectl
@@ -3405,7 +3587,7 @@ if [ "$resolved_hint" = yes ]; then
     fi
   fi
   if [ -n "$resolved_status" ]; then
-    printf '  %-12s %s\n' 'DNS 链路：' 'systemd-resolved → 按全局/接口的域名路由规则选择上游'
+    kv_row 'DNS 链路：' 'systemd-resolved → 按全局/接口的域名路由规则选择上游' 16
     rows=0
     while IFS='|' read -r scope kind endpoint tls selected; do
       [ -n "$endpoint" ] || continue
@@ -3416,21 +3598,21 @@ if [ "$resolved_hint" = yes ]; then
         *) protocol='上游协议未确认' ;;
       esac
       provider=$(system_dns_provider "$endpoint")
-      printf '  %-12s %s\n' "DNS $kind：" "$scope → $endpoint（$provider${selected:+；$selected}；$protocol）"
+      kv_row "DNS $kind：" "$scope → $endpoint（$provider${selected:+；$selected}；$protocol）" 16
       rows=$((rows + 1))
     done < <(printf '%s\n' "$resolved_status" | system_dns_resolved_rows)
-    [ "$rows" -gt 0 ] || printf '  %-12s %s\n' 'DNS 上游：' '状态中未提供上游地址'
+    [ "$rows" -gt 0 ] || kv_row 'DNS 上游：' '状态中未提供上游地址' 16
     case "$resolved_status" in *'Fallback DNS Servers:'*)
-      echo '  DNS 备用：仅在没有其他 DNS 配置信息时使用，不代表查询失败后的逐个回退。' ;;
+      kv_row 'DNS 备用：' '仅在没有其他 DNS 配置信息时使用，不代表查询失败后的逐个回退。' 16 ;;
     esac
-    echo '  DNS 说明：以上为配置状态，未验证实际连接或加密会话；上游若仍是本地代理，后续 DoH/DoT 未确认。'
+    kv_row 'DNS 说明：' '以上为配置状态，未验证实际连接或加密会话；上游若仍是本地代理，后续 DoH/DoT 未确认。' 16
   else
-    printf '  %-12s %s\n' 'DNS 链路：' '存在 systemd-resolved 相关配置，但上游/协议未确认（工具不可用或状态查询失败）'
+    kv_row 'DNS 链路：' '存在 systemd-resolved 相关配置，但上游/协议未确认（工具不可用或状态查询失败）' 16
   fi
 elif [ "$local_stub" = yes ]; then
-  printf '  %-12s %s\n' 'DNS 链路：' '上述本地入口 → 本地解析服务 → 未知上游；后续普通 DNS / DoT / DoH 未确认'
+  kv_row 'DNS 链路：' '上述本地入口 → 本地解析服务 → 未知上游；后续普通 DNS / DoT / DoH 未确认' 16
 elif [ "$rows" -gt 0 ]; then
-  printf '  %-12s %s\n' 'DNS 链路：' '应用 → 上述 DNS 地址；仅确认本机配置，服务器后续转发方式未知'
+  kv_row 'DNS 链路：' '应用 → 上述 DNS 地址；仅确认本机配置，服务器后续转发方式未知' 16
 fi
 return 0
 }
@@ -3468,20 +3650,22 @@ else
 fi
 v4v6
 section "VPS 配置信息"
-printf "  %-12s %s\n" "操作系统：" "${op:-未知}"
-printf "  %-12s %s\n" "内核版本：" "${kernel_version:-未知}"
-printf "  %-12s %s\n" "CPU 架构：" "$cpu"
-printf "  %-12s %s\n" "CPU 型号：" "${cpu_model:-未知}"
-printf "  %-12s %s\n" "CPU 核心：" "$cpu_cores 核"
-printf "  %-12s %s\n" "内存：" "总计 $mem_total_mb / 可用 $mem_available_mb"
-printf "  %-12s %s\n" "系统盘：" "总计 $disk_total / 已用 $disk_used（$disk_usage）/ 可用 $disk_available"
-printf "  %-12s %s\n" "公网 IPv4：" "${v4:-未检测到}${v4dq:+（$v4dq）}"
-printf "  %-12s %s\n" "公网 IPv6：" "${v6:-未检测到}${v6dq:+（$v6dq）}"
+kv_row "操作系统：" "${op:-未知}" 16
+kv_row "内核版本：" "${kernel_version:-未知}" 16
+kv_row "CPU 架构：" "$cpu" 16
+kv_row "CPU 型号：" "${cpu_model:-未知}" 16
+kv_row "CPU 核心：" "$cpu_cores 核" 16
+kv_row "内存：" "总计 $mem_total_mb / 可用 $mem_available_mb" 16
+kv_row "系统盘：" "总计 $disk_total / 已用 $disk_used（$disk_usage）/ 可用 $disk_available" 16
+echo
+kv_row "公网 IPv4：" "${v4:-未检测到}${v4dq:+（$v4dq）}" 16
+kv_row "公网 IPv6：" "${v6:-未检测到}${v6dq:+（$v6dq）}" 16
 show_system_dns_info
-printf "  %-12s %s\n" "TCP 拥塞算法：" "$current_cc"
-printf "  %-12s %s\n" "BBR 状态：" "$bbr_support"
-echo "  网络调优：接下来将按内存容量自动调整 TCP/UDP 缓冲区，并尝试启用 BBR。"
-hr2
+echo
+kv_row "TCP 拥塞算法：" "$current_cc" 16
+kv_row "BBR 状态：" "$bbr_support" 16
+kv_row "网络调优：" "接下来将按内存容量自动调整 TCP/UDP 缓冲区，并尝试启用 BBR。" 16
+hr
 echo
 }
 warpsx(){
@@ -3853,16 +4037,17 @@ local method="$naivebuild" ans
 if [ -z "$method" ]; then
   if [ -t 1 ] || [ -t 2 ]; then
     if [ "$cpu" = amd64 ]; then
-      echo "请选择 NaiveProxy(Caddy) 内核获取方式："
+      subsection "NaiveProxy (Caddy) 内核获取方式"
       echo "  [1] 下载官方预编译二进制（推荐，1C1G 小机友好，零编译）"
       echo "  [2] 用 xcaddy 现场编译（需下载 Go，耗时数分钟）"
-      printf "输入 1 或 2（默认 1）："; read -r ans
+      printf "  输入 1 或 2（默认 1）："; read -r ans
       case "$ans" in 2) method=build ;; *) method=dl ;; esac
     else
-      echo "检测到 $cpu 架构：官方未提供预编译二进制，只能现场编译。"
+      subsection "NaiveProxy (Caddy) 内核获取方式"
+      note_line "检测到 $cpu 架构：官方未提供预编译二进制，只能现场编译。"
       echo "  [1] 用 xcaddy 现场编译（需下载 Go，arm 性能足够，耗时数分钟）"
       echo "  [2] 放弃安装 NaiveProxy"
-      printf "输入 1 或 2（默认 1）："; read -r ans
+      printf "  输入 1 或 2（默认 1）："; read -r ans
       case "$ans" in 2) echo "已跳过 NaiveProxy 安装。"; return 1 ;; *) method=build ;; esac
     fi
   else
@@ -4545,6 +4730,24 @@ ip_policy_apply_ipv4_only_sysctl(){
     && [ "$(sysctl -n net.ipv6.conf.lo.disable_ipv6 2>/dev/null)" = 1 ]
 }
 
+# ip -6 address/route restore 在重新启用 IPv6 后重放快照时，内核已自动生成 ::1、fe80:: 与本地/直连路由；
+# iproute2 的 restore_handler 会把 EEXIST 当作非致命项忽略并正常返回 0，但仍会经 rtnl_talk 向 stderr 打印重复提示。
+# 此处保留文件重定向以兼容 ip route restore 的 ftell/fseek：成功时静默吞掉 EEXIST 噪音，真正失败时再输出真实错误。
+ip_policy_restore_netlink(){
+  local dump_file="$1" err_out='' filtered_err=''
+  shift
+  if ! err_out=$(LC_ALL=C "$@" < "$dump_file" 2>&1); then
+    filtered_err=$(printf '%s\n' "$err_out" | grep -Ev '^[[:space:]]*$|already assigned|File exists' || true)
+    if [ -n "$filtered_err" ]; then
+      printf '%s\n' "$filtered_err" >&2
+    elif [ -n "$err_out" ]; then
+      printf '%s\n' "$err_out" >&2
+    fi
+    return 1
+  fi
+  return 0
+}
+
 ip_policy_restore_sysctl(){
   local all_value default_value interface index value current_index
   [ -e "$ip_policy_dir/sysctl_saved" ] || return 0
@@ -4572,8 +4775,8 @@ ip_policy_restore_sysctl(){
     [ -n "$interface" ] || continue
     printf '%s\n' "$value" > "/proc/sys/net/ipv6/conf/$interface/disable_ipv6" || return 1
   done < "$ip_policy_dir/sysctl_interfaces"
-  ip -6 address restore < "$ip_policy_dir/ipv6_addresses.save" \
-    && ip -6 route restore < "$ip_policy_dir/ipv6_routes.save" || return 1
+  ip_policy_restore_netlink "$ip_policy_dir/ipv6_addresses.save" ip -6 address restore \
+    && ip_policy_restore_netlink "$ip_policy_dir/ipv6_routes.save" ip -6 route restore || return 1
   if [ -e "$ip_policy_sysctl_file" ]; then rm -f -- "$ip_policy_sysctl_file" || return 1; fi
   return 0
 }
@@ -4807,12 +5010,12 @@ ip_policy_prune_backups_for_mode(){
       done
       ;;
     6)
-      for file in sysctl_saved sysctl_all sysctl_default sysctl_lo gai_touched gai_created; do
+      for file in sysctl_saved sysctl_all sysctl_default sysctl_lo sysctl_interfaces ipv6_addresses.save ipv6_routes.save gai_touched gai_created; do
         rm -f -- "$ip_policy_dir/$file"
       done
       ;;
     '4;6'|'6;4')
-      for file in sysctl_saved sysctl_all sysctl_default sysctl_lo nm_saved nm_uuid nm_device nm_ipv4_method nm_ipv4_addresses nm_ipv4_gateway nm_ipv4_routes nm_ipv4_dns nm_ipv4_link-local nm_ipv4_may-fail; do
+      for file in sysctl_saved sysctl_all sysctl_default sysctl_lo sysctl_interfaces ipv6_addresses.save ipv6_routes.save nm_saved nm_uuid nm_device nm_ipv4_method nm_ipv4_addresses nm_ipv4_gateway nm_ipv4_routes nm_ipv4_dns nm_ipv4_link-local nm_ipv4_may-fail; do
         rm -f -- "$ip_policy_dir/$file"
       done
       ;;
@@ -5154,21 +5357,20 @@ configure_mieru_inputs(){
     return 0
   fi
   [ -t 0 ] || return 0
-  echo
-  printf '%s\n' "${C_CYAN}========= Mieru 交互配置 =========${C_RESET}"
+  subsection "Mieru 交互配置"
   if [ "$mieru_transport_preset" != yes ]; then
     while true; do
-      printf "传输协议 [1] TCP（推荐） [2] UDP（默认 1）："; read -r choice
+      printf "  传输协议 [1] TCP（推荐） [2] UDP（默认 1）："; read -r choice
       case "$choice" in
         ''|1|tcp|TCP) mierutrans=tcp; mieru_protocol=TCP; break ;;
         2|udp|UDP) mierutrans=udp; mieru_protocol=UDP; break ;;
-        *) echo "请输入 1 或 2。" ;;
+        *) echo "  请输入 1 或 2。" ;;
       esac
     done
   fi
   if [ "$mieru_port_preset" != yes ]; then
     while true; do
-      printf "监听端口（回车＝随机高位端口，范围 1025～65535）："; read -r candidate
+      printf "  监听端口（回车＝随机高位端口，范围 1025～65535）："; read -r candidate
       if [ -z "$candidate" ]; then
         port_mieru=''
         break
@@ -5177,14 +5379,14 @@ configure_mieru_inputs(){
         port_mieru="$candidate"
         break
       fi
-      echo "端口必须是 1025～65535 的整数；443 不符合 Mita 官方范围。"
+      echo "  端口必须是 1025～65535 的整数；443 不符合 Mita 官方范围。"
     done
   fi
   if [ "$mieru_user_preset" != yes ]; then
-    printf "用户名（回车＝自动生成或沿用已有值）："; read -r mieruuser
+    printf "  用户名（回车＝自动生成或沿用已有值）："; read -r mieruuser
   fi
   if [ "$mieru_pass_preset" != yes ]; then
-    printf "密码（回车＝自动生成或沿用已有值）："; IFS= read -r -s mierupass; echo
+    printf "  密码（回车＝自动生成或沿用已有值）："; IFS= read -r -s mierupass; echo
   fi
   hr
 }
@@ -5530,6 +5732,7 @@ EOF
 
 installmita(){
   local apply_out status_out mita_version
+  subsection "启用 Mieru (Mita) 代理"
   validate_mita_platform || return 1
   configure_mieru_inputs
   reset_mita_config || return 1
@@ -6027,40 +6230,40 @@ cert_not_before=$(openssl x509 -noout -startdate -in "$cert_file" 2>/dev/null | 
 cert_not_after=$(openssl x509 -noout -enddate -in "$cert_file" 2>/dev/null | sed 's/^notAfter=//')
 cert_serial=$(openssl x509 -noout -serial -in "$cert_file" 2>/dev/null | sed 's/^serial=//')
 cert_fingerprint=$(openssl x509 -noout -fingerprint -sha256 -in "$cert_file" 2>/dev/null | awk -F= '{print $2}')
-printf '%s\n' "${C_CYAN}========== TLS 证书信息 ==========${C_RESET}"
-echo "证书结果：$cert_result"
-[ -n "$cert_domain" ] && echo "申请标识：$cert_domain"
-[ -n "$cert_sni" ] && echo "SNI/CN：$cert_sni"
-[ -n "$cert_mode_now" ] && echo "证书模式：$cert_mode_now"
-[ -n "$cert_source_now" ] && echo "证书来源：$cert_source_now"
+subsection "TLS 证书信息"
+kv_row "证书结果：" "$cert_result" 18
+[ -n "$cert_domain" ] && kv_row "申请标识：" "$cert_domain" 18
+[ -n "$cert_sni" ] && kv_row "SNI/CN：" "$cert_sni" 18
+[ -n "$cert_mode_now" ] && kv_row "证书模式：" "$cert_mode_now" 18
+[ -n "$cert_source_now" ] && kv_row "证书来源：" "$cert_source_now" 18
 # 签发方式：把内部 cert_mode 翻译成人类可读来源，明确区分「ACME 命令申请」与「Caddy 自动托管申请」。
 case "$cert_mode_now" in
   ca)
     case "$cert_source_now" in
-      external)   echo "签发方式：外部导入的受信任证书" ;;
-      acme-ip)    echo "签发方式：acme.sh + Let's Encrypt IP 短期证书" ;;
-      acme-http)  echo "签发方式：acme.sh + HTTP-01" ;;
-      acme-alpn)  echo "签发方式：acme.sh + TLS-ALPN-01" ;;
-      acme-dns)   echo "签发方式：acme.sh + Cloudflare DNS-01" ;;
-      *)          echo "签发方式：ACME 命令申请或外部导入证书" ;;
+      external)   kv_row "签发方式：" "外部导入的受信任证书" 18 ;;
+      acme-ip)    kv_row "签发方式：" "acme.sh + Let's Encrypt IP 短期证书" 18 ;;
+      acme-http)  kv_row "签发方式：" "acme.sh + HTTP-01" 18 ;;
+      acme-alpn)  kv_row "签发方式：" "acme.sh + TLS-ALPN-01" 18 ;;
+      acme-dns)   kv_row "签发方式：" "acme.sh + Cloudflare DNS-01" 18 ;;
+      *)          kv_row "签发方式：" "ACME 命令申请或外部导入证书" 18 ;;
     esac
     ;;
-  caddy)      echo "签发方式：Caddy(naive) 自动托管申请（Caddy 内置 ACME，自动续期）" ;;
-  selfsigned) echo "签发方式：OpenSSL 本地自签（无需域名，有效期 100 年）" ;;
-  *)          echo "签发方式：未知" ;;
+  caddy)      kv_row "签发方式：" "Caddy(naive) 自动托管申请（Caddy 内置 ACME，自动续期）" 18 ;;
+  selfsigned) kv_row "签发方式：" "OpenSSL 本地自签（无需域名，有效期 100 年）" 18 ;;
+  *)          kv_row "签发方式：" "未知" 18 ;;
 esac
-echo "颁发机构：${cert_issuer:-未知}"
-echo "证书主体：${cert_subject:-未知}"
-echo "有效期开始：${cert_not_before:-未知}"
-echo "有效期结束：${cert_not_after:-未知}"
-echo "证书序列号：${cert_serial:-未知}"
-echo "SHA256指纹：${cert_fingerprint:-未知}"
-echo "证书文件：$cert_file"
-echo "私钥文件：$key_file"
-echo "指纹文件：$HOME/agsbx/cert_sha256.txt"
-case "$cert_source_now" in acme-*) echo "ACME工作目录：$HOME/agsbx/acme" ;; esac
-[ "$cert_mode_now" = "caddy" ] && echo "Caddy证书存储目录：$HOME/agsbx/caddy_storage/caddy/certificates"
-printf '%s\n' "${C_CYAN}==================================${C_RESET}"
+kv_row "颁发机构：" "${cert_issuer:-未知}" 18
+kv_row "证书主体：" "${cert_subject:-未知}" 18
+kv_row "有效期开始：" "${cert_not_before:-未知}" 18
+kv_row "有效期结束：" "${cert_not_after:-未知}" 18
+kv_row "证书序列号：" "${cert_serial:-未知}" 18
+kv_row "SHA256 指纹：" "${cert_fingerprint:-未知}" 18
+kv_row "证书文件：" "$cert_file" 18
+kv_row "私钥文件：" "$key_file" 18
+kv_row "指纹文件：" "$HOME/agsbx/cert_sha256.txt" 18
+case "$cert_source_now" in acme-*) kv_row "ACME 工作目录：" "$HOME/agsbx/acme" 18 ;; esac
+[ "$cert_mode_now" = "caddy" ] && kv_row "Caddy 证书目录：" "$HOME/agsbx/caddy_storage/caddy/certificates" 18
+hr
 }
 setup_selfsigned_certificate(){
   [ "$sub" != yes ] || { echo "错误：订阅分享不能使用自签证书，必须复用或申请公信 CA 证书。"; return 1; }
@@ -6293,8 +6496,52 @@ case "$source" in acme-*) register_acme_cron ;; esac
 tls_cert_source="本地已有且有效的受信任证书"
 echo "检测到本地已有有效证书，直接复用，避免重复申请触发 CA 限制。"
 }
-choose_acme_mode(){
+choose_acme_ca(){
 local requested choice
+requested=$(printf '%s' "${acmeca:-}" | tr -d '[:space:]' | tr 'A-Z' 'a-z')
+if [ "${acme_force_menu:-no}" = yes ]; then
+  requested=""
+fi
+case "$requested" in
+  ''|auto|interactive)
+    if [ ! -t 0 ]; then
+      if [ "$requested" = interactive ]; then
+        echo "错误：acmeca=interactive 需要交互终端，当前为非交互环境。"
+        return 1
+      fi
+      acme_ca_selected=auto
+      return 0
+    fi
+    subsection "请选择 acme.sh 证书签发 CA 机构"
+    echo "  [1] Let's Encrypt（免费免 EAB；支持 IP / HTTP-01 / TLS-ALPN-01 / DNS-01）"
+    echo "  [2] ZeroSSL（免费，需邮箱自动获取或手填 EAB；支持 HTTP-01 / DNS-01）"
+    echo "  [3] SSL.com（需官网账户 EAB 与邮箱；支持 HTTP-01 / DNS-01）"
+    echo "  [0] 终止本次安装"
+    printf "  请输入数字 [0-3]：" >&2
+    if ! read -r choice; then return 2; fi
+    requested=$(printf '%s' "$choice" | tr -d '[:space:]' | tr 'A-Z' 'a-z')
+    ;;
+esac
+case "$requested" in
+  1|letsencrypt|le) acme_ca_selected=letsencrypt ;;
+  2|zerossl) acme_ca_selected=zerossl ;;
+  3|sslcom|ssl.com) acme_ca_selected=sslcom ;;
+  0|abort|quit) return 2 ;;
+  *)
+    echo "错误：不支持的 CA 选项：${requested:-空}；请选择 1(Let's Encrypt) / 2(ZeroSSL) / 3(SSL.com) 或 0 终止。"
+    return 1
+    ;;
+esac
+}
+choose_acme_mode(){
+local selected_ca="$1" ca_label requested choice
+case "$selected_ca" in
+  auto) ca_label="默认优先级" ;;
+  letsencrypt) ca_label="Let's Encrypt" ;;
+  zerossl) ca_label="ZeroSSL" ;;
+  sslcom) ca_label="SSL.com" ;;
+  *) echo "错误：未知 ACME CA：$selected_ca"; return 1 ;;
+esac
 requested=$(printf '%s' "$acmemode" | tr -d '[:space:]' | tr 'A-Z' 'a-z')
 if [ "${acme_force_menu:-no}" != yes ]; then
   if [ -z "$requested" ]; then
@@ -6304,22 +6551,52 @@ if [ "${acme_force_menu:-no}" != yes ]; then
   fi
   [ -z "$requested" ] && [ -n "$certip" ] && requested=ip
   [ -z "$requested" ] && [ -n "$certym" ] && requested=http
+else
+  requested=""
 fi
 if [ -z "$requested" ]; then
-  if [ ! -t 0 ]; then
+  if [ ! -t 0 ] || [ "$selected_ca" = auto ]; then
     echo "错误：非交互运行启用了 ACME，但未设置 acmemode/certip/certym/certdns。"
     return 1
   fi
-  echo ""
-  printf '%s\n' "${C_CYAN}请选择 acme.sh 证书申请方式：${C_RESET}"
-  echo "1. IP 短期证书：HTTP-01，需公网 80/TCP 可达"
-  echo "2. 域名证书：HTTP-01，域名需指向本机且 80/TCP 可达"
-  echo "3. 域名证书：TLS-ALPN-01，域名需指向本机且 443/TCP 可达"
-  echo "4. Cloudflare DNS-01：无需开放 80/443，可申请泛域名"
-  echo "0. 终止本次安装"
-  printf "请输入数字 [0-4]：" >&2
-  read -r choice
-  requested="$choice"
+  subsection "当前 CA：${ca_label} — 请选择 acme.sh 证书申请方式"
+  if [ "$selected_ca" = letsencrypt ]; then
+    echo "  [1] IP 短期证书：HTTP-01，需公网 80/TCP 可达"
+    echo "  [2] 域名证书：HTTP-01，域名需指向本机且 80/TCP 可达"
+    echo "  [3] 域名证书：TLS-ALPN-01，域名需指向本机且 443/TCP 可达"
+    echo "  [4] Cloudflare DNS-01：无需开放 80/443，可申请泛域名"
+    echo "  [b] 返回重新选择 CA 机构"
+    echo "  [0] 终止本次安装"
+    printf "  请输入选项 [0-4/b]：" >&2
+    if ! read -r choice; then return 2; fi
+    requested=$(printf '%s' "$choice" | tr -d '[:space:]' | tr 'A-Z' 'a-z')
+    case "$requested" in
+      1|ip|ip-http) acme_mode_selected=ip ;;
+      2|http|standalone|domain) acme_mode_selected=http ;;
+      3|alpn|tls-alpn) acme_mode_selected=alpn ;;
+      4|dns|cf|cloudflare) acme_mode_selected=dns ;;
+      b|back) return 3 ;;
+      0|abort|quit) return 2 ;;
+      *) echo "错误：不支持的选项：${requested:-空}；请输入 1-4、b 或 0。"; return 1 ;;
+    esac
+  else
+    echo "  [1] 域名证书：HTTP-01，域名需指向本机且 80/TCP 可达"
+    echo "  [2] Cloudflare DNS-01：无需开放 80/443，可申请泛域名"
+    note_line "提示：IP 短期证书与 TLS-ALPN-01 仅支持 Let's Encrypt。"
+    echo "  [b] 返回重新选择 CA 机构"
+    echo "  [0] 终止本次安装"
+    printf "  请输入选项 [0-2/b]：" >&2
+    if ! read -r choice; then return 2; fi
+    requested=$(printf '%s' "$choice" | tr -d '[:space:]' | tr 'A-Z' 'a-z')
+    case "$requested" in
+      1|http|standalone|domain) acme_mode_selected=http ;;
+      2|dns|cf|cloudflare) acme_mode_selected=dns ;;
+      b|back) return 3 ;;
+      0|abort|quit) return 2 ;;
+      *) echo "错误：不支持的选项：${requested:-空}；请输入 1-2、b 或 0。"; return 1 ;;
+    esac
+  fi
+  return 0
 fi
 case "$requested" in
   1|ip|ip-http) acme_mode_selected=ip ;;
@@ -6332,6 +6609,10 @@ case "$requested" in
     return 1
     ;;
 esac
+if { [ "$acme_mode_selected" = ip ] || [ "$acme_mode_selected" = alpn ]; } && [ "$selected_ca" != auto ] && [ "$selected_ca" != letsencrypt ]; then
+  echo "错误：$ca_label 不支持 $acme_mode_selected 模式；IP 短期证书与 TLS-ALPN-01 仅支持 Let's Encrypt。"
+  return 1
+fi
 }
 # 只更新 ZeroSSL 自己的 EAB 字段，保留既有账户记录；不把密钥放进外部进程参数或环境。
 persist_zerossl_eab(){
@@ -6629,17 +6910,28 @@ maintain_certificate(){
 }
 
 setup_acme_certificate(){
-local mode="$1"
+local mode="$1" ca_server="$2"
 local acme_script="$HOME/agsbx/acme.sh"
 local acme_home="$HOME/agsbx/acme"
 local acme_log="$HOME/agsbx/acme_issue.log"
-local input identifier source required_port cf_prompted=no index recovery_status attempt_log requested_ca
-local ca_index ca_server ca_label ca_status
-local ca_timeout register_timeout=15 selected_ca="" default_ca_server zerossl_ca_conf sslcom_ca_conf ca_succeeded=no
-local -a identifiers issue_args register_args ca_servers ca_labels
-validate_zerossl_eab_inputs || return 1
-if [ -n "${zerossl_eab_kid:-}" ]; then
-  case "$mode" in http|dns) ;; *) echo "错误：当前 ACME 方式不使用 ZeroSSL，未处理 EAB 凭据。"; return 1 ;; esac
+local input retry_input identifier source required_port cf_prompted=no index recovery_status attempt_log
+local ca_label ca_status
+local ca_timeout register_timeout=15 default_ca_server zerossl_ca_conf sslcom_ca_conf
+local -a identifiers issue_args register_args
+case "$ca_server" in
+  letsencrypt) ca_label="Let's Encrypt" ;;
+  zerossl) ca_label="ZeroSSL" ;;
+  sslcom) ca_label="SSL.com" ;;
+  *) echo "错误：acmeca 仅支持 letsencrypt/zerossl/sslcom。"; return 1 ;;
+esac
+if { [ "$mode" = ip ] || [ "$mode" = alpn ]; } && [ "$ca_server" != letsencrypt ]; then
+  echo "错误：$ca_label 不支持 $mode 模式；IP 短期证书与 TLS-ALPN-01 仅支持 Let's Encrypt。"; return 1
+fi
+if [ "$ca_server" = zerossl ] || [ "${acme_force_menu:-no}" != yes ]; then
+  validate_zerossl_eab_inputs || return 1
+  if [ -n "${zerossl_eab_kid:-}" ]; then
+    case "$mode" in http|dns) ;; *) echo "错误：当前 ACME 方式不使用 ZeroSSL，未处理 EAB 凭据。"; return 1 ;; esac
+  fi
 fi
 mkdir -p "$HOME/agsbx/acmecer" "$acme_home"
 chmod 700 "$acme_home" 2>/dev/null
@@ -6653,6 +6945,10 @@ case "$mode" in
       fi
       printf "请输入一个或两个公网 IP（空格分隔）：" >&2
       read -r input
+    elif [ "${acme_force_menu:-no}" = yes ] && [ -t 0 ]; then
+      printf "请输入一个或两个公网 IP（空格分隔，回车沿用 %s）：" "$input" >&2
+      read -r retry_input
+      [ -z "$(printf '%s' "$retry_input" | tr -d '[:space:]')" ] || input="$retry_input"
     fi
     read -r -a identifiers <<< "$input"
     if [ "${#identifiers[@]}" -lt 1 ] || [ "${#identifiers[@]}" -gt 2 ]; then
@@ -6683,10 +6979,15 @@ case "$mode" in
       printf "请输入申请证书的域名：" >&2
       read -r identifier
       identifier=$(printf '%s' "$identifier" | tr -d '[:space:]' | tr 'A-Z' 'a-z')
+    elif [ "${acme_force_menu:-no}" = yes ] && [ -t 0 ]; then
+      printf "请输入申请证书的域名（回车沿用 %s）：" "$identifier" >&2
+      read -r retry_input
+      retry_input=$(printf '%s' "$retry_input" | tr -d '[:space:]' | tr 'A-Z' 'a-z')
+      [ -z "$retry_input" ] || identifier="$retry_input"
     fi
     if [ "${identifier#\*.}" != "$identifier" ]; then
       if [ "$mode" != dns ]; then
-        echo "错误：泛域名证书只能通过 DNS-01 申请，请改选模式 4。"
+        echo "错误：泛域名证书只能通过 DNS-01 申请。"
         return 1
       fi
       certwild=y
@@ -6704,7 +7005,7 @@ case "$mode" in
       dns)
         required_port=""
         source=acme-dns
-        if [ -z "$certwild" ] && [ -t 0 ]; then
+        if { [ -z "$certwild" ] || [ "${acme_force_menu:-no}" = yes ]; } && [ -t 0 ]; then
           printf "是否同时申请 *.$identifier 泛域名证书？[y/N]：" >&2
           read -r certwild
         fi
@@ -6717,11 +7018,6 @@ case "$mode" in
     return 1
     ;;
 esac
-requested_ca=${acmeca:-auto}
-case "$requested_ca" in auto|letsencrypt|zerossl|sslcom) ;; *) echo "错误：acmeca 仅支持 auto/letsencrypt/zerossl/sslcom。"; return 1 ;; esac
-if { [ "$mode" = ip ] || [ "$mode" = alpn ]; } && [ "$requested_ca" != auto ] && [ "$requested_ca" != letsencrypt ]; then
-  echo "错误：$mode 模式只支持 Let's Encrypt；切换 CA 请使用 HTTP-01 或 DNS-01。"; return 1
-fi
 # 先恢复本地已签发结果，再检查端口、DNS 凭据或创建新订单。
 recover_acme_certificate "${identifiers[0]}" "$source" "${identifiers[@]}"
 recovery_status=$?
@@ -6790,196 +7086,170 @@ if [ "$ca_timeout" -lt 5 ] || [ "$ca_timeout" -gt 600 ]; then
   return 1
 fi
 command -v timeout >/dev/null 2>&1 || {
-  echo "错误：系统缺少 timeout 命令，无法安全执行多 CA 超时切换。"
+  echo "错误：系统缺少 timeout 命令，无法安全控制 ACME 注册与签发超时。"
   return 1
 }
 
-# IP 短期证书使用 Let's Encrypt 的 shortlived profile；TLS-ALPN 也只使用已确认兼容的 CA。
-# 普通 HTTP-01 与 DNS-01 才启用三家 CA 容灾，顺序固定为 Let's Encrypt、ZeroSSL、SSL.com。
-case "$mode" in
-  ip|alpn)
-    ca_servers=(letsencrypt)
-    ca_labels=("Let's Encrypt")
-    echo "ACME CA：$mode 模式仅使用已确认兼容的 Let's Encrypt。"
-    ;;
-  *)
-    ca_servers=(letsencrypt zerossl sslcom)
-    ca_labels=("Let's Encrypt" "ZeroSSL" "SSL.com")
-    echo "ACME 自动顺序：Let's Encrypt → ZeroSSL → 已配置的 SSL.com；每家注册最多 ${register_timeout} 秒，签发最多 ${ca_timeout} 秒。"
-    ;;
-esac
-
-[ "$requested_ca" = auto ] || echo "本次仅尝试指定 CA：$requested_ca（已有有效证书仍优先复用）。"
-printf '\n===== 本次申请：%s =====\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> "$acme_log" || return 1
+echo "本次尝试 CA：$ca_label（注册最多 ${register_timeout} 秒，签发最多 ${ca_timeout} 秒）。"
+printf '\n===== 本次申请：%s（CA：%s / 方式：%s） =====\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" "$ca_label" "$mode" >> "$acme_log" || return 1
 chmod 600 "$acme_log" || return 1
-for ca_index in "${!ca_servers[@]}"; do
-  ca_server="${ca_servers[$ca_index]}"
-  ca_label="${ca_labels[$ca_index]}"
-  [ "$requested_ca" = auto ] || [ "$requested_ca" = "$ca_server" ] || continue
-  acme_ca_retry_ready "$ca_server" || continue
+acme_ca_retry_ready "$ca_server" || return 10
 
-  if [ "$ca_server" = zerossl ]; then
-    zerossl_ca_conf="$acme_home/ca/acme.zerossl.com/v2/DV90/ca.conf"
-    if [ -n "${zerossl_eab_kid:-}" ]; then
-      persist_zerossl_eab || { echo "错误：无法安全保存 ZeroSSL EAB 凭据。"; return 1; }
-      unset zerossl_eab_kid zerossl_eab_hmac
-      echo "ZeroSSL：使用手动提供的 EAB 凭据（不回显）。"
+if [ "$ca_server" = zerossl ]; then
+  zerossl_ca_conf="$acme_home/ca/acme.zerossl.com/v2/DV90/ca.conf"
+  if [ -n "${zerossl_eab_kid:-}" ]; then
+    persist_zerossl_eab || { echo "错误：无法安全保存 ZeroSSL EAB 凭据。"; return 10; }
+    unset zerossl_eab_kid zerossl_eab_hmac
+    echo "ZeroSSL：使用手动提供的 EAB 凭据（不回显）。"
+  fi
+  if [ -z "$acmem" ] && ! { grep -Eq "^CA_EAB_KEY_ID='[^']+'$" "$zerossl_ca_conf" 2>/dev/null \
+    && grep -Eq "^CA_EAB_HMAC_KEY='[^']+'$" "$zerossl_ca_conf" 2>/dev/null; }; then
+    if [ -t 0 ]; then
+      printf "ZeroSSL：填写可收信的邮箱即可自动获取 EAB，无需邮箱密码（回车返回 CA 选择）：" >&2
+      read -r acmem
+      acmem=$(printf '%s' "$acmem" | tr -d '[:space:]')
     fi
-    if [ -z "$acmem" ] && ! { grep -Eq "^CA_EAB_KEY_ID='[^']+'$" "$zerossl_ca_conf" 2>/dev/null \
-      && grep -Eq "^CA_EAB_HMAC_KEY='[^']+'$" "$zerossl_ca_conf" 2>/dev/null; }; then
-      if [ -t 0 ]; then
-        printf "ZeroSSL：填写可收信的邮箱即可自动获取 EAB，无需邮箱密码（回车跳过）：" >&2
-        read -r acmem
-        acmem=$(printf '%s' "$acmem" | tr -d '[:space:]')
-      fi
-      if [ -z "$acmem" ]; then
-        echo "跳过 ZeroSSL：没有完整 EAB 凭据，也未提供 acmem 邮箱。"
-        printf '\n===== 跳过 ZeroSSL：缺少 EAB 凭据与注册邮箱 =====\n' >> "$acme_log"
-        continue
-      fi
+    if [ -z "$acmem" ]; then
+      echo "ZeroSSL 未就绪：没有完整 EAB 凭据，也未提供 acmem 邮箱。"
+      printf '\n===== ZeroSSL 未就绪：缺少 EAB 凭据与注册邮箱 =====\n' >> "$acme_log"
+      return 10
     fi
   fi
-  if [ "$ca_server" = sslcom ]; then
-    sslcom_ca_conf="$acme_home/ca/acme.ssl.com/sslcom-dv-ecc/ca.conf"
-    if ! { grep -q '^CA_EAB_KEY_ID=' "$sslcom_ca_conf" 2>/dev/null && grep -q '^CA_EAB_HMAC_KEY=' "$sslcom_ca_conf" 2>/dev/null; } \
-      && { [ -z "$sslcom_eab_kid" ] || [ -z "$sslcom_eab_hmac" ]; } && [ "$requested_ca" = sslcom ] && [ -t 0 ]; then
-      echo "SSL.com 需要官网账户的 Account/ACME Key 与 HMAC Key（Dashboard → api credentials）。"
-      if [ -z "$sslcom_eab_kid" ]; then
-        printf "SSL.com EAB Key ID（回车跳过该 CA）：" >&2
-        read -r sslcom_eab_kid
-      fi
-      if [ -n "$sslcom_eab_kid" ] && [ -z "$sslcom_eab_hmac" ]; then
-        printf "SSL.com EAB HMAC Key（输入不回显）：" >&2
-        read -r -s sslcom_eab_hmac
-        echo >&2
-      fi
+fi
+if [ "$ca_server" = sslcom ]; then
+  sslcom_ca_conf="$acme_home/ca/acme.ssl.com/sslcom-dv-ecc/ca.conf"
+  if ! { grep -q '^CA_EAB_KEY_ID=' "$sslcom_ca_conf" 2>/dev/null && grep -q '^CA_EAB_HMAC_KEY=' "$sslcom_ca_conf" 2>/dev/null; } \
+    && { [ -z "$sslcom_eab_kid" ] || [ -z "$sslcom_eab_hmac" ]; } && [ -t 0 ]; then
+    echo "SSL.com 需要官网账户的 Account/ACME Key 与 HMAC Key（Dashboard → api credentials）。"
+    if [ -z "$sslcom_eab_kid" ]; then
+      printf "SSL.com EAB Key ID（回车返回 CA 选择）：" >&2
+      read -r sslcom_eab_kid
     fi
-    if ! { grep -q '^CA_EAB_KEY_ID=' "$sslcom_ca_conf" 2>/dev/null && grep -q '^CA_EAB_HMAC_KEY=' "$sslcom_ca_conf" 2>/dev/null; }; then
-      if [ -n "$sslcom_eab_kid" ] && [ -n "$sslcom_eab_hmac" ] && [ -z "$acmem" ] && [ -t 0 ]; then
-        printf "SSL.com 首次注册邮箱（回车跳过）：" >&2; read -r acmem
-      fi
-      if [ -z "$acmem" ]; then
-        echo "跳过 SSL.com：首次注册缺少 acmem。"
-        printf '\n===== 跳过 SSL.com：首次注册缺少邮箱 =====\n' >> "$acme_log"
-        continue
-      fi
-      if [ -z "$sslcom_eab_kid" ] || [ -z "$sslcom_eab_hmac" ]; then
-        echo "跳过 SSL.com：缺少 SSL.com EAB 凭据。"
-        printf '\n===== 跳过 SSL.com：缺少 EAB 凭据 =====\n' >> "$acme_log"
-        continue
-      fi
-      case "$sslcom_eab_kid" in
-        *[!A-Za-z0-9_-]*)
-          echo "跳过 SSL.com：EAB Key ID 含有非法字符。"
-          continue
-          ;;
-      esac
-      case "$sslcom_eab_hmac" in
-        *[!A-Za-z0-9_=-]*)
-          echo "跳过 SSL.com：EAB HMAC Key 不是有效的 Base64URL 字符串。"
-          continue
-          ;;
-      esac
-      (
-        umask 077
-        mkdir -p "$(dirname "$sslcom_ca_conf")" || exit 1
-        printf "CA_EAB_KEY_ID='%s'\nCA_EAB_HMAC_KEY='%s'\n" "$sslcom_eab_kid" "$sslcom_eab_hmac" >> "$sslcom_ca_conf"
-      ) || {
-        echo "跳过 SSL.com：无法安全写入 EAB 配置。"
-        continue
-      }
-      chmod 600 "$sslcom_ca_conf" 2>/dev/null
-    fi
-    if ! grep -q '^CA_EAB_KEY_ID=' "$sslcom_ca_conf" 2>/dev/null || ! grep -q '^CA_EAB_HMAC_KEY=' "$sslcom_ca_conf" 2>/dev/null; then
-      echo "跳过 SSL.com：缺少 acmem 或 SSL.com EAB 凭据。"
-      printf '\n===== 跳过 SSL.com：缺少邮箱或 EAB 凭据 =====\n' >> "$acme_log"
-      continue
+    if [ -n "$sslcom_eab_kid" ] && [ -z "$sslcom_eab_hmac" ]; then
+      printf "SSL.com EAB HMAC Key（输入不回显）：" >&2
+      read -r -s sslcom_eab_hmac
+      echo >&2
     fi
   fi
-
-  if [ -n "$acmem" ] && ! [[ "$acmem" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$ ]]; then
-    echo "错误：acmem 必须是邮箱地址，不需要邮箱密码。"; return 1
-  fi
-  echo "正在尝试 $ca_label（注册最多 ${register_timeout} 秒，签发最多 ${ca_timeout} 秒）..."
-  printf '\n===== CA 尝试：%s；注册超时：%s 秒；签发超时：%s 秒 =====\n' "$ca_label" "$register_timeout" "$ca_timeout" >> "$acme_log"
-  register_args=(bash "$acme_script" --home "$acme_home" --register-account --server "$ca_server")
-  [ -n "$acmem" ] && register_args+=(-m "$acmem")
-  [ "$ca_server" = sslcom ] && register_args+=(--ecc)
-  attempt_log=$(mktemp "$acme_home/.attempt.XXXXXX") || return 1
-  timeout -k 2 "$register_timeout" "${register_args[@]}" 8>&- > "$attempt_log" 2>&1
-  ca_status=$?
-  cat "$attempt_log" >> "$acme_log" || { rm -f -- "$attempt_log"; return 1; }
-  if [ "$ca_status" -ne 0 ]; then
-    record_acme_rate_limit "$ca_server" "$attempt_log" || { rm -f -- "$attempt_log"; return 1; }
-  fi
-  rm -f -- "$attempt_log"
-  if [ "$ca_server" = sslcom ]; then
+  if ! { grep -q '^CA_EAB_KEY_ID=' "$sslcom_ca_conf" 2>/dev/null && grep -q '^CA_EAB_HMAC_KEY=' "$sslcom_ca_conf" 2>/dev/null; }; then
+    if [ -n "$sslcom_eab_kid" ] && [ -n "$sslcom_eab_hmac" ] && [ -z "$acmem" ] && [ -t 0 ]; then
+      printf "SSL.com 首次注册邮箱（回车返回 CA 选择）：" >&2; read -r acmem
+      acmem=$(printf '%s' "$acmem" | tr -d '[:space:]')
+    fi
+    if [ -z "$acmem" ]; then
+      echo "SSL.com 未就绪：首次注册缺少 acmem 邮箱。"
+      printf '\n===== SSL.com 未就绪：首次注册缺少邮箱 =====\n' >> "$acme_log"
+      return 10
+    fi
+    if [ -z "$sslcom_eab_kid" ] || [ -z "$sslcom_eab_hmac" ]; then
+      echo "SSL.com 未就绪：缺少 SSL.com EAB 凭据。"
+      printf '\n===== SSL.com 未就绪：缺少 EAB 凭据 =====\n' >> "$acme_log"
+      return 10
+    fi
+    case "$sslcom_eab_kid" in
+      *[!A-Za-z0-9_-]*)
+        echo "错误：SSL.com EAB Key ID 含有非法字符。"
+        return 10
+        ;;
+    esac
+    case "$sslcom_eab_hmac" in
+      *[!A-Za-z0-9_=-]*)
+        echo "错误：SSL.com EAB HMAC Key 不是有效的 Base64URL 字符串。"
+        return 10
+        ;;
+    esac
+    (
+      umask 077
+      mkdir -p "$(dirname "$sslcom_ca_conf")" || exit 1
+      printf "CA_EAB_KEY_ID='%s'\nCA_EAB_HMAC_KEY='%s'\n" "$sslcom_eab_kid" "$sslcom_eab_hmac" >> "$sslcom_ca_conf"
+    ) || {
+      echo "错误：无法安全写入 SSL.com EAB 配置。"
+      return 10
+    }
+    chmod 600 "$sslcom_ca_conf" 2>/dev/null
     unset sslcom_eab_kid sslcom_eab_hmac
   fi
-  if [ "$ca_status" -ne 0 ]; then
-    if [ "$ca_status" -eq 124 ] || [ "$ca_status" -eq 137 ]; then
-      echo "$ca_label 注册超时，切换下一家 CA。"
-    else
-      echo "$ca_label 账户注册失败，切换下一家 CA。"
-    fi
-    continue
+  if ! grep -q '^CA_EAB_KEY_ID=' "$sslcom_ca_conf" 2>/dev/null || ! grep -q '^CA_EAB_HMAC_KEY=' "$sslcom_ca_conf" 2>/dev/null; then
+    echo "SSL.com 未就绪：缺少 acmem 或 SSL.com EAB 凭据。"
+    printf '\n===== SSL.com 未就绪：缺少邮箱或 EAB 凭据 =====\n' >> "$acme_log"
+    return 10
   fi
-
-  issue_args=(--home "$acme_home" --issue --server "$ca_server" --keylength ec-256)
-  case "$mode" in
-    ip)
-      issue_args+=(--standalone --certificate-profile shortlived --days 4)
-      ;;
-    http) issue_args+=(--standalone) ;;
-    alpn) issue_args+=(--alpn) ;;
-    dns) issue_args+=(--dns dns_cf) ;;
-  esac
-  for identifier in "${identifiers[@]}"; do
-    issue_args+=(-d "$identifier")
-  done
-  attempt_log=$(mktemp "$acme_home/.attempt.XXXXXX") || return 1
-  ( export CF_Token CF_Account_ID CF_Zone_ID CF_Key CF_Email; timeout -k 2 "$ca_timeout" bash 8>&- "$acme_script" "${issue_args[@]}" ) > "$attempt_log" 2>&1
-  ca_status=$?
-  cat "$attempt_log" >> "$acme_log" || { rm -f -- "$attempt_log"; return 1; }
-  if [ "$ca_status" != 0 ] && [ "$ca_status" != 2 ]; then
-    record_acme_rate_limit "$ca_server" "$attempt_log" || { rm -f -- "$attempt_log"; return 1; }
-  fi
-  rm -f -- "$attempt_log"
-  if [ "$ca_status" -eq 0 ] || [ "$ca_status" -eq 2 ]; then
-    if [ "$ca_status" = 2 ]; then
-      echo "ACME 报告无需重新签发，将核对并恢复已有证书。"
-      recover_acme_certificate "${identifiers[0]}" "$source" "${identifiers[@]}" && return 0
-      echo "错误：ACME 已跳过申请，但没有可恢复的有效证书；请保留账户与日志，不强制重签或切换 CA。"
-      return 1
-    fi
-    ca_succeeded=yes
-    selected_ca="$ca_label"
-    default_ca_server="$ca_server"
-    [ "$ca_server" = sslcom ] && default_ca_server="https://acme.ssl.com/sslcom-dv-ecc"
-    bash 8>&- "$acme_script" --home "$acme_home" --set-default-ca --server "$default_ca_server" >> "$acme_log" 2>&1 || true
-    echo "$default_ca_server" > "$HOME/agsbx/acme_ca"
-    echo "$ca_label 签发成功。"
-    break
-  fi
-  if [ "$ca_status" -eq 124 ] || [ "$ca_status" -eq 137 ]; then
-    echo "$ca_label 在 ${ca_timeout} 秒内未完成签发，切换下一家 CA。"
-  else
-    echo "$ca_label 签发失败，切换下一家 CA。"
-  fi
-done
-unset zerossl_eab_kid zerossl_eab_hmac
-chmod 600 "$acme_home/account.conf" 2>/dev/null
-if [ "$ca_succeeded" != yes ]; then
-  echo "错误：所有可用 ACME CA 均未完成签发，详情见 $acme_log"
-  return 1
 fi
+
+if [ -n "$acmem" ] && ! [[ "$acmem" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$ ]]; then
+  echo "错误：acmem 必须是邮箱地址，不需要邮箱密码。"; return 1
+fi
+echo "正在尝试 $ca_label（注册最多 ${register_timeout} 秒，签发最多 ${ca_timeout} 秒）..."
+printf '\n===== CA 尝试：%s；注册超时：%s 秒；签发超时：%s 秒 =====\n' "$ca_label" "$register_timeout" "$ca_timeout" >> "$acme_log"
+register_args=(bash "$acme_script" --home "$acme_home" --register-account --server "$ca_server")
+[ -n "$acmem" ] && register_args+=(-m "$acmem")
+[ "$ca_server" = sslcom ] && register_args+=(--ecc)
+attempt_log=$(mktemp "$acme_home/.attempt.XXXXXX") || return 1
+timeout -k 2 "$register_timeout" "${register_args[@]}" 8>&- > "$attempt_log" 2>&1
+ca_status=$?
+cat "$attempt_log" >> "$acme_log" || { rm -f -- "$attempt_log"; return 1; }
+if [ "$ca_status" -ne 0 ]; then
+  record_acme_rate_limit "$ca_server" "$attempt_log" || { rm -f -- "$attempt_log"; return 1; }
+fi
+rm -f -- "$attempt_log"
+chmod 600 "$acme_home/account.conf" 2>/dev/null
+if [ "$ca_status" -ne 0 ]; then
+  if [ "$ca_status" -eq 124 ] || [ "$ca_status" -eq 137 ]; then
+    echo "$ca_label 注册超时，详情见 $acme_log。"
+  else
+    echo "$ca_label 账户注册失败，详情见 $acme_log。"
+  fi
+  return 10
+fi
+
+issue_args=(--home "$acme_home" --issue --server "$ca_server" --keylength ec-256)
+case "$mode" in
+  ip)
+    issue_args+=(--standalone --certificate-profile shortlived --days 4)
+    ;;
+  http) issue_args+=(--standalone) ;;
+  alpn) issue_args+=(--alpn) ;;
+  dns) issue_args+=(--dns dns_cf) ;;
+esac
+for identifier in "${identifiers[@]}"; do
+  issue_args+=(-d "$identifier")
+done
+attempt_log=$(mktemp "$acme_home/.attempt.XXXXXX") || return 1
+( export CF_Token CF_Account_ID CF_Zone_ID CF_Key CF_Email; timeout -k 2 "$ca_timeout" bash 8>&- "$acme_script" "${issue_args[@]}" ) > "$attempt_log" 2>&1
+ca_status=$?
+cat "$attempt_log" >> "$acme_log" || { rm -f -- "$attempt_log"; return 1; }
+if [ "$ca_status" != 0 ] && [ "$ca_status" != 2 ]; then
+  record_acme_rate_limit "$ca_server" "$attempt_log" || { rm -f -- "$attempt_log"; return 1; }
+fi
+rm -f -- "$attempt_log"
+chmod 600 "$acme_home/account.conf" 2>/dev/null
+if [ "$ca_status" -eq 2 ]; then
+  echo "ACME 报告无需重新签发，将核对并恢复已有证书。"
+  recover_acme_certificate "${identifiers[0]}" "$source" "${identifiers[@]}" && return 0
+  echo "错误：ACME 已跳过申请，但没有可恢复的有效证书；请保留账户与日志，不强制重签或切换 CA。"
+  return 1
+elif [ "$ca_status" -ne 0 ]; then
+  if [ "$ca_status" -eq 124 ] || [ "$ca_status" -eq 137 ]; then
+    echo "$ca_label 在 ${ca_timeout} 秒内未完成签发，详情见 $acme_log。"
+  else
+    echo "$ca_label 签发失败，详情见 $acme_log。"
+  fi
+  return 10
+fi
+
+default_ca_server="$ca_server"
+[ "$ca_server" = sslcom ] && default_ca_server="https://acme.ssl.com/sslcom-dv-ecc"
+bash 8>&- "$acme_script" --home "$acme_home" --set-default-ca --server "$default_ca_server" >> "$acme_log" 2>&1 || true
+echo "$default_ca_server" > "$HOME/agsbx/acme_ca"
+echo "$ca_label 签发成功。"
+unset zerossl_eab_kid zerossl_eab_hmac
 identifier="${identifiers[0]}"
 if ! recover_acme_certificate "$identifier" "$source" "${identifiers[@]}"; then
   echo "错误：CA 已完成签发，但本地证书安装或校验失败；已保留 ACME 工作目录，请勿卸载重装。详情见 $acme_log"
   return 1
 fi
 unset CF_Token CF_Key CF_Email CF_Account_ID CF_Zone_ID
-tls_cert_source="ACME 自动申请成功（$selected_ca）"
+tls_cert_source="ACME 申请成功（$ca_label）"
 }
 setup_tls_certificate(){
   local reuse_cert reuse_key reuse_identifier wanted wanted_type mode_hint dns_requested=no reuse_allowed=yes acme_requested=no choose_status retry_choice index
@@ -7125,14 +7395,34 @@ setup_tls_certificate(){
   if [ "$acme_requested" = yes ]; then
     acme_force_menu=no
     while :; do
-      choose_acme_mode
+      choose_acme_ca
       choose_status=$?
       if [ "$choose_status" -eq 2 ]; then
         echo "已取消 ACME 证书申请，安装终止。"
         exit 1
       elif [ "$choose_status" -ne 0 ]; then
         if [ -t 0 ]; then
-          echo "请重新选择有效的 ACME 申请方式。"
+          echo "请重新选择有效的 ACME CA 机构。"
+          acmeca=""
+          continue
+        fi
+        echo "错误：无法确定 ACME CA 机构，安装终止。"
+        exit 1
+      fi
+      choose_acme_mode "$acme_ca_selected"
+      choose_status=$?
+      if [ "$choose_status" -eq 2 ]; then
+        echo "已取消 ACME 证书申请，安装终止。"
+        exit 1
+      elif [ "$choose_status" -eq 3 ]; then
+        acmeca=""
+        acmemode=""
+        acme_force_menu=yes
+        continue
+      elif [ "$choose_status" -ne 0 ]; then
+        if [ -t 0 ]; then
+          echo "请重新选择 CA 机构与 ACME 申请方式。"
+          acmeca=""
           acmemode=""
           acme_force_menu=yes
           continue
@@ -7140,23 +7430,46 @@ setup_tls_certificate(){
         echo "错误：无法确定 ACME 申请方式，安装终止。"
         exit 1
       fi
-      if setup_acme_certificate "$acme_mode_selected" && write_cert_fingerprint; then
-        echo "TLS证书模式：ACME 受信任证书（$acme_mode_selected）"
+      if [ "$acme_ca_selected" = auto ]; then
+        local -a non_interactive_cas
+        local ca_candidate ca_try_status
+        case "$acme_mode_selected" in
+          ip|alpn)
+            non_interactive_cas=(letsencrypt)
+            echo "非交互环境：$acme_mode_selected 模式仅使用 Let's Encrypt。"
+            ;;
+          *)
+            non_interactive_cas=(letsencrypt zerossl sslcom)
+            echo "非交互环境按默认优先级尝试 CA：Let's Encrypt → ZeroSSL → 已配置的 SSL.com。"
+            ;;
+        esac
+        for ca_candidate in "${non_interactive_cas[@]}"; do
+          setup_acme_certificate "$acme_mode_selected" "$ca_candidate"
+          ca_try_status=$?
+          if [ "$ca_try_status" -eq 0 ] && write_cert_fingerprint; then
+            echo "TLS证书模式：ACME 受信任证书（$ca_candidate / $acme_mode_selected）"
+            show_tls_cert_summary "$tls_cert_source" "$(cat "$HOME/agsbx/sni.txt" 2>/dev/null)"
+            tls_cert_ready=yes
+            return 0
+          fi
+          [ "$ca_try_status" -eq 10 ] || break
+        done
+        echo "ACME 证书申请失败；按安全策略不会自动降级为自签证书，安装终止。"
+        exit 1
+      fi
+      if setup_acme_certificate "$acme_mode_selected" "$acme_ca_selected" && write_cert_fingerprint; then
+        echo "TLS证书模式：ACME 受信任证书（$acme_ca_selected / $acme_mode_selected）"
         show_tls_cert_summary "$tls_cert_source" "$(cat "$HOME/agsbx/sni.txt" 2>/dev/null)"
         tls_cert_ready=yes
         return 0
       fi
-      echo "ACME 证书申请失败；按安全策略不会自动降级为自签证书。"
+      echo "ACME 证书申请失败；不自动切换其他 CA，也不会降级为自签证书。"
       if [ ! -t 0 ]; then
-        echo "错误：非交互运行无法重新选择申请方式，安装终止。"
+        echo "错误：非交互运行无法重新选择 CA 或申请方式，安装终止。"
         exit 1
       fi
-      printf "输入 y 返回方式菜单重试，其他输入终止安装：[y/N] " >&2
-      read -r retry_choice
-      if ! is_yes "$retry_choice"; then
-        echo "ACME 证书未就绪，安装终止。"
-        exit 1
-      fi
+      echo "已返回 CA 机构选择菜单（可重新自由选择其他 CA 或申请方式，输入 0 可终止安装）。"
+      acmeca=""
       acmemode=""
       acme_force_menu=yes
     done
@@ -7200,6 +7513,60 @@ remove_legacy_hopping_persistence(){
   done
 }
 
+hopping_systemd_unit='/etc/systemd/system/agsbx-hopping.service'
+hopping_systemd_marker='# AIRGOSBX_HOPPING_SERVICE_V1'
+
+hopping_service_owned(){
+  [ -f "$hopping_systemd_unit" ] && [ ! -L "$hopping_systemd_unit" ] \
+    && grep -Fxq "$hopping_systemd_marker" "$hopping_systemd_unit" 2>/dev/null
+}
+
+install_hopping_systemd_service(){
+  local script_path="$1" tmp_unit
+  if [ -e "$hopping_systemd_unit" ] || [ -L "$hopping_systemd_unit" ]; then
+    hopping_service_owned || { echo "错误：$hopping_systemd_unit 已被外部占用，拒绝覆盖。"; return 1; }
+  fi
+  tmp_unit=$(mktemp /etc/systemd/system/.agsbx-hopping.XXXXXX) || return 1
+  if ! cat > "$tmp_unit" <<EOF
+$hopping_systemd_marker
+[Unit]
+Description=Airgosbx Hysteria2 Port Hopping Rules
+After=network.target network-online.target
+Wants=network-online.target
+Before=xr.service sb.service
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/bash "$script_path" __restore_hops
+[Install]
+WantedBy=multi-user.target
+EOF
+  then
+    rm -f -- "$tmp_unit"
+    return 1
+  fi
+  if ! chmod 644 "$tmp_unit" || ! mv -f -- "$tmp_unit" "$hopping_systemd_unit"; then
+    rm -f -- "$tmp_unit"
+    return 1
+  fi
+  systemctl daemon-reload >/dev/null 2>&1 || return 1
+  systemctl --quiet enable agsbx-hopping.service >/dev/null 2>&1 || return 1
+  remove_managed_cron AIRGOSBX_HOPPING || return 1
+}
+
+remove_hopping_systemd_service(){
+  if [ -e "$hopping_systemd_unit" ] || [ -L "$hopping_systemd_unit" ]; then
+    hopping_service_owned || { echo "错误：$hopping_systemd_unit 归属不明，拒绝删除。"; return 1; }
+    if pidof systemd >/dev/null 2>&1; then
+      systemctl --quiet disable agsbx-hopping.service >/dev/null 2>&1 || true
+    fi
+    rm -f -- "$hopping_systemd_unit" || return 1
+    if pidof systemd >/dev/null 2>&1; then
+      systemctl daemon-reload >/dev/null 2>&1 || true
+    fi
+  fi
+}
+
 setup_port_hopping(){
   local hop_ports="$1" target_port="$2" command path
   [ -n "$hop_ports" ] || return 0
@@ -7233,15 +7600,22 @@ setup_port_hopping(){
       && "$command" -t nat -C AGSBX_HY2 -p udp --dport "$ipt_ports" -j DNAT --to-destination ":$target_port" || return 1
   done
   HOPPING_INITED=yes
-  remove_legacy_hopping_persistence || return 1
-  local script_path
-  script_path=$(managed_script_path) || return 1
-  write_managed_cron AIRGOSBX_HOPPING "@reboot /bin/bash $script_path __restore_hops" || return 1
+  if [ "${HOPPING_RESTORE_ONLY:-no}" != yes ]; then
+    remove_legacy_hopping_persistence || return 1
+    local script_path
+    script_path=$(managed_script_path) || return 1
+    if pidof systemd >/dev/null 2>&1 && is_root; then
+      install_hopping_systemd_service "$script_path" || return 1
+    else
+      write_managed_cron AIRGOSBX_HOPPING "@reboot /bin/bash $script_path __restore_hops" || return 1
+    fi
+  fi
   echo "Hysteria2 跳跃规则已确认：$hop_ports -> $target_port"
 }
 cleanup_port_hopping(){
   local command
-  [ -f "$HOME/agsbx/hopping_managed" ] || [ -s "$HOME/agsbx/shyjpt" ] || [ -s "$HOME/agsbx/xhyjpt" ] || return 0
+  [ -f "$HOME/agsbx/hopping_managed" ] || [ -s "$HOME/agsbx/shyjpt" ] || [ -s "$HOME/agsbx/xhyjpt" ] \
+    || [ -e "$hopping_systemd_unit" ] || [ -L "$hopping_systemd_unit" ] || return 0
   for command in iptables ip6tables; do
     if ! command -v "$command" >/dev/null 2>&1; then
       [ "$command" != iptables ] || { echo "错误：无法清理跳跃规则，缺少 iptables。"; return 1; }
@@ -7255,6 +7629,8 @@ cleanup_port_hopping(){
       "$command" -t nat -F AGSBX_HY2 && "$command" -t nat -X AGSBX_HY2 || return 1
     fi
   done
+  remove_hopping_systemd_service || return 1
+  remove_managed_cron AIRGOSBX_HOPPING || return 1
   remove_legacy_hopping_persistence || return 1
   unset HOPPING_INITED
   rm -f "$HOME/agsbx/hopping_managed"
@@ -7474,8 +7850,7 @@ EOF
 }
 
 installxray(){
-echo
-printf '%s\n' "${C_CYAN}=========启用xray内核=========${C_RESET}"
+subsection "启用 Xray 内核"
 mkdir -p "$HOME/agsbx/xrk"
 if [ ! -e "$HOME/agsbx/xray" ]; then
 upxray || return 1
@@ -7961,8 +8336,7 @@ fi
 }
 
 installsb(){
-echo
-printf '%s\n' "${C_CYAN}=========启用sing-box内核=========${C_RESET}"
+subsection "启用 Sing-box 内核"
 local min_sb_ver="1.12.0" local_sb_ver sb_version_state sub_tls_guard
 if [ ! -e "$HOME/agsbx/sing-box" ]; then
 upsingbox || return 1
@@ -8251,8 +8625,7 @@ append_secondary_bridge_inbound || return 1
 }
 
 installcaddy(){
-echo
-printf '%s\n' "${C_CYAN}=========启用 NaiveProxy(Caddy) 内核=========${C_RESET}"
+subsection "启用 NaiveProxy (Caddy) 内核"
 # 关键参数（域名/伪装站/账号/密码）两种来源任选：环境变量预置，或交互终端按提示输入。
 # naive=<域名> 既是开关也是域名；若传入的不是合法域名(如 naive=on)，交互终端会提示补输。
 # NaiveProxy 必须有真实域名 + DNS 指向本机（不同于 reality 可裸 IP）。
@@ -8484,6 +8857,7 @@ cat > "$caddy_unit_tmp" <<EOF
 Description=Airgosbx Caddy NaiveProxy Service
 $caddy_systemd_after
 $caddy_systemd_wants
+StartLimitIntervalSec=0
 [Service]
 Type=notify
 NoNewPrivileges=yes
@@ -9993,7 +10367,7 @@ show_secondary_backend_status(){
   local source mode bridge_port id ids path label
   [ -s "$HOME/agsbx/secondary_secp" ] || return 0
   show_secondary_dns_policy_status
-  ids=$(secondary_saved_ids) || { echo "  二级代理编号状态损坏，依赖检查将失败关闭。"; return 1; }
+  ids=$(secondary_saved_ids) || { warn_line "二级代理编号状态损坏，依赖检查将失败关闭。"; return 1; }
   for id in $ids; do
     label="B$id"; [ "$id" != 0 ] || label='B1（旧配置）'
     path=$(secondary_saved_path "$id" backends)
@@ -10002,15 +10376,15 @@ show_secondary_backend_status(){
     for source in xray mita; do
       mode=$(sed -n "s/^$source=//p" "$path")
       case "$mode" in
-        native) printf '  A 的 %s → %s：原生客户端\n' "$source" "$label" ;;
+        native) kv_row "二级链路：" "A 的 $source → $label（原生客户端）" 18 "$C_GREEN" ;;
         bridge)
           if component_owns_listener sing-box "$bridge_port" tcp; then
-            printf '  A 的 %s → A 本机 Sing-box → %s：转接监听就绪（未主动探测 B）\n' "$source" "$label"
+            kv_row "二级链路：" "A 的 $source → A 本机 Sing-box → $label（转接监听就绪，未主动探测 B）" 18 "$C_GREEN"
           else
-            printf '  A 的 %s → A 本机 Sing-box → %s：转接未就绪，失败关闭\n' "$source" "$label"
+            kv_row "二级链路：" "A 的 $source → A 本机 Sing-box → $label（转接未就绪，失败关闭）" 18 "$C_YELLOW"
           fi ;;
         none|'') ;;
-        *) printf '  A 的 %s → %s：保存的客户端模式无效\n' "$source" "$label" ;;
+        *) kv_row "二级链路：" "A 的 $source → $label（保存的客户端模式无效）" 18 "$C_RED" ;;
       esac
     done
   done
@@ -10034,6 +10408,7 @@ show_secondary_configuration(){
   local ids id path selected scheme server port uot label
   [ -s "$HOME/agsbx/secondary_secp" ] || return 0
   ids=$(secondary_saved_ids) || { secondary_error "保存的 B 编号状态无效。"; return 1; }
+  subsection "二级代理出站配置"
   for id in $ids; do
     path=$(secondary_saved_path "$id" meta)
     [ -f "$path" ] || { secondary_error "B$id 端点元数据缺失。"; return 1; }
@@ -10043,9 +10418,9 @@ show_secondary_configuration(){
     valid_ipv6 "$server" && server="[$server]"
     label="B$id"; [ "$id" != 0 ] || label='B1（旧配置）'
     node_title "💣【 二级代理出站 $label 】A VPS 经 B VPS 访问目标服务器："
-    echo "生效范围（A VPS 入站协议）：$selected"
-    echo "上游端点：$scheme://$server:$port（认证信息已隐藏）"
-    [ "$scheme" != ss ] || echo "SS UDP over TCP：${uot:-off}（Naive 仅转交目标 TCP）"
+    kv_row "生效范围：" "$selected（A VPS 入站协议）" 12
+    kv_row "上游端点：" "$scheme://$server:$port（认证信息已隐藏）" 12
+    [ "$scheme" != ss ] || kv_row "SS UoT：" "${uot:-off}（Naive 仅转交目标 TCP）" 12
     echo
   done
   show_secondary_dns_policy_status
@@ -10064,13 +10439,13 @@ secondary_clear_numbered_state(){
 show_secondary_dns_policy_status(){
   [ -s "$HOME/agsbx/secondary_secp" ] || return 0
   if grep -Fxq 'dns=remote-forward-v1' "$HOME/agsbx/secondary_backends" 2>/dev/null; then
-    echo "  二级 DNS：配置生成时采用域名转交 B / WireGuard 隧道 DNS 策略（未做在线泄漏检测）。"
+    kv_row "二级 DNS：" "配置生成时采用域名转交 B / WireGuard 隧道 DNS 策略（未做在线泄漏检测）" 18
   else
-    echo "  二级 DNS：现有配置未带本轮检查版本标记；update/重启不会应用配置与订阅修正。"
+    kv_row "二级 DNS：" "现有配置未带本轮检查版本标记；update/重启不会应用配置与订阅修正" 18 "$C_YELLOW"
     if secondary_saved_protocol_is_selected naive; then
-      echo "  现有 Naive 二级链路不支持 rep；应用本轮配置修正需按原参数重新部署，不能只更新脚本。"
+      note_line "现有 Naive 二级链路不支持 rep；应用本轮配置修正需按原参数重新部署，不能只更新脚本。"
     else
-      echo "  应用本轮配置修正需带完整部署参数执行 rep，并更新所用订阅；rep 会重建协议配置。"
+      note_line "应用本轮配置修正需带完整部署参数执行 rep，并更新所用订阅；rep 会重建协议配置。"
     fi
   fi
 }
@@ -10148,10 +10523,9 @@ prepare_secondary_proxy_one(){
       secondary_error "非交互环境无法读取 B 节点 URL，请同时传入 securl='完整URL'。"
       return 1
     }
-    echo
-    printf '%s\n' "${C_CYAN}=========配置二级代理出站=========${C_RESET}"
-    echo "B${secondary_current_id} 已选择协议：$secp"
-    printf '请粘贴 B%s 的完整 URL（SS/SOCKS5/HTTP(S)/VLESS/Trojan/Hysteria2/WireGuard，输入隐藏）：' "$secondary_current_id"
+    subsection "配置二级代理出站"
+    kv_row "已选协议：" "B${secondary_current_id} → $secp" 12
+    printf '  请粘贴 B%s 的完整 URL（SS/SOCKS5/HTTP(S)/VLESS/Trojan/Hysteria2/WireGuard，输入隐藏）：' "$secondary_current_id"
     IFS= read -r -s securl
     echo
   fi
@@ -10715,12 +11089,19 @@ start_agsbx_core(){
     cat > "$unit_path" <<EOF
 [Unit]
 Description=$description
-After=network.target
+After=network.target network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
 $sd_bridge
 [Service]
 Type=simple
 NoNewPrivileges=yes
+PrivateTmp=true
+ProtectSystem=full
+UMask=0077
+LimitNOFILE=1048576
 TimeoutStartSec=0
+TimeoutStopSec=10s
 ExecStart=$binary run -c $config
 Restart=on-failure
 RestartSec=5s
@@ -11175,14 +11556,23 @@ require_service_slot cloudflared || return 1
 cat > /etc/systemd/system/argo.service <<EOF
 [Unit]
 Description=argo service
-After=network.target
+After=network.target network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
 [Service]
 Type=simple
 NoNewPrivileges=yes
+PrivateTmp=true
+ProtectSystem=full
+UMask=0077
+LimitNOFILE=1048576
 TimeoutStartSec=0
+TimeoutStopSec=10s
 ExecStart=$HOME/agsbx/cloudflared tunnel --no-autoupdate --edge-ip-version auto --protocol http2 run --token-file "$argo_token_file"
 Restart=on-failure
 RestartSec=5s
+StandardOutput=journal
+StandardError=journal
 [Install]
 WantedBy=multi-user.target
 EOF
@@ -11419,7 +11809,10 @@ persist_secondary_proxy_state || return 1
 plan_deployment_ports || return 1
 prepare_transport_paths || return 1
 printf '端口与路径准备完成（耗时 %s 秒）。\n' "$((SECONDS - phase_started_at))"
-[ "$rep_mode" = yes ] || enable_system_bbr
+if [ "$rep_mode" != yes ]; then
+  enable_system_bbr
+  configure_system_journald_limit
+fi
 # Mieru/Mita 是独立系统服务，不参与 Xray/Sing-box 内核归属判断；设置 mieru=y（或预设 mierupt）时单独安装。
 # Mita 若依赖本机 Sing-box，待下面的内核配置与转接就绪后再应用其代理配置。
 # Naive 二级出站的 Caddy 与 Sing-box 必须引用同一个持久化回环端口。
@@ -11531,8 +11924,7 @@ if [ -n "${ARGO_DOMAIN}" ] && [ -n "${ARGO_AUTH}" ]; then
   *$'\n'*|*$'\r'*) echo "错误：Argo token 不得包含换行符。"; return 1 ;;
   esac
 fi
-echo
-printf '%s\n' "${C_CYAN}=========启用Cloudflared-argo内核=========${C_RESET}"
+subsection "启用 Cloudflared Argo 内核"
 if [ ! -e "$HOME/agsbx/cloudflared" ]; then
 local metadata tag expected actual stage asset="cloudflared-linux-$cpu"
 metadata=$(release_json cloudflare/cloudflared latest) && tag=$(release_tag "$metadata") \
@@ -11637,7 +12029,7 @@ printf '安装编排完成（耗时 %s 秒；不含前置检查和订阅输出�
 #============================================================
 airgosbxstatus(){
 local procs mita_status mita_ver
-printf '%s\n' "${C_CYAN}========= 当前内核运行状态 =========${C_RESET}"
+subsection "当前内核运行状态"
 
 # 内核状态判定助手：进程是否在跑，叠加"配置 × 二进制"两个独立条件，共五种输出。
 #   运行中        ：进程在（优先级最高，与配置/二进制无关）
@@ -11656,21 +12048,21 @@ kstat(){
       argo) ver=$("$bin" version 2>/dev/null | awk '{print $3}') ;;
       caddy) ver=$("$bin" version 2>/dev/null | awk '{print $1}' | sed 's/^v//') ;;
     esac
-    printf '%s\n' "${name} (版本V${ver})：${C_GREEN}运行中${C_RESET}"
+    kv_row "${name}：" "${C_GREEN}运行中${C_RESET}${ver:+（v${ver}）}" 18
     return
   fi
   # ② 进程不在 → 按"配置是否存在 × 二进制是否存在"四象限细分
   if [ -s "$cfg" ]; then
     if [ -s "$bin" ]; then
-      printf '%s\n' "${name}：${C_RED}启用失败/未运行${C_RESET}（配置已生成但进程不在，查日志：$log）"
+      kv_row "${name}：" "${C_RED}启用失败/未运行${C_RESET}（配置已生成但进程不在，查日志：$log）" 18
     else
-      printf '%s\n' "${name}：${C_YELLOW}未下载（内核下载失败，请重试 upx/ups）${C_RESET}"
+      kv_row "${name}：" "${C_YELLOW}未下载${C_RESET}（内核下载失败，请重试 upx/ups）" 18
     fi
   else
     if [ -s "$bin" ]; then
-      printf '%s\n' "${name}：已下载但未启用（内核已存在，本次未配置该协议）"
+      kv_row "${name}：" "${C_DIM}已下载但未启用（内核已存在，本次未配置该协议）${C_RESET}" 18
     else
-      printf '%s\n' "${name}：未配置（本次未启用且无内核）"
+      kv_row "${name}：" "${C_DIM}未配置（本次未启用且无内核）${C_RESET}" 18
     fi
   fi
 }
@@ -11680,18 +12072,20 @@ kstat "Caddy"    "$HOME/agsbx/caddy"       "$HOME/agsbx/Caddyfile"    'agsbx/cad
 kstat "Argo"     "$HOME/agsbx/cloudflared" "$HOME/agsbx/argoport.log" 'agsbx/cloudflared' argo "$HOME/agsbx/argo.log"
 if [ -f "$HOME/agsbx/mita_managed" ]; then
   if [ ! -s "$HOME/agsbx/mita.json" ]; then
-    printf '%s\n' "Mita：已安装但未启用（执行 mieru=y agsbx rep 可重新启用）"
+    kv_row "Mita：" "${C_DIM}已安装但未启用（执行 mieru=y agsbx rep 可重新启用）${C_RESET}" 18
   else
     mita_status=$(mita status 2>&1)
     mita_ver=$(mita version 2>/dev/null | head -1 | awk '{print $NF}' | sed 's/^v//')
     if printf '%s' "$mita_status" | grep -q 'RUNNING'; then
-      printf '%s\n' "Mita (版本V${mita_ver})：${C_GREEN}Mieru 代理运行中${C_RESET}"
+      kv_row "Mita：" "${C_GREEN}运行中${C_RESET}${mita_ver:+（v${mita_ver}）}" 18
     elif printf '%s' "$mita_status" | grep -q 'IDLE'; then
-      printf '%s\n' "Mita (版本V${mita_ver})：${C_YELLOW}daemon 在线，代理已停止${C_RESET}"
+      kv_row "Mita：" "${C_YELLOW}已停止${C_RESET}（${mita_ver:+v${mita_ver}；}daemon 在线，代理未监听）" 18
     else
-      printf '%s\n' "Mita：${C_RED}daemon 不可用${C_RESET}（检查：systemctl status mita）"
+      kv_row "Mita：" "${C_RED}启用失败/未运行${C_RESET}（daemon 不可用，检查：systemctl status mita）" 18
     fi
   fi
+else
+  kv_row "Mita：" "${C_DIM}未配置（本次未启用且无受管内核）${C_RESET}" 18
 fi
 if secondary_saved_protocol_is_selected naive; then
   local caddy_online=no sb_online=no sidecar_ready=no sidecar_port sidecar_out_tag
@@ -11707,13 +12101,13 @@ if secondary_saved_protocol_is_selected naive; then
     sidecar_ready=yes
   fi
   if [ "$caddy_online" = yes ] && [ "$sb_online" = yes ] && [ "$sidecar_ready" = yes ]; then
-    printf '%s\n' "Naive 二级链路：${C_GREEN}本地转交就绪${C_RESET}（Caddy → Sing-box → B；未主动探测 B）"
+    kv_row "Naive 二级链路：" "${C_GREEN}本地转交就绪${C_RESET}（Caddy → Sing-box → B；未主动探测 B）" 18
   elif [ "$caddy_online" = yes ]; then
-    printf '%s\n' "Naive 二级链路：${C_YELLOW}失败关闭${C_RESET}（伪装站在线；sidecar/配置未就绪；不会回退直连）"
+    kv_row "Naive 二级链路：" "${C_YELLOW}失败关闭${C_RESET}（伪装站在线；sidecar/配置未就绪；不会回退直连）" 18
   elif [ "$sb_online" = yes ]; then
-    printf '%s\n' "Naive 二级链路：${C_YELLOW}Naive 入站不可用${C_RESET}（Sing-box sidecar 在线，Caddy 未运行）"
+    kv_row "Naive 二级链路：" "${C_YELLOW}Naive 入站不可用${C_RESET}（Sing-box sidecar 在线，Caddy 未运行）" 18
   else
-    printf '%s\n' "Naive 二级链路：${C_RED}未运行${C_RESET}"
+    kv_row "Naive 二级链路：" "${C_RED}未运行${C_RESET}" 18
   fi
 fi
 show_secondary_backend_status
@@ -11776,14 +12170,11 @@ fi
 if echo "$v4" | grep -q '^104.28'; then
 w4="【WARP】"
 fi
-echo
 airgosbxstatus
-echo
-printf '%s\n' "${C_CYAN}=========当前服务器本地IP情况=========${C_RESET}"
-echo "本地IPV4地址：$vps_ipv4 $w4"
-echo "本地IPV6地址：$vps_ipv6 $w6"
-echo "服务器地区：$location"
-echo
+subsection "当前服务器本地 IP 情况"
+kv_row "IPv4 地址：" "${vps_ipv4}${w4:+ $w4}" 14
+kv_row "IPv6 地址：" "${vps_ipv6}${w6:+ $w6}" 14
+kv_row "服务器地区：" "${location:-未知}" 14
 sleep 2
 if [ "$ippz" = "4" ]; then
 if [ -z "$v4" ]; then
@@ -11809,13 +12200,20 @@ server_host=${server_ip#[}; server_host=${server_host%]}
 sxname=$(cat "$HOME/agsbx/name" 2>/dev/null)
 valid_plain_text "$uuid" 256 && valid_plain_text "$sxname" 1025 || { echo "错误：节点凭据或名称状态无效。"; return 1; }
 xvvmcdnym=$(cat "$HOME/agsbx/cdnym" 2>/dev/null)
-section "Airgosbx 脚本输出节点配置如下"
-echo
 show_secondary_configuration || return 1
+section "Airgosbx 节点配置"
+local printed_protocol=no has_secondary_entry=no has_special_tunnel=no
+proto_gap(){
+  case "$printed_protocol" in
+    no) echo ;;
+    sub_first) ;;
+    yes) printf '\n\n' ;;
+  esac
+  printed_protocol=yes
+}
 case "$server_ip" in
-104.28*|\[2a09*) echo "检测到有WARP的IP作为客户端地址 (104.28或者2a09开头的IP)，请把客户端地址上的WARP的IP手动更换为VPS本地IPV4或者IPV6地址" && sleep 3 ;;
+104.28*|\[2a09*) echo; warn_line "检测到有 WARP 的 IP 作为客户端地址（104.28 或 2a09 开头），请把客户端地址手动更换为 VPS 本地 IPv4 或 IPv6 地址。" && sleep 3 ;;
 esac
-echo
 ym_vl_re=$(cat "$HOME/agsbx/ym_vl_re" 2>/dev/null)
 if [ -e "$HOME/agsbx/xray" ]; then
 private_key_x=$(cat "$HOME/agsbx/xrk/private_key" 2>/dev/null)
@@ -11859,67 +12257,25 @@ direct_vl_title="${sxname}vless-tcp-reality-vision${profile_vl_suffix}-$hostname
 [ -n "$profile_vl_fm" ] || direct_vl_export_yaml=yes
 # 配套状态全部读取成功后才重建聚合链接，避免状态损坏时清空旧节点文件。
 node_links=''
+# ─── 常规代理节点：Xray → Sing-box → 通用协议 → 独立服务端（不同协议空 2 行，同协议 CDN 变体空 1 行） ───
 if grep -q xhttp-reality "$HOME/agsbx/xr.json" 2>/dev/null; then
-node_title "💣【 $direct_xh_title 】节点信息如下："
+proto_gap
+node_title "💣【 $direct_xh_title 】"
 port_xh=$(cat "$HOME/agsbx/port_xh")
 vl_xh_link="vless://$(uri_percent_encode "$uuid")@$server_ip:$port_xh?encryption=$(uri_percent_encode "$enkey")&flow=xtls-rprx-vision&security=reality&sni=$(uri_percent_encode "$ym_vl_re")&fp=chrome&pbk=$(uri_percent_encode "$public_key_x")&sid=$(uri_percent_encode "$short_id_x")&type=xhttp&path=$(uri_percent_encode "$(transport_path xh)")&mode=$profile_xh_mode${direct_xh_options}#$(uri_percent_encode "$direct_xh_title")"
 append_node_link "$vl_xh_link" || return 1
 echo "$vl_xh_link"
-echo
 if [ "$sub" = yes ]; then
-echo "提示：xhpt 的完整 ENC/extra/FM 参数包含在上方 VLESS URL 和聚合订阅中；当前 Clash 模板不输出这个 ENC 节点。"
-fi
-fi
-if grep -q vlessenc-xhttp-cdn "$HOME/agsbx/xr.json" 2>/dev/null; then
-node_title "💣【 VLESS Encryption＋${profile_xvd_transport}＋TLS＋Vision CDN$profile_xvd_suffix 】"
-port_xvcdn=$(cat "$HOME/agsbx/port_xvcdn")
-xvvmcdnym=$(cat "$HOME/agsbx/cdnym" 2>/dev/null)
-valid_domain "$xvvmcdnym" || { echo "错误：CDN 域名状态缺失，无法生成正确的 Host/SNI。"; return 1; }
-vl_xvcdn_link="vless://$(uri_percent_encode "$uuid")@$xvvmcdnym:$port_xvcdn?encryption=$(uri_percent_encode "$enkey")&flow=xtls-rprx-vision&security=tls&alpn=h2&sni=$(uri_percent_encode "$xvvmcdnym")&host=$(uri_percent_encode "$xvvmcdnym")&type=xhttp&path=$(uri_percent_encode "$(transport_path xvd)")&mode=$profile_xvd_mode${profile_xvd_options}#$(uri_percent_encode "${sxname}vlessenc-${profile_xvd_transport}-tls-vision-cdn${profile_xvd_suffix}-$hostname")"
-append_node_link "$vl_xvcdn_link" || return 1
-echo "$vl_xvcdn_link"
-echo
-[ "$sub" != yes ] || echo "CDN ENC 节点使用完整 VLESS URL/聚合订阅；不输出缺少 ENC/extra/FM 的 Clash 节点。"
-fi
-if grep -q vless-xhttp "$HOME/agsbx/xr.json" 2>/dev/null; then
-node_title "💣【 VLESS Encryption＋${profile_vx_transport}＋Vision$profile_vx_suffix 】"
-port_vx=$(cat "$HOME/agsbx/port_vx")
-vl_vx_link="vless://$(uri_percent_encode "$uuid")@$server_ip:$port_vx?encryption=$(uri_percent_encode "$enkey")&flow=xtls-rprx-vision&security=none&type=xhttp&path=$(uri_percent_encode "$(transport_path vx)")&mode=$profile_vx_mode${profile_vx_options}#$(uri_percent_encode "${sxname}vlessenc-${profile_vx_transport}-vision${profile_vx_suffix}-$hostname")"
-append_node_link "$vl_vx_link" || return 1
-echo "$vl_vx_link"
-echo
-if [ -f "$HOME/agsbx/cdnym" ] && [ -z "$profile_vx_fm" ]; then
-xvvmcdnym=$(cat "$HOME/agsbx/cdnym")
-valid_domain "$xvvmcdnym" || return 1
-vl_vx_cdn_link="vless://$(uri_percent_encode "$uuid")@$xvvmcdnym:$port_vx?encryption=$(uri_percent_encode "$enkey")&flow=xtls-rprx-vision&security=none&type=xhttp&host=$(uri_percent_encode "$xvvmcdnym")&path=$(uri_percent_encode "$(transport_path vx)")&mode=$profile_vx_mode${profile_vx_options}#$(uri_percent_encode "${sxname}vlessenc-${profile_vx_transport}-vision-cdn${profile_vx_suffix}-$hostname")"
-append_node_link "$vl_vx_cdn_link" || return 1
-echo "$vl_vx_cdn_link"
-echo
-fi
-fi
-if grep -q vless-ws "$HOME/agsbx/xr.json" 2>/dev/null; then
-node_title "💣【 Vlessenc-ws-vision 】支持ENC加密，节点信息如下："
-port_vw=$(cat "$HOME/agsbx/port_vw")
-vl_vw_link="vless://$(uri_percent_encode "$uuid")@$server_ip:$port_vw?encryption=$(uri_percent_encode "$enkey")&flow=xtls-rprx-vision&security=none&type=ws&path=$(uri_percent_encode "$(transport_path vw)")${profile_vw_options}#$(uri_percent_encode "${sxname}vlessenc-ws-vision${profile_vw_suffix}-$hostname")"
-append_node_link "$vl_vw_link" || return 1
-echo "$vl_vw_link"
-echo
-if [ -f "$HOME/agsbx/cdnym" ] && [ -z "$profile_vw_fm" ]; then
-node_title "💣【 Vlessenc-ws-vision-cdn 】支持ENC加密，节点信息如下："
-echo "注：默认地址 icook.hk 可自行更换优选IP域名，如是回源端口需手动修改443或者80系端口"
-vl_vw_cdn_link="vless://$(uri_percent_encode "$uuid")@icook.hk:$port_vw?encryption=$(uri_percent_encode "$enkey")&flow=xtls-rprx-vision&type=ws&host=$xvvmcdnym&path=$(uri_percent_encode "$(transport_path vw)")#$(uri_percent_encode "${sxname}vlessenc-ws-vision-cdn-$hostname")"
-append_node_link "$vl_vw_cdn_link" || return 1
-echo "$vl_vw_cdn_link"
-echo
+note_line "xhpt 的完整 ENC/extra/FM 参数包含在上方 VLESS URL 和聚合订阅中；当前 Clash 模板不输出这个 ENC 节点。"
 fi
 fi
 if grep -q reality-vision "$HOME/agsbx/xr.json" 2>/dev/null; then
-node_title "💣【 $direct_vl_title 】节点信息如下："
+proto_gap
+node_title "💣【 $direct_vl_title 】"
 port_vl_re=$(cat "$HOME/agsbx/port_vl_re")
 vl_link="vless://$(uri_percent_encode "$uuid")@$server_ip:$port_vl_re?encryption=none&flow=xtls-rprx-vision&security=reality&sni=$(uri_percent_encode "$ym_vl_re")&fp=chrome&pbk=$(uri_percent_encode "$public_key_x")&sid=$(uri_percent_encode "$short_id_x")&type=tcp&headerType=none${direct_vl_options}#$(uri_percent_encode "$direct_vl_title")"
 append_node_link "$vl_link" || return 1
 echo "$vl_link"
-echo
 if [ "$sub" = yes ] && [ "$direct_vl_export_yaml" = yes ]; then
 clvlpt(){
 cat <<EOF
@@ -11943,155 +12299,104 @@ clvlpt1(){
 printf -- '- "%s"\n' "$(json_escape "$direct_vl_title")"
 }
 elif [ "$sub" = yes ]; then
-echo "提示：带 FM 的 vlpt 请使用完整 VLESS URL 或聚合订阅；当前 Clash 模板不输出缺少掩码的节点。"
+note_line "带 FM 的 vlpt 请使用完整 VLESS URL 或聚合订阅；当前 Clash 模板不输出缺少掩码的节点。"
 fi
 fi
-if grep -Fq 'agsbx-profile-xdrive-v1' "$HOME/agsbx/xr.json" 2>/dev/null; then
-  node_title "💣【 VLESS Encryption + XDRIVE 】"
-  if xdrive_private_file "$HOME/agsbx/xdrive-client.json" 65536; then
-    echo "完整客户端配置：$HOME/agsbx/xdrive-client.json（生成权限 600；含节点及存储凭据，仅交给可信客户端）。"
-  else
-    echo "XDRIVE 客户端文件缺失或权限不安全；可用完整参数执行 rep 重建，不影响现有服务端配置。"
-    [ "$cip_mode" != publish ] || return 1
-  fi
-  echo "两端均需包含 XDRIVE 功能的 Xray 核心；客户端 SOCKS 入口为 127.0.0.1:10808。"
-  echo "此配置不在终端展开，不加入通用 URL/Clash 订阅。更改存储参数须用完整参数执行 rep。"
-  echo "Google Drive 两端须能读写同一专用文件夹；local 两端目录须由外部同步工具映射到同一数据目录。"
-  echo "核心运行状态不代表存储认证、同步或隧道连通已验证。"
+if grep -q vlessenc-xhttp-cdn "$HOME/agsbx/xr.json" 2>/dev/null; then
+proto_gap
+node_title "💣【 VLESS Encryption＋${profile_xvd_transport}＋TLS＋Vision CDN$profile_xvd_suffix 】"
+port_xvcdn=$(cat "$HOME/agsbx/port_xvcdn")
+xvvmcdnym=$(cat "$HOME/agsbx/cdnym" 2>/dev/null)
+valid_domain "$xvvmcdnym" || { echo "错误：CDN 域名状态缺失，无法生成正确的 Host/SNI。"; return 1; }
+vl_xvcdn_link="vless://$(uri_percent_encode "$uuid")@$xvvmcdnym:$port_xvcdn?encryption=$(uri_percent_encode "$enkey")&flow=xtls-rprx-vision&security=tls&alpn=h2&sni=$(uri_percent_encode "$xvvmcdnym")&host=$(uri_percent_encode "$xvvmcdnym")&type=xhttp&path=$(uri_percent_encode "$(transport_path xvd)")&mode=$profile_xvd_mode${profile_xvd_options}#$(uri_percent_encode "${sxname}vlessenc-${profile_xvd_transport}-tls-vision-cdn${profile_xvd_suffix}-$hostname")"
+append_node_link "$vl_xvcdn_link" || return 1
+echo "$vl_xvcdn_link"
+[ "$sub" != yes ] || note_line "CDN ENC 节点使用完整 VLESS URL/聚合订阅；不输出缺少 ENC/extra/FM 的 Clash 节点。"
 fi
-for special_protocol in xdns xicmp; do
-  grep -Fq "vless-kcp-$special_protocol" "$HOME/agsbx/xr.json" 2>/dev/null || continue
-  node_title "💣【 VLESS Encryption + mKCP + $special_protocol 】"
-  if ! grep -Fq "agsbx-profile-${special_protocol}-v1" "$HOME/agsbx/xr.json"; then
-    echo "旧版 $special_protocol 尚未迁移，请使用同版本脚本和 GUI 通过 rep 重建；不再输出不完整的分享链接。"
-    continue
-  fi
-  special_client=$(render_xray_special_client "$special_protocol" "$server_host") || return 1
-  if [ "$cip_mode" = publish ]; then
-    atomic_text_file "$HOME/agsbx/${special_protocol}-client.json" "$special_client" || return 1
-    echo "客户端完整配置已保存：$HOME/agsbx/${special_protocol}-client.json（含节点凭据）。"
-  fi
-  echo "两端使用 Xray >=26.7.28；以下 JSON 在客户端使用，SOCKS 入口为 127.0.0.1:10808。"
-  echo "此节点不加入通用 URL/Clash 订阅，请完整导入 JSON，保留 mKCP 和 FinalMask 参数。"
-  if [ "$special_protocol" = xdns ]; then
-    echo "XDNS：先将专用域名 NS 委派到 VPS，开放 UDP/53；解析器须可从客户端访问。两端固定 TXT、MTU=80。"
-  else
-    echo "XICMP：两端须具备原始套接字权限及 IPv4/IPv6 套接字支持，防火墙须放行对应 ICMP；不关闭系统 Ping。"
-  fi
-  printf '%s\n\n' "$special_client"
-done
-if grep -q ss-2022 "$HOME/agsbx/sb.json" 2>/dev/null; then
-node_title "💣【 Shadowsocks-2022 】二级代理入口："
-load_ss_key || return 1
-port_ss=$(cat "$HOME/agsbx/port_ss") && valid_port "$port_ss" || { echo "错误：SS 端口状态无效，未生成链接。"; return 1; }
-port_ss=$((10#$port_ss))
-ss_link="ss://$(uri_percent_encode "$ss_method"):$(uri_percent_encode "$sskey")@$server_ip:$port_ss"
-ss_link=$(secondary_share_link "$ss_link" "${sxname}Shadowsocks-2022-$hostname") || return 1
-echo "在 A VPS 配置 secp 时粘贴下一行完整 URL；此入口不加入聚合或 Clash/Mihomo 订阅。"
-echo "$ss_link"
-echo "默认使用原生 TCP/UDP；需要 UoT 时在 A 显式选择 secuot=on，仅支持 Sing-box 出站与兼容的 B。"
-if secondary_saved_protocol_is_selected sspt; then
-  echo "此 SS 入口已选入二级出站；目标 DNS 与目标连接经 B，A 不使用本机 DNS 回退解析目标。"
-else
-  echo "配套新配置中的最终 SS 入口负责 DNS 回退与私网拦截：Google DoH → 本机系统 DNS。"
-fi
-echo "用作 B 入口时，将此 URL 填入 A 的 securl；用作 A 入口时也可选入 secp。更新脚本不会迁移已有配置。"
+if grep -q vless-xhttp "$HOME/agsbx/xr.json" 2>/dev/null; then
+proto_gap
+node_title "💣【 VLESS Encryption＋${profile_vx_transport}＋Vision$profile_vx_suffix 】"
+port_vx=$(cat "$HOME/agsbx/port_vx")
+vl_vx_link="vless://$(uri_percent_encode "$uuid")@$server_ip:$port_vx?encryption=$(uri_percent_encode "$enkey")&flow=xtls-rprx-vision&security=none&type=xhttp&path=$(uri_percent_encode "$(transport_path vx)")&mode=$profile_vx_mode${profile_vx_options}#$(uri_percent_encode "${sxname}vlessenc-${profile_vx_transport}-vision${profile_vx_suffix}-$hostname")"
+append_node_link "$vl_vx_link" || return 1
+echo "$vl_vx_link"
+if [ -f "$HOME/agsbx/cdnym" ] && [ -z "$profile_vx_fm" ]; then
 echo
+node_title "💣【 VLESS Encryption＋${profile_vx_transport}＋Vision CDN$profile_vx_suffix 】"
+xvvmcdnym=$(cat "$HOME/agsbx/cdnym")
+valid_domain "$xvvmcdnym" || return 1
+vl_vx_cdn_link="vless://$(uri_percent_encode "$uuid")@$xvvmcdnym:$port_vx?encryption=$(uri_percent_encode "$enkey")&flow=xtls-rprx-vision&security=none&type=xhttp&host=$(uri_percent_encode "$xvvmcdnym")&path=$(uri_percent_encode "$(transport_path vx)")&mode=$profile_vx_mode${profile_vx_options}#$(uri_percent_encode "${sxname}vlessenc-${profile_vx_transport}-vision-cdn${profile_vx_suffix}-$hostname")"
+append_node_link "$vl_vx_cdn_link" || return 1
+echo "$vl_vx_cdn_link"
 fi
-if grep -q vmess-xr "$HOME/agsbx/xr.json" 2>/dev/null || grep -q vmess-sb "$HOME/agsbx/sb.json" 2>/dev/null; then
-node_title "💣【 Vmess-ws 】节点信息如下："
-port_vm_ws=$(cat "$HOME/agsbx/port_vm_ws")
-if [ -n "$profile_vm_fm" ]; then
-# v2rayN 的标准 VMess URI 解析器读取 fm；旧 Base64 VMess 格式没有配套字段。
-vm_link="vmess://$(uri_percent_encode "$uuid")@$server_ip:$port_vm_ws?encryption=auto&security=none&type=ws&path=$(uri_percent_encode "$(transport_path vm)")${profile_vm_options}#$(uri_percent_encode "${sxname}vmess-ws-fm-$hostname")"
-else
-vm_link="vmess://$(vmess_payload "${sxname}vm-ws-$hostname" "$server_host" "$port_vm_ws" "www.bing.com" "$(transport_path vm)" "" "")"
 fi
-append_node_link "$vm_link" || return 1
-echo "$vm_link"
+if grep -q vless-ws "$HOME/agsbx/xr.json" 2>/dev/null; then
+proto_gap
+node_title "💣【 Vlessenc-ws-vision 】（支持 ENC 加密）"
+port_vw=$(cat "$HOME/agsbx/port_vw")
+vl_vw_link="vless://$(uri_percent_encode "$uuid")@$server_ip:$port_vw?encryption=$(uri_percent_encode "$enkey")&flow=xtls-rprx-vision&security=none&type=ws&path=$(uri_percent_encode "$(transport_path vw)")${profile_vw_options}#$(uri_percent_encode "${sxname}vlessenc-ws-vision${profile_vw_suffix}-$hostname")"
+append_node_link "$vl_vw_link" || return 1
+echo "$vl_vw_link"
+if [ -f "$HOME/agsbx/cdnym" ] && [ -z "$profile_vw_fm" ]; then
 echo
-if [ "$sub" = yes ] && [ -z "$profile_vm_fm" ]; then
-clvmpt(){
-cat <<EOF
-- name: "$(json_escape "${sxname}vmess-ws-$hostname")"
-  type: vmess
-  server: "$(json_escape "$server_host")"
-  port: $port_vm_ws
-  uuid: "$(json_escape "$uuid")"
-  alterId: 0
-  cipher: auto
-  udp: true
-  tls: false
-  network: ws
-  servername: www.bing.com
-  ws-opts:
-    path: "$(transport_path vm)"
-    headers:
-      Host: www.bing.com
-EOF
-}
-clvmpt1(){
-printf -- '- "%s"\n' "$(json_escape "${sxname}vmess-ws-$hostname")"
-}
-fi
-if [ -f "$HOME/agsbx/cdnym" ] && [ -z "$profile_vm_fm" ]; then
-node_title "💣【 Vmess-ws-cdn 】节点信息如下："
-echo "注：默认地址 icook.hk 可自行更换优选IP域名，如是回源端口需手动修改443或者80系端口"
-vm_cdn_link="vmess://$(vmess_payload "${sxname}vm-ws-cdn-$hostname" "icook.hk" "$port_vm_ws" "$xvvmcdnym" "$(transport_path vm)" "" "")"
-append_node_link "$vm_cdn_link" || return 1
-echo "$vm_cdn_link"
-echo
-if [ "$sub" = yes ]; then
-clvmcdnpt(){
-cat <<EOF
-- name: "$(json_escape "${sxname}vmess-ws-cdn-$hostname")"
-  type: vmess
-  server: icook.hk
-  port: $port_vm_ws
-  uuid: "$(json_escape "$uuid")"
-  alterId: 0
-  cipher: auto
-  udp: true
-  tls: false
-  network: ws
-  servername: "$xvvmcdnym"
-  ws-opts:
-    path: "$(transport_path vm)"
-    headers:
-      Host: "$xvvmcdnym"
-EOF
-}
-clvmcdnpt1(){
-printf -- '- "%s"\n' "$(json_escape "${sxname}vmess-ws-cdn-$hostname")"
-}
+node_title "💣【 Vlessenc-ws-vision-cdn 】（支持 ENC 加密）"
+vl_vw_cdn_link="vless://$(uri_percent_encode "$uuid")@icook.hk:$port_vw?encryption=$(uri_percent_encode "$enkey")&flow=xtls-rprx-vision&type=ws&host=$xvvmcdnym&path=$(uri_percent_encode "$(transport_path vw)")#$(uri_percent_encode "${sxname}vlessenc-ws-vision-cdn-$hostname")"
+append_node_link "$vl_vw_cdn_link" || return 1
+echo "$vl_vw_cdn_link"
+note_line "默认地址 icook.hk 可自行更换优选 IP 域名；如是回源端口需手动修改 443 或 80 系端口。"
 fi
 fi
-fi
-if grep -q anytls-sb "$HOME/agsbx/sb.json" 2>/dev/null; then
-node_title "💣【 AnyTLS 】节点信息如下："
-port_an=$(cat "$HOME/agsbx/port_an")
+if grep -q hy2-xr "$HOME/agsbx/xr.json" 2>/dev/null; then
+proto_gap
+node_title "💣【 Xray-Hysteria2 】"
+port_xhy2=$(cat "$HOME/agsbx/port_xhy2")
+cert_hash="$render_cert_hash"
+[[ "$cert_hash" =~ ^[0-9a-f]{64}$ ]] || { echo "错误：当前证书指纹无效，拒绝生成 TLS 链接。"; return 1; }
 ran_sni=$(cat "$HOME/agsbx/sni.txt" 2>/dev/null)
 cert_mode=$(cat "$HOME/agsbx/cert_mode" 2>/dev/null)
+# 读取 Xray 专属的跳跃端口配置，格式化为客户端标准的中划线分隔
+xby_mport=""
+xby_hop=$(cat "$HOME/agsbx/xhyjpt" 2>/dev/null)
+[ -z "$xby_hop" ] && xby_hop="$xhyjpt"
+if [ -n "$xby_hop" ]; then
+  xby_mport="&mport=$(echo "$xby_hop" | tr ':' '-')"
+fi
 if cert_trusted "$cert_mode" && [ -n "$ran_sni" ]; then
-an_link="anytls://$(uri_percent_encode "$uuid")@$server_ip:$port_an?sni=$(uri_percent_encode "$ran_sni")&insecure=0&allowInsecure=0#$(uri_percent_encode "${sxname}anytls-$hostname")"
+xhy2_link="hysteria2://$(uri_percent_encode "$uuid")@$server_ip:$port_xhy2?security=tls&alpn=h3&sni=$(uri_percent_encode "$ran_sni")&insecure=0&allowInsecure=0${xby_mport}${profile_hy_options}#$(uri_percent_encode "${sxname}xray-hy2${profile_hy_suffix}-$hostname")"
 else
-an_link="anytls://$(uri_percent_encode "$uuid")@$server_ip:$port_an?sni=$(uri_percent_encode "$ran_sni")&insecure=0&allowInsecure=0#$(uri_percent_encode "${sxname}anytls-$hostname")"
+xhy2_link="hysteria2://$(uri_percent_encode "$uuid")@$server_ip:$port_xhy2?security=tls&pinSHA256=$(uri_percent_encode "$cert_hash")&alpn=h3&sni=$(uri_percent_encode "$ran_sni")&insecure=1&allowInsecure=1${xby_mport}${profile_hy_options}#$(uri_percent_encode "${sxname}xray-hy2${profile_hy_suffix}-$hostname")"
 fi
-append_node_link "$an_link" || return 1
-if ! cert_trusted "$cert_mode"; then echo "此节点使用自签证书；请先信任证书或固定指纹 $render_cert_hash，勿仅关闭验证。"; fi
-echo "$an_link"
-echo
+append_node_link "$xhy2_link" || return 1
+echo "$xhy2_link"
+[ -z "$xby_hop" ] || note_line "Xray-Hysteria2 跳跃端口已启用：$xby_hop"
+if [ "$sub" = yes ] && [ -z "$profile_hy_fm" ]; then
+clxhypt(){
+local xby_hop_clean=$(echo "$xby_hop" | tr ':' '-')
+local cl_skip_cert="false"
+cert_trusted "$cert_mode" && cl_skip_cert="false"
+cat <<EOF
+- name: "$(json_escape "${sxname}xray-hy2-$hostname")"
+  type: hysteria2
+  server: "$(json_escape "$server_host")"
+  port: $port_xhy2
+  ports: "$xby_hop_clean"
+  password: "$(json_escape "$uuid")"
+  alpn:
+    - h3
+  sni: "${ran_sni:-www.bing.com}"
+  skip-cert-verify: $cl_skip_cert
+$(if ! cert_trusted "$cert_mode"; then printf '  fingerprint: "%s"\n' "$cert_hash"; fi)
+  fast-open: true
+EOF
+}
+clxhypt1(){
+printf -- '- "%s"\n' "$(json_escape "${sxname}xray-hy2-$hostname")"
+}
 fi
-if grep -q anyreality-sb "$HOME/agsbx/sb.json" 2>/dev/null; then
-node_title "💣【 Any-Reality 】节点信息如下："
-port_ar=$(cat "$HOME/agsbx/port_ar")
-ar_link="anytls://$(uri_percent_encode "$uuid")@$server_ip:$port_ar?security=reality&sni=$(uri_percent_encode "$ym_vl_re")&fp=chrome&pbk=$(uri_percent_encode "$public_key_s")&sid=$(uri_percent_encode "$short_id_s")&type=tcp&headerType=none#$(uri_percent_encode "${sxname}any-reality-$hostname")"
-append_node_link "$ar_link" || return 1
-echo "$ar_link"
-echo
 fi
 if grep -q hy2-sb "$HOME/agsbx/sb.json" 2>/dev/null; then
-node_title "💣【 Hysteria2 】节点信息如下："
+proto_gap
+node_title "💣【 Hysteria2 】"
 port_hy2=$(cat "$HOME/agsbx/port_hy2")
 obfs_pass=$(cat "$HOME/agsbx/obfs_pass" 2>/dev/null)
 cert_hash="$render_cert_hash"
@@ -12104,7 +12409,6 @@ sby_hop=$(cat "$HOME/agsbx/shyjpt" 2>/dev/null)
 [ -z "$sby_hop" ] && sby_hop="$shyjpt"
 if [ -n "$sby_hop" ]; then
   sby_mport="&mport=$(echo "$sby_hop" | tr ':' '-')"
-  echo "Hysteria2 跳跃端口已启用：$sby_hop"
 fi
 if cert_trusted "$cert_mode" && [ -n "$ran_sni" ]; then
 if [ -n "$obfs_pass" ]; then
@@ -12121,7 +12425,7 @@ fi
 fi
 append_node_link "$hy2_link" || return 1
 echo "$hy2_link"
-echo
+[ -z "$sby_hop" ] || note_line "Hysteria2 跳跃端口已启用：$sby_hop"
 if [ "$sub" = yes ]; then
 clhypt(){
 local sby_hop_clean=$(echo "$sby_hop" | tr ':' '-')
@@ -12150,56 +12454,9 @@ printf -- '- "%s"\n' "$(json_escape "${sxname}hy2-$hostname")"
 }
 fi
 fi
-if grep -q hy2-xr "$HOME/agsbx/xr.json" 2>/dev/null; then
-node_title "💣【 Xray-Hysteria2 】节点信息如下："
-port_xhy2=$(cat "$HOME/agsbx/port_xhy2")
-cert_hash="$render_cert_hash"
-[[ "$cert_hash" =~ ^[0-9a-f]{64}$ ]] || { echo "错误：当前证书指纹无效，拒绝生成 TLS 链接。"; return 1; }
-ran_sni=$(cat "$HOME/agsbx/sni.txt" 2>/dev/null)
-cert_mode=$(cat "$HOME/agsbx/cert_mode" 2>/dev/null)
-# 读取 Xray 专属的跳跃端口配置，格式化为客户端标准的中划线分隔
-xby_mport=""
-xby_hop=$(cat "$HOME/agsbx/xhyjpt" 2>/dev/null)
-[ -z "$xby_hop" ] && xby_hop="$xhyjpt"
-if [ -n "$xby_hop" ]; then
-  xby_mport="&mport=$(echo "$xby_hop" | tr ':' '-')"
-  echo "Xray-Hysteria2 跳跃端口已启用：$xby_hop"
-fi
-if cert_trusted "$cert_mode" && [ -n "$ran_sni" ]; then
-xhy2_link="hysteria2://$(uri_percent_encode "$uuid")@$server_ip:$port_xhy2?security=tls&alpn=h3&sni=$(uri_percent_encode "$ran_sni")&insecure=0&allowInsecure=0${xby_mport}${profile_hy_options}#$(uri_percent_encode "${sxname}xray-hy2${profile_hy_suffix}-$hostname")"
-else
-xhy2_link="hysteria2://$(uri_percent_encode "$uuid")@$server_ip:$port_xhy2?security=tls&pinSHA256=$(uri_percent_encode "$cert_hash")&alpn=h3&sni=$(uri_percent_encode "$ran_sni")&insecure=1&allowInsecure=1${xby_mport}${profile_hy_options}#$(uri_percent_encode "${sxname}xray-hy2${profile_hy_suffix}-$hostname")"
-fi
-append_node_link "$xhy2_link" || return 1
-echo "$xhy2_link"
-echo
-if [ "$sub" = yes ] && [ -z "$profile_hy_fm" ]; then
-clxhypt(){
-local xby_hop_clean=$(echo "$xby_hop" | tr ':' '-')
-local cl_skip_cert="false"
-cert_trusted "$cert_mode" && cl_skip_cert="false"
-cat <<EOF
-- name: "$(json_escape "${sxname}xray-hy2-$hostname")"
-  type: hysteria2
-  server: "$(json_escape "$server_host")"
-  port: $port_xhy2
-  ports: "$xby_hop_clean"
-  password: "$(json_escape "$uuid")"
-  alpn:
-    - h3
-  sni: "${ran_sni:-www.bing.com}"
-  skip-cert-verify: $cl_skip_cert
-$(if ! cert_trusted "$cert_mode"; then printf '  fingerprint: "%s"\n' "$cert_hash"; fi)
-  fast-open: true
-EOF
-}
-clxhypt1(){
-printf -- '- "%s"\n' "$(json_escape "${sxname}xray-hy2-$hostname")"
-}
-fi
-fi
 if grep -q tuic5-sb "$HOME/agsbx/sb.json" 2>/dev/null; then
-node_title "💣【 Tuic 】节点信息如下："
+proto_gap
+node_title "💣【 Tuic 】"
 port_tu=$(cat "$HOME/agsbx/port_tu")
 cert_hash="$render_cert_hash"
 [[ "$cert_hash" =~ ^[0-9a-f]{64}$ ]] || { echo "错误：当前证书指纹无效，拒绝生成 TLS 链接。"; return 1; }
@@ -12211,9 +12468,8 @@ else
 tuic5_link="tuic://$(uri_percent_encode "$uuid"):$(uri_percent_encode "$uuid")@$server_ip:$port_tu?congestion_control=bbr&udp_relay_mode=native&alpn=h3&sni=$(uri_percent_encode "$ran_sni")&insecure=0&allow_insecure=0&allowInsecure=0#$(uri_percent_encode "${sxname}tuic-$hostname")"
 fi
 append_node_link "$tuic5_link" || return 1
-if ! cert_trusted "$cert_mode"; then echo "此节点使用自签证书；客户端须先信任该证书。请勿仅关闭证书验证。"; fi
+if ! cert_trusted "$cert_mode"; then warn_line "此节点使用自签证书；客户端须先信任该证书，请勿仅关闭证书验证。"; fi
 echo "$tuic5_link"
-echo
 if [ "$sub" = yes ]; then
 cltupt(){
 local cl_skip_cert="false"
@@ -12241,29 +12497,101 @@ printf -- '- "%s"\n' "$(json_escape "${sxname}tuic5-$hostname")"
 }
 fi
 fi
-if grep -q socks5-xr "$HOME/agsbx/xr.json" 2>/dev/null || grep -q socks5-sb "$HOME/agsbx/sb.json" 2>/dev/null; then
-node_title "💣【 Socks5 】二级代理入口："
-port_so=$(cat "$HOME/agsbx/port_so")
-load_socks_credentials || return 1
-socks_link="socks5://$(uri_percent_encode "$socks_user"):$(uri_percent_encode "$socks_pass")@$server_ip:$port_so"
-socks_link=$(secondary_share_link "$socks_link" "${sxname}Socks5-$hostname") || return 1
-echo "注意：SOCKS5 本身不加密；其独立凭据仍需在受信网络或加密隧道中使用。"
-echo "客户端地址：$server_ip"
-echo "客户端端口：$port_so"
-echo "客户端用户名：$socks_user"
-echo "客户端密码：$socks_pass"
-echo "分享链接：$socks_link"
-echo "在 A VPS 配置 secp 时粘贴完整 URL；此入口不加入聚合或 Clash/Mihomo 订阅。"
-if secondary_saved_protocol_is_selected sopt; then
-  echo "此 SOCKS5 入口已选入二级出站；目标 DNS 与目标连接经 B，A 不使用本机 DNS 回退解析目标。"
+if grep -q anytls-sb "$HOME/agsbx/sb.json" 2>/dev/null; then
+proto_gap
+node_title "💣【 AnyTLS 】"
+port_an=$(cat "$HOME/agsbx/port_an")
+ran_sni=$(cat "$HOME/agsbx/sni.txt" 2>/dev/null)
+cert_mode=$(cat "$HOME/agsbx/cert_mode" 2>/dev/null)
+if cert_trusted "$cert_mode" && [ -n "$ran_sni" ]; then
+an_link="anytls://$(uri_percent_encode "$uuid")@$server_ip:$port_an?sni=$(uri_percent_encode "$ran_sni")&insecure=0&allowInsecure=0#$(uri_percent_encode "${sxname}anytls-$hostname")"
 else
-  echo "配套新配置中的最终 SOCKS5 入口负责 DNS 回退与私网拦截：Google DoH → 本机系统 DNS。"
+an_link="anytls://$(uri_percent_encode "$uuid")@$server_ip:$port_an?sni=$(uri_percent_encode "$ran_sni")&insecure=0&allowInsecure=0#$(uri_percent_encode "${sxname}anytls-$hostname")"
 fi
-echo "用作 B 入口时，将此 URL 填入 A 的 securl；用作 A 入口时也可选入 secp。更新脚本不会迁移已有配置。"
+append_node_link "$an_link" || return 1
+if ! cert_trusted "$cert_mode"; then warn_line "此节点使用自签证书；请先信任证书或固定指纹 $render_cert_hash，勿仅关闭验证。"; fi
+echo "$an_link"
+fi
+if grep -q anyreality-sb "$HOME/agsbx/sb.json" 2>/dev/null; then
+proto_gap
+node_title "💣【 Any-Reality 】"
+port_ar=$(cat "$HOME/agsbx/port_ar")
+ar_link="anytls://$(uri_percent_encode "$uuid")@$server_ip:$port_ar?security=reality&sni=$(uri_percent_encode "$ym_vl_re")&fp=chrome&pbk=$(uri_percent_encode "$public_key_s")&sid=$(uri_percent_encode "$short_id_s")&type=tcp&headerType=none#$(uri_percent_encode "${sxname}any-reality-$hostname")"
+append_node_link "$ar_link" || return 1
+echo "$ar_link"
+fi
+if grep -q vmess-xr "$HOME/agsbx/xr.json" 2>/dev/null || grep -q vmess-sb "$HOME/agsbx/sb.json" 2>/dev/null; then
+proto_gap
+node_title "💣【 Vmess-ws 】"
+port_vm_ws=$(cat "$HOME/agsbx/port_vm_ws")
+if [ -n "$profile_vm_fm" ]; then
+# v2rayN 的标准 VMess URI 解析器读取 fm；旧 Base64 VMess 格式没有配套字段。
+vm_link="vmess://$(uri_percent_encode "$uuid")@$server_ip:$port_vm_ws?encryption=auto&security=none&type=ws&path=$(uri_percent_encode "$(transport_path vm)")${profile_vm_options}#$(uri_percent_encode "${sxname}vmess-ws-fm-$hostname")"
+else
+vm_link="vmess://$(vmess_payload "${sxname}vm-ws-$hostname" "$server_host" "$port_vm_ws" "www.bing.com" "$(transport_path vm)" "" "")"
+fi
+append_node_link "$vm_link" || return 1
+echo "$vm_link"
+if [ "$sub" = yes ] && [ -z "$profile_vm_fm" ]; then
+clvmpt(){
+cat <<EOF
+- name: "$(json_escape "${sxname}vmess-ws-$hostname")"
+  type: vmess
+  server: "$(json_escape "$server_host")"
+  port: $port_vm_ws
+  uuid: "$(json_escape "$uuid")"
+  alterId: 0
+  cipher: auto
+  udp: true
+  tls: false
+  network: ws
+  servername: www.bing.com
+  ws-opts:
+    path: "$(transport_path vm)"
+    headers:
+      Host: www.bing.com
+EOF
+}
+clvmpt1(){
+printf -- '- "%s"\n' "$(json_escape "${sxname}vmess-ws-$hostname")"
+}
+fi
+if [ -f "$HOME/agsbx/cdnym" ] && [ -z "$profile_vm_fm" ]; then
 echo
+node_title "💣【 Vmess-ws-cdn 】"
+vm_cdn_link="vmess://$(vmess_payload "${sxname}vm-ws-cdn-$hostname" "icook.hk" "$port_vm_ws" "$xvvmcdnym" "$(transport_path vm)" "" "")"
+append_node_link "$vm_cdn_link" || return 1
+echo "$vm_cdn_link"
+note_line "默认地址 icook.hk 可自行更换优选 IP 域名；如是回源端口需手动修改 443 或 80 系端口。"
+if [ "$sub" = yes ]; then
+clvmcdnpt(){
+cat <<EOF
+- name: "$(json_escape "${sxname}vmess-ws-cdn-$hostname")"
+  type: vmess
+  server: icook.hk
+  port: $port_vm_ws
+  uuid: "$(json_escape "$uuid")"
+  alterId: 0
+  cipher: auto
+  udp: true
+  tls: false
+  network: ws
+  servername: "$xvvmcdnym"
+  ws-opts:
+    path: "$(transport_path vm)"
+    headers:
+      Host: "$xvvmcdnym"
+EOF
+}
+clvmcdnpt1(){
+printf -- '- "%s"\n' "$(json_escape "${sxname}vmess-ws-cdn-$hostname")"
+}
+fi
+fi
 fi
 # NaiveProxy 同时提供原生与 Shadowrocket URI；Mihomo 没有 Naive 类型，不伪装成普通 HTTP 代理。
 if [ -s "$HOME/agsbx/naive_domain" ]; then
+proto_gap
 naivedomain=$(cat "$HOME/agsbx/naive_domain")
 naiveuser=$(cat "$HOME/agsbx/naive_user" 2>/dev/null)
 naivepass=$(cat "$HOME/agsbx/naive_pass" 2>/dev/null)
@@ -12280,20 +12608,22 @@ append_node_link "$naive_h2_link" || return 1
 append_node_link "$naive_h3_link" || return 1
 append_node_link "$naive_sr_h2_link" || return 1
 append_node_link "$naive_sr_h3_link" || return 1
-node_title "💣【 NaiveProxy 】Caddy 转发代理，节点信息如下："
-echo "账号：$naiveuser"
-echo "密码：$naivepass"
-echo "分享链接(HTTPS·H1/H2，TCP)：$naive_h2_link"
-echo "分享链接(QUIC·H3，UDP)：$naive_h3_link"
-echo "Shadowrocket 单节点分享（HTTP2，TCP）："
+node_title "💣【 NaiveProxy 】（Caddy 转发代理）"
+kv_row "账号：" "$naiveuser" 10
+kv_row "密码：" "$naivepass" 10
+echo "  原生分享（HTTPS · H1/H2，TCP）："
+echo "$naive_h2_link"
+echo "  原生分享（QUIC · H3，UDP）："
+echo "$naive_h3_link"
+echo "  Shadowrocket 单节点（HTTP2，TCP）："
 echo "$naive_sr_h2_link"
-echo "Shadowrocket 单节点分享（HTTP3，UDP）："
+echo "  Shadowrocket 单节点（HTTP3，UDP）："
 echo "$naive_sr_h3_link"
-echo "以上四条链接参与 jh.txt / jhsub.txt 聚合订阅，不写入 clmi.yaml；Shadowrocket 使用 http2/http3 格式，H3 需放行 UDP/443。"
-echo
+note_line "以上四条链接参与 jh.txt / jhsub.txt 聚合订阅，不写入 clmi.yaml；H3 需放行 UDP/443。"
 fi
 # Mieru 同时导出原生 URI 与 Mihomo YAML，保留实际传输方式和 Traffic Pattern。
 if [ -s "$HOME/agsbx/mita.json" ] && [ -s "$HOME/agsbx/mieru_user" ] && [ -s "$HOME/agsbx/mieru_pass" ] && [ -s "$HOME/agsbx/port_mieru" ]; then
+proto_gap
 mieruuser=$(cat "$HOME/agsbx/mieru_user")
 mierupass=$(cat "$HOME/agsbx/mieru_pass")
 port_mieru=$(cat "$HOME/agsbx/port_mieru")
@@ -12334,24 +12664,24 @@ clmierupt1(){
 printf -- '- "%s"\n' "$(json_escape "${sxname}mieru-$hostname")"
 }
 fi
-node_title "💣【 Mieru 】节点信息如下："
-echo "类型：Mieru"
-echo "地址：$mieru_address"
-echo "端口：$port_mieru"
-echo "用户名：$mieruuser"
-echo "密码：$mierupass"
-echo "Transport：$(printf '%s' "$mieru_protocol" | tr 'A-Z' 'a-z')"
-echo "Traffic Pattern：$mieru_traffic_display"
-echo "复制下一行完整链接导入："
+node_title "💣【 Mieru 】"
+kv_row "类型：" "Mieru" 19
+kv_row "地址：" "$mieru_address" 19
+kv_row "端口：" "$port_mieru" 19
+kv_row "用户名：" "$mieruuser" 19
+kv_row "密码：" "$mierupass" 19
+kv_row "Transport：" "$(printf '%s' "$mieru_protocol" | tr 'A-Z' 'a-z')" 19
+kv_row "Traffic Pattern：" "$mieru_traffic_display" 19
+echo "  分享链接："
 echo "$mieru_link"
-echo
 fi
+# ─── Cloudflare Argo 隧道节点 ───
 argodomain=$(cat "$HOME/agsbx/sbargoym.log" 2>/dev/null)
 if [ -z "$argodomain" ]; then
   argodomain=$(grep -oE '[a-zA-Z0-9.-]+\.trycloudflare\.com' "$HOME/agsbx/argo.log" 2>/dev/null | head -n1)
 fi
 if [ -n "$argodomain" ]; then
-vlvm=$(cat $HOME/agsbx/vlvm 2>/dev/null)
+vlvm=$(cat "$HOME/agsbx/vlvm" 2>/dev/null)
 if [ "$vlvm" = "Vmess" ]; then
       vmatls_link1="vmess://$(vmess_payload "${sxname}vmess-ws-tls-argo-$hostname-443" "icook.hk" "443" "$argodomain" "$(transport_path vm)" "tls" "$argodomain")"
       append_node_link "$vmatls_link1" || return 1
@@ -12427,37 +12757,132 @@ append_node_link "$vwa_link2" || return 1
 elif [ "$vlvm" = "Vlessenc-xhttp-tls-vision-fm" ] || [ "$vlvm" = "Vlessenc-xhttp-vision" ]; then
 vwa_xvargo_link="vless://$(uri_percent_encode "$uuid")@$argodomain:443?encryption=$(uri_percent_encode "$enkey")&flow=xtls-rprx-vision&security=tls&alpn=h2&sni=$(uri_percent_encode "$argodomain")&host=$(uri_percent_encode "$argodomain")&type=xhttp&path=$(uri_percent_encode "$(transport_path xva)")&mode=$profile_xva_mode${profile_xva_options}#$(uri_percent_encode "${sxname}vlessenc-${profile_xva_transport}-vision-argo${profile_xva_suffix}-$hostname")"
 append_node_link "$vwa_xvargo_link" || return 1
-[ "$sub" != yes ] || echo "Argo ENC 节点通过完整 VLESS URL/聚合订阅导入，不生成缺失 ENC 参数的 Clash 节点。"
 fi
 if [ -s "$argo_token_file" ]; then
-nametn="Argo固定隧道token：已安全保存（不显示）"
+nametn="已安全保存（不显示）"
 else
 nametn=""
 fi
+[ "$printed_protocol" = no ] || echo
+subsection "Cloudflare Argo 隧道节点"
 if [ "$vlvm" = "Vlessenc-xhttp-tls-vision-fm" ] || [ "$vlvm" = "Vlessenc-xhttp-vision" ]; then
-argoshow=$(
-echo "Argo隧道端口正在使用$vlvm主协议端口：$(cat $HOME/agsbx/argoport.log 2>/dev/null)
-Argo域名：$argodomain
-$nametn
-
-💣【 VLESS Encryption＋${profile_xva_transport}＋Vision Argo${profile_xva_suffix} 节点 】
-$vwa_xvargo_link
-"
-)
+kv_row "绑定协议：" "$vlvm（端口 $(cat "$HOME/agsbx/argoport.log" 2>/dev/null)）" 14
+kv_row "Argo 域名：" "$argodomain" 14
+[ -z "$nametn" ] || kv_row "固定 Token：" "$nametn" 14
+echo
+node_title "💣【 VLESS Encryption＋${profile_xva_transport}＋Vision Argo${profile_xva_suffix} 】"
+echo "$vwa_xvargo_link"
+[ "$sub" != yes ] || note_line "Argo ENC 节点通过完整 VLESS URL/聚合订阅导入，不生成缺失 ENC 参数的 Clash 节点。"
 else
-argoshow=$(
-echo "Argo隧道端口正在使用$vlvm-ws主协议端口：$(cat $HOME/agsbx/argoport.log 2>/dev/null)
-Argo域名：$argodomain
-$nametn
-
-1、💣443端口的$vlvm-ws-tls-argo节点(优选IP与443系端口随便换)
-${vmatls_link1}${vwatls_link1}
-
-2、💣80端口的$vlvm-ws-argo节点(优选IP与80系端口随便换)
-${vma_link7}${vwa_link2}
-"
-)
+kv_row "绑定协议：" "${vlvm}-ws（端口 $(cat "$HOME/agsbx/argoport.log" 2>/dev/null)）" 14
+kv_row "Argo 域名：" "$argodomain" 14
+[ -z "$nametn" ] || kv_row "固定 Token：" "$nametn" 14
+echo
+node_title "💣【 443 端口 ${vlvm}-ws-tls-argo 】（优选 IP 与 443 系端口可自行替换）"
+echo "${vmatls_link1}${vwatls_link1}"
+echo
+node_title "💣【 80 端口 ${vlvm}-ws-argo 】（优选 IP 与 80 系端口可自行替换）"
+echo "${vma_link7}${vwa_link2}"
 fi
+printed_protocol=yes
+fi
+# ─── 二级代理入口（不入订阅）：Shadowsocks-2022 / Socks5 ───
+if grep -q ss-2022 "$HOME/agsbx/sb.json" 2>/dev/null \
+  || grep -q socks5-xr "$HOME/agsbx/xr.json" 2>/dev/null \
+  || grep -q socks5-sb "$HOME/agsbx/sb.json" 2>/dev/null; then
+  has_secondary_entry=yes
+fi
+if [ "$has_secondary_entry" = yes ]; then
+  [ "$printed_protocol" = no ] || echo
+  subsection "二级代理入口（不入订阅）"
+  printed_protocol=sub_first
+  if grep -q ss-2022 "$HOME/agsbx/sb.json" 2>/dev/null; then
+  proto_gap
+  node_title "💣【 Shadowsocks-2022 】"
+  load_ss_key || return 1
+  port_ss=$(cat "$HOME/agsbx/port_ss") && valid_port "$port_ss" || { echo "错误：SS 端口状态无效，未生成链接。"; return 1; }
+  port_ss=$((10#$port_ss))
+  ss_link="ss://$(uri_percent_encode "$ss_method"):$(uri_percent_encode "$sskey")@$server_ip:$port_ss"
+  ss_link=$(secondary_share_link "$ss_link" "${sxname}Shadowsocks-2022-$hostname") || return 1
+  echo "$ss_link"
+  note_line "在 A VPS 配置 secp 时粘贴上方完整 URL；此入口不加入聚合或 Clash/Mihomo 订阅。"
+  note_line "默认使用原生 TCP/UDP；需要 UoT 时在 A 显式选择 secuot=on，仅支持 Sing-box 出站与兼容的 B。"
+  if secondary_saved_protocol_is_selected sspt; then
+    note_line "此 SS 入口已选入二级出站；目标 DNS 与目标连接经 B，A 不使用本机 DNS 回退解析目标。"
+  else
+    note_line "配套新配置中的最终 SS 入口负责 DNS 回退与私网拦截：Google DoH → 本机系统 DNS。"
+  fi
+  note_line "用作 B 入口时，将此 URL 填入 A 的 securl；用作 A 入口时也可选入 secp。更新脚本不会迁移已有配置。"
+  fi
+  if grep -q socks5-xr "$HOME/agsbx/xr.json" 2>/dev/null || grep -q socks5-sb "$HOME/agsbx/sb.json" 2>/dev/null; then
+  proto_gap
+  node_title "💣【 Socks5 】"
+  port_so=$(cat "$HOME/agsbx/port_so")
+  load_socks_credentials || return 1
+  socks_link="socks5://$(uri_percent_encode "$socks_user"):$(uri_percent_encode "$socks_pass")@$server_ip:$port_so"
+  socks_link=$(secondary_share_link "$socks_link" "${sxname}Socks5-$hostname") || return 1
+  warn_line "SOCKS5 本身不加密；其独立凭据仍需在受信网络或加密隧道中使用。"
+  kv_row "客户端地址：" "$server_ip" 16
+  kv_row "客户端端口：" "$port_so" 16
+  kv_row "客户端用户名：" "$socks_user" 16
+  kv_row "客户端密码：" "$socks_pass" 16
+  echo "  分享链接："
+  echo "$socks_link"
+  note_line "在 A VPS 配置 secp 时粘贴上方完整 URL；此入口不加入聚合或 Clash/Mihomo 订阅。"
+  if secondary_saved_protocol_is_selected sopt; then
+    note_line "此 SOCKS5 入口已选入二级出站；目标 DNS 与目标连接经 B，A 不使用本机 DNS 回退解析目标。"
+  else
+    note_line "配套新配置中的最终 SOCKS5 入口负责 DNS 回退与私网拦截：Google DoH → 本机系统 DNS。"
+  fi
+  note_line "用作 B 入口时，将此 URL 填入 A 的 securl；用作 A 入口时也可选入 secp。更新脚本不会迁移已有配置。"
+  fi
+fi
+# ─── 专用隧道与 JSON 配置（不入订阅）：XDRIVE / XDNS / XICMP ───
+if grep -Fq 'agsbx-profile-xdrive-v1' "$HOME/agsbx/xr.json" 2>/dev/null \
+  || grep -Fq 'vless-kcp-xdns' "$HOME/agsbx/xr.json" 2>/dev/null \
+  || grep -Fq 'vless-kcp-xicmp' "$HOME/agsbx/xr.json" 2>/dev/null; then
+  has_special_tunnel=yes
+fi
+if [ "$has_special_tunnel" = yes ]; then
+  [ "$printed_protocol" = no ] || echo
+  subsection "专用隧道与 JSON 配置（不入订阅）"
+  printed_protocol=sub_first
+  if grep -Fq 'agsbx-profile-xdrive-v1' "$HOME/agsbx/xr.json" 2>/dev/null; then
+    proto_gap
+    node_title "💣【 VLESS Encryption + XDRIVE 】"
+    if xdrive_private_file "$HOME/agsbx/xdrive-client.json" 65536; then
+      kv_row "客户端配置：" "$HOME/agsbx/xdrive-client.json（权限 600；含节点及存储凭据，仅交给可信客户端）" 14
+    else
+      warn_line "XDRIVE 客户端文件缺失或权限不安全；可用完整参数执行 rep 重建，不影响现有服务端配置。"
+      [ "$cip_mode" != publish ] || return 1
+    fi
+    note_line "两端均需包含 XDRIVE 功能的 Xray 核心；客户端 SOCKS 入口为 127.0.0.1:10808。"
+    note_line "此配置不在终端展开，不加入通用 URL/Clash 订阅；更改存储参数须用完整参数执行 rep。"
+    note_line "Google Drive 两端须能读写同一专用文件夹；local 两端目录须由外部同步工具映射到同一数据目录。"
+    note_line "核心运行状态不代表存储认证、同步或隧道连通已验证。"
+  fi
+  for special_protocol in xdns xicmp; do
+    grep -Fq "vless-kcp-$special_protocol" "$HOME/agsbx/xr.json" 2>/dev/null || continue
+    proto_gap
+    node_title "💣【 VLESS Encryption + mKCP + $special_protocol 】"
+    if ! grep -Fq "agsbx-profile-${special_protocol}-v1" "$HOME/agsbx/xr.json"; then
+      warn_line "旧版 $special_protocol 尚未迁移，请使用同版本脚本和 GUI 通过 rep 重建；不再输出不完整的分享链接。"
+      continue
+    fi
+    special_client=$(render_xray_special_client "$special_protocol" "$server_host") || return 1
+    if [ "$cip_mode" = publish ]; then
+      atomic_text_file "$HOME/agsbx/${special_protocol}-client.json" "$special_client" || return 1
+      kv_row "客户端配置：" "$HOME/agsbx/${special_protocol}-client.json（含节点凭据）" 14
+    fi
+    note_line "两端使用 Xray >=26.7.28；以下 JSON 在客户端使用，SOCKS 入口为 127.0.0.1:10808。"
+    note_line "此节点不加入通用 URL/Clash 订阅，请完整导入 JSON，保留 mKCP 和 FinalMask 参数。"
+    if [ "$special_protocol" = xdns ]; then
+      note_line "XDNS：先将专用域名 NS 委派到 VPS，开放 UDP/53；解析器须可从客户端访问。两端固定 TXT、MTU=80。"
+    else
+      note_line "XICMP：两端须具备原始套接字权限及 IPv4/IPv6 套接字支持，防火墙须放行对应 ICMP；不关闭系统 Ping。"
+    fi
+    printf '%s\n' "$special_client"
+  done
 fi
 if [ "$sub" = yes ] && [ "$cip_mode" = publish ]; then
 get_func() {
@@ -12470,6 +12895,8 @@ get_func() {
 # 当前 Mihomo 已有 ENC/XHTTP 能力，但本脚本尚未建立其完整 extra/FM 版本映射。
 # 这类节点暂只导出完整 URL，不能生成遗漏 ENC 或掩码参数的 YAML。
 # 订阅仅描述客户端连接 A 的入站；A 上的二级出站不改变节点、DNS 或代理组。
+# 规则以 GEOSITE 先行并为 GEOIP 加 no-resolve，避免代理域名在规则匹配阶段触发本地 DNS 解析；
+# 顶层与 DNS 均关闭 ipv6，优先使用 IPv4 并避免双栈客户端通过 AAAA 查询绕过 Fake-IP。
 local clash_renderers clash_node clash_name clash_names=''
 clxy=''
 for clash_renderers in clvlpt:clvlpt1 clvmpt:clvmpt1 clvmcdnpt:clvmcdnpt1 \
@@ -12482,15 +12909,32 @@ done
 clgz=$(printf '%s' "$clash_names" | sed '2,$s/^/    /')
 if [ -n "$clxy" ] && [ -n "$clgz" ]; then
 clash_config=$(cat <<EOF
-port: 7890
+mixed-port: 7890
 allow-lan: false
 mode: rule
 log-level: info
 unified-delay: true
+ipv6: false
+sniffer:
+  enable: true
+  force-dns-mapping: true
+  parse-pure-ip: true
+  override-destination: true
+  sniff:
+    HTTP:
+      ports: [80, 8080-8880]
+      override-destination: true
+    TLS:
+      ports: [443, 8443]
+    QUIC:
+      ports: [443, 8443]
+  skip-domain:
+    - "Mijia Cloud"
+    - "+.push.apple.com"
 dns:
   enable: true
   listen: "127.0.0.1:1053"
-  ipv6: true
+  ipv6: false
   prefer-h3: false
   respect-rules: true
   use-system-hosts: false
@@ -12543,8 +12987,10 @@ proxy-groups:
     - DIRECT
     $clgz
 rules:
-  - GEOIP,LAN,DIRECT
-  - GEOIP,CN,DIRECT
+  - GEOSITE,private,DIRECT
+  - GEOSITE,cn,DIRECT
+  - GEOIP,LAN,DIRECT,no-resolve
+  - GEOIP,CN,DIRECT,no-resolve
   - MATCH,🌍选择代理节点
 EOF
 )
@@ -12578,41 +13024,53 @@ if [ "$sub" = yes ]; then
   fi
 fi
 if [ "$cip_mode" = publish ]; then publish_node_outputs || return 1; fi
-hr
-echo "$argoshow"
-echo
 if [ "$sub" = yes ]; then
-hr2
+[ "$printed_protocol" = no ] || echo
+subsection "HTTPS 订阅分发"
+printed_protocol=yes
 if [ "$subscription_auth_mode" = yes ]; then
 if subscription_http_tree_valid; then
   if [ -n "$clash_sub_info" ]; then
-    echo "Clash 订阅地址：https://${subdomain}:${subport_show}/cgi-bin/sub/${subtoken}/clmi.yaml"
-  else echo "本次没有可完整导出的 Mihomo 节点，请使用聚合协议订阅。"; fi
-  echo "聚合订阅地址：https://${subdomain}:${subport_show}/cgi-bin/sub/${subtoken}/jhsub.txt"
-  echo "网页查看：https://${subdomain}:${subport_show}/index.html#${subtoken}/jhsub.txt"
+    echo "  Clash 订阅地址："
+    echo "https://${subdomain}:${subport_show}/cgi-bin/sub/${subtoken}/clmi.yaml"
+  else
+    note_line "本次没有可完整导出的 Mihomo 节点，请使用聚合协议订阅。"
+  fi
+  echo "  聚合订阅地址："
+  echo "https://${subdomain}:${subport_show}/cgi-bin/sub/${subtoken}/jhsub.txt"
+  echo "  网页查看："
+  echo "https://${subdomain}:${subport_show}/index.html#${subtoken}/jhsub.txt"
 else
-  echo "加密订阅或浏览器入口尚未就绪，未输出新链接；请执行 agsbx res 迁移，保留原订阅密码、Token 与证书。"
+  warn_line "加密订阅或浏览器入口尚未就绪，未输出新链接；请执行 agsbx res 迁移，保留原订阅密码、Token 与证书。"
 fi
-printf '订阅密码：%s\n' "$subscription_password"
-echo "订阅与网页共用此密码；客户端需支持订阅内容解密。"
+kv_row "订阅密码：" "$subscription_password" 14 "$C_YELLOW"
+note_line "订阅与网页共用此密码；客户端需支持订阅内容解密。"
 else
-if [ -n "$clash_sub_info" ]; then echo "$clash_sub_info"; else echo "本次没有可完整导出的 Mihomo 节点，请使用聚合协议链接。"; fi
-echo "聚合订阅地址：${suburl}/jhsub.txt"
+if [ -n "$clash_sub_info" ]; then
+  echo "  Clash 订阅地址："
+  echo "${suburl}/clmi.yaml"
+else
+  note_line "本次没有可完整导出的 Mihomo 节点，请使用聚合协议链接。"
+fi
+echo "  聚合订阅地址："
+echo "${suburl}/jhsub.txt"
 if subscription_http_tree_valid; then
-  echo "网页查看：https://${subdomain}:${subport_show}/index.html#${subtoken}/jhsub.txt"
+  echo "  网页查看："
+  echo "https://${subdomain}:${subport_show}/index.html#${subtoken}/jhsub.txt"
 else
-  echo "网页查看入口尚未更新，请执行 agsbx res。"
+  warn_line "网页查看入口尚未更新，请执行 agsbx res。"
 fi
-echo "订阅密码保护：关闭；可直接使用以上 HTTPS 链接订阅，无需填写用户名或密码。"
+kv_row "密码保护：" "关闭（可直接使用以上 HTTPS 链接订阅，无需填写用户名或密码）" 14
 fi
-echo "clmi.yaml 仅包含可完整导出的 Mihomo 节点（含 Mieru，不含 Naive）；jhsub.txt 包含 Mieru 与 Naive 链接，Naive 另附 Shadowrocket 的 http2/http3 格式。"
-echo "订阅地址使用共享 CA 证书覆盖的域名或 IP；域名应解析到订阅服务，客户端保持证书验证开启。"
-hr2
-echo
+note_line "clmi.yaml 仅包含可完整导出的 Mihomo 节点（含 Mieru，不含 Naive）；jhsub.txt 包含 Mieru 与 Naive 链接（Naive 另附 Shadowrocket http2/http3 格式）。"
+note_line "订阅地址使用共享 CA 证书覆盖的域名或 IP；域名应解析到订阅服务，客户端保持证书验证开启。"
 fi
-hr
-[ -s "$HOME/agsbx/jh.txt" ] && echo "聚合节点信息，请进入 $HOME/agsbx/jh.txt 文件目录查看或者运行 cat $HOME/agsbx/jh.txt 查看"
-hr2
+if [ -s "$HOME/agsbx/jh.txt" ]; then
+[ "$printed_protocol" = no ] || [ "$sub" = yes ] || echo
+subsection "本地聚合文件"
+kv_row "聚合节点文件：" "$HOME/agsbx/jh.txt" 16
+kv_row "查看命令：" "cat $HOME/agsbx/jh.txt" 16
+fi
 # 安全加固：全局收紧敏感文件权限（阻断多用户环境下的未授权文件读取）
 if [ "$cip_mode" = publish ]; then
 if [ "$rep_mode" = yes ]; then
@@ -12633,8 +13091,7 @@ else
 fi
 [ ! -f "$HOME/agsbx/acme.sh" ] || chmod 700 "$HOME/agsbx/acme.sh" || return 1
 fi
-echo "相关快捷方式如下（无需重连 SSH）："
-showmode
+[ "$cip_mode" = publish ] || showmode
 return 0
 }
 #============================================================
@@ -13188,6 +13645,10 @@ fi
 stop_subscription_http || return 1
 restore_xicmp_state || return 1
 cleanup_port_hopping || return 1
+if [ "$cleanup_mode" = del ]; then
+  cleanup_system_net_tuning || return 1
+  cleanup_system_journald_limit || return 1
+fi
 if [ -f "$HOME/agsbx/mita_managed" ] && { command -v mita >/dev/null 2>&1 || [ -e /lib/systemd/system/mita.service ] || [ -e /usr/lib/systemd/system/mita.service ] || [ -e /etc/systemd/system/mita.service ]; }; then
   if command -v mita >/dev/null 2>&1 && systemctl is-active --quiet mita; then
     mita stop >/dev/null 2>&1 || echo "提示：Mita RPC 停止失败，继续停止受管 daemon。"
@@ -13437,19 +13898,37 @@ local clk; clk=$(getconf CLK_TCK 2>/dev/null || echo 100)
 # 字节数转人类可读单位（B/KiB/MiB/GiB）
 human(){ awk -v b="${1:-0}" 'BEGIN{u="B KiB MiB GiB TiB";n=split(u,a," ");i=1;while(b>=1024&&i<n){b/=1024;i++}printf (i==1?"%d %s":"%.2f %s"),b,a[i]}'; }
 section "Airgosbx 内核资源 / 流量监控"
-printf '%s\n' "${C_GREEN}${C_BOLD}【内核进程】${C_RESET}"
+printf '\n%s\n' "${C_GREEN}${C_BOLD}【内核进程】${C_RESET}"
 printf "  ${C_CYAN}%-10s %-7s %-7s %-11s %-9s %-6s${C_RESET}\n" Core PID CPU% Mem-RSS Uptime Conn
-local any=0 kv k label pid s b0 st b1 cpu rss up conn
-for kv in "xray:Xray" "sing-box:Sing-box" "caddy:Caddy" "cloudflared:Argo" "mita:Mita"; do
-  k=${kv%%:*}; label=${kv##*:}
+printf "  ${C_DIM}%-10s %-7s %-7s %-11s %-9s %-6s${C_RESET}\n" "----------" "-------" "-------" "-----------" "---------" "------"
+local any=0 kv k label bin cfg pid s b0 st b1 cpu rss up conn
+for kv in "xray:Xray:$HOME/agsbx/xray:$HOME/agsbx/xr.json" \
+  "sing-box:Sing-box:$HOME/agsbx/sing-box:$HOME/agsbx/sb.json" \
+  "caddy:Caddy:$HOME/agsbx/caddy:$HOME/agsbx/Caddyfile" \
+  "cloudflared:Argo:$HOME/agsbx/cloudflared:$HOME/agsbx/argoport.log" \
+  "mita:Mita:$HOME/agsbx/mita_managed:$HOME/agsbx/mita.json"; do
+  IFS=: read -r k label bin cfg <<< "$kv"
   if [ "$k" = mita ]; then
-    [ -f "$HOME/agsbx/mita_managed" ] && [ -s "$HOME/agsbx/mita.json" ] || continue
+    if [ ! -f "$bin" ]; then
+      printf "  %-10s ${C_DIM}%s${C_RESET}\n" "$label" "未配置"
+      continue
+    fi
+    if [ ! -s "$cfg" ]; then
+      printf "  %-10s ${C_DIM}%s${C_RESET}\n" "$label" "未启用"
+      continue
+    fi
     pid=$(pgrep -x mita 2>/dev/null | head -1)
   else
     pid=$(agsbx_component_pids "$k" | head -1)
   fi
   if [ -z "$pid" ] || [ ! -d "/proc/$pid" ]; then
-    printf "  %-10s ${C_RED}%s${C_RESET}\n" "$label" "未运行"
+    if [ -s "$cfg" ]; then
+      printf "  %-10s ${C_RED}%s${C_RESET}\n" "$label" "未运行"
+    elif [ -s "$bin" ]; then
+      printf "  %-10s ${C_DIM}%s${C_RESET}\n" "$label" "未启用"
+    else
+      printf "  %-10s ${C_DIM}%s${C_RESET}\n" "$label" "未配置"
+    fi
     continue
   fi
   any=1
@@ -13466,14 +13945,15 @@ for kv in "xray:Xray" "sing-box:Sing-box" "caddy:Caddy" "cloudflared:Argo" "mita
   conn=$(ss -tnp 2>/dev/null | grep -c "pid=$pid,")
   printf "  %-10s %-7s %-7s %-11s %-9s %-6s\n" "$label" "$pid" "$cpu" "$rss" "$up" "${conn:-0}"
 done
-[ "$any" = 0 ] && echo "  （各内核进程均未运行）"
+[ "$any" = 0 ] && note_line "各内核进程均未运行。"
 echo
 printf '%s\n' "${C_GREEN}${C_BOLD}【系统概况】${C_RESET}"
-printf "  负载(1/5/15分)：%s\n" "$(awk '{print $1", "$2", "$3}' /proc/loadavg 2>/dev/null)"
-awk '/^MemTotal/{t=$2}/^MemAvailable/{a=$2}END{if(t)printf "  内存：已用 %.0f MiB / 共 %.0f MiB（可用 %.0f MiB）\n",(t-a)/1024,t/1024,a/1024}' /proc/meminfo 2>/dev/null
+kv_row "系统负载：" "$(awk '{print $1", "$2", "$3}' /proc/loadavg 2>/dev/null)（1 / 5 / 15 分钟）" 12
+kv_row "内存使用：" "$(awk '/^MemTotal/{t=$2}/^MemAvailable/{a=$2}END{if(t)printf "已用 %.0f MiB / 共 %.0f MiB（可用 %.0f MiB）",(t-a)/1024,t/1024,a/1024; else printf "未知"}' /proc/meminfo 2>/dev/null)" 12
 echo
-printf '%s\n' "${C_GREEN}${C_BOLD}【网卡流量】入站=接收(下行)／出站=发送(上行)，自系统开机累计，多数 VPS 据此计费${C_RESET}"
-printf "  ${C_CYAN}%-10s %-16s %-16s${C_RESET}\n" NIC "RX-Inbound↓" "TX-Outbound↑"
+printf '%s\n' "${C_GREEN}${C_BOLD}【网卡流量】${C_RESET}${C_DIM}入站=接收(下行)／出站=发送(上行)，自系统开机累计，多数 VPS 据此计费${C_RESET}"
+printf "  ${C_CYAN}%-10s %-16s %-16s${C_RESET}\n" NIC "RX-Inbound" "TX-Outbound"
+printf "  ${C_DIM}%-10s %-16s %-16s${C_RESET}\n" "----------" "----------------" "----------------"
 # 逐网卡列出 RX/TX（/proc/net/dev：把 ifname: 的冒号换成空格后重新分列，$2=接收字节 $10=发送字节）。
 # 过滤回环及常见虚拟网卡，避免污染计费口径；awk 内置 h() 直接转人类可读单位，保证对齐。
 awk 'function h(b,  u,a,i,n){u="B KiB MiB GiB TiB";n=split(u,a," ");i=1;while(b>=1024&&i<n){b/=1024;i++}return sprintf((i==1?"%d %s":"%.2f %s"),b,a[i])}
@@ -13488,11 +13968,10 @@ if command -v ss >/dev/null 2>&1; then
   cf_out="$1"; cf_in="$2"
   cf_conn=$(ss -tnH state established "$cf_filt" 2>/dev/null | grep -c .)
   printf "  ${C_YELLOW}↳ 其中 Cloudflare 互联${C_RESET}：活跃 %s 连接，入站↓ %s ／ 出站↑ %s\n" "${cf_conn:-0}" "$(human "${cf_in:-0}")" "$(human "${cf_out:-0}")"
-  echo "    （此行为当前活跃连接的累计快照，非自开机口径；含 CDN回源/Argo/WARP，按 Cloudflare 官方IP段匹配，仅供占比参考）"
+  note_line "此行为当前活跃连接的累计快照（非自开机口径）；含 CDN 回源/Argo/WARP，按 Cloudflare 官方 IP 段匹配，仅供占比参考。"
 fi
 hr
-echo "口径：网卡累计=自开机起(计费参考)；CPU%=1秒采样瞬时(多核可>100%)；连接=各内核当前 ESTABLISHED 数。"
-hr
+note_line "口径：网卡累计=自开机起（计费参考）；CPU%=1 秒采样瞬时（多核可 >100%）；连接=各内核当前 ESTABLISHED 数。"
 echo
 }
 
@@ -13555,6 +14034,7 @@ case "$1" in
     reload_shared_certificate || cert_maintenance_status=1
     exit "$cert_maintenance_status" ;;
   __restore_hops)
+    HOPPING_RESTORE_ONLY=yes
     for hop_spec in shyjpt:port_hy2 xhyjpt:port_xhy2; do
       hop_value=$(cat "$HOME/agsbx/${hop_spec%:*}" 2>/dev/null)
       hop_target=$(cat "$HOME/agsbx/${hop_spec#*:}" 2>/dev/null)
@@ -13573,8 +14053,7 @@ for shortcut in "$HOME/bin/agsbx" /usr/local/bin/agsbx /usr/bin/agsbx; do
   if shortcut_is_owned "$shortcut"; then rm -f -- "$shortcut" || exit 1; fi
 done
 echo "卸载完成；未改动无归属记录的旧目录和 shell 配置。"
-echo "欢迎继续使用Airgosbx小钢炮脚本💣" && sleep 2
-echo
+echo "欢迎继续使用 Airgosbx 小钢炮脚本 💣" && sleep 2
 showmode
 exit
 elif [ "$1" = "rep" ]; then
@@ -13721,14 +14200,12 @@ if ! verify_install_required_components yes; then
   exit 1
 fi
 rep_commit_transaction || exit 1
-echo "Airgosbx 必需组件的本地启动检查通过；客户端连通性仍需确认。" && sleep 2
-echo
+printf '\n%s\n' "${C_GREEN}${C_BOLD}Airgosbx 必需组件的本地启动检查通过；客户端连通性仍需确认。${C_RESET}"
+sleep 2
+showmode
 else
-echo "Airgosbx脚本已安装"
-echo
+printf '\n%s\n' "${C_GREEN}${C_BOLD}Airgosbx 脚本已安装${C_RESET}"
 airgosbxstatus
-echo
-echo "相关快捷方式如下："
 showmode
 exit
 fi
