@@ -2,7 +2,7 @@
 # 配套维护：airgosbx.sh 与 airgosbx-gui.html 是同一套工具，必须成套维护、提交和发布。
 # 修改任一文件时，须同步核对并修改另一文件的对应内容。
 # 参数、默认值、协议归属、开关与互斥、校验、命令生成与还原及功能说明必须保持一致。
-AIRGOSBX_VERSION='v1.1.1 (20261119.01)'
+AIRGOSBX_VERSION='v1.2 (20261119.02)'
 # 仅在内置 XHTTP 默认参数改变时更新此标记，普通脚本版本更新不使旧命令失效。
 XHTTP_DEFAULTS_VERSION='V26.09.08.1'
 agsbxurl="${agsbxurl:-https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/main/airgosbx.sh}"
@@ -3484,13 +3484,13 @@ ip_probe_http_get(){
   local url="$1" family="${2:-}"
   if command -v curl >/dev/null 2>&1; then
     case "$family" in
-      4|6) curl -fsSL -"$family" --connect-timeout 2 --max-time 4 -H 'Accept: application/json' "$url" 2>/dev/null ;;
-      *)   curl -fsSL --connect-timeout 2 --max-time 4 -H 'Accept: application/json' "$url" 2>/dev/null ;;
+      4|6) curl -fsSL -"$family" --connect-timeout 3 --max-time 6 -A 'Mozilla/5.0' -H 'Accept: application/json' "$url" 2>/dev/null ;;
+      *)   curl -fsSL --connect-timeout 3 --max-time 6 -A 'Mozilla/5.0' -H 'Accept: application/json' "$url" 2>/dev/null ;;
     esac
   elif command -v wget >/dev/null 2>&1; then
     case "$family" in
-      4|6) timeout 5 wget -"$family" --tries=1 --timeout=4 -U 'curl/8.0' --header='Accept: application/json' -qO- "$url" 2>/dev/null ;;
-      *)   timeout 5 wget --tries=1 --timeout=4 -U 'curl/8.0' --header='Accept: application/json' -qO- "$url" 2>/dev/null ;;
+      4|6) timeout 7 wget -"$family" --tries=1 --timeout=6 -U 'Mozilla/5.0' --header='Accept: application/json' -qO- "$url" 2>/dev/null ;;
+      *)   timeout 7 wget --tries=1 --timeout=6 -U 'Mozilla/5.0' --header='Accept: application/json' -qO- "$url" 2>/dev/null ;;
     esac
   else
     return 1
@@ -3608,15 +3608,24 @@ ip_probe_geo_for_family(){
   f_ipsb="$tmp_dir/ipsb.json"
   f_ipquery="$tmp_dir/ipquery.json"
   f_rdap="$tmp_dir/rdap.json"
+  local f_ripe="$tmp_dir/ripe.json"
   (
     if ! ip_probe_http_get "https://ipinfo.io/${ip}/json" > "$f_ipinfo" || [ ! -s "$f_ipinfo" ]; then
       ip_probe_http_get "https://v6.ipinfo.io/${ip}/json" > "$f_ipinfo" || :
     fi
   ) &
   ( ip_probe_http_get "https://api.ip2location.io/?ip=${ip}" > "$f_ip2loc" || : ) &
-  ( ip_probe_http_get "https://api.ip.sb/geoip/${ip}" > "$f_ipsb" || : ) &
+  (
+    if ! ip_probe_http_get "https://api.ip.sb/geoip/${ip}" > "$f_ipsb" || [ ! -s "$f_ipsb" ]; then
+      ip_probe_http_get "https://get.geojs.io/v1/ip/geo/${ip}.json" > "$f_ipsb" || :
+    fi
+  ) &
   ( ip_probe_http_get "https://api.ipquery.io/${ip}" > "$f_ipquery" || : ) &
-  ( ip_probe_http_get "https://rdap.org/ip/${ip}" > "$f_rdap" || : ) &
+  (
+    if ! ip_probe_http_get "https://stat.ripe.net/data/rir-stats-country/data.json?resource=${ip}" > "$f_ripe" || [ ! -s "$f_ripe" ]; then
+      ip_probe_http_get "https://rdap.org/ip/${ip}" > "$f_rdap" || :
+    fi
+  ) &
   wait
 
   if [ -s "$f_ipinfo" ]; then
@@ -3657,6 +3666,7 @@ ip_probe_geo_for_family(){
     city=$(ip_geo_json_str city < "$f_ipsb")
     asn=$(ip_geo_json_atom asn < "$f_ipsb")
     as_name=$(ip_geo_json_str organization < "$f_ipsb")
+    [ -n "$as_name" ] || as_name=$(ip_geo_json_str organization_name < "$f_ipsb")
     [ -n "$as_name" ] || as_name=$(ip_geo_json_str isp < "$f_ipsb")
     if printf '%s' "$cc" | grep -Eq '^[A-Z]{2}$'; then
       loc_ipsb=$(ip_geo_format_loc "$cc" "$reg" "$city" "$cname")
@@ -3705,22 +3715,32 @@ ip_probe_geo_for_family(){
     esac
   fi
 
-  if [ -s "$f_rdap" ]; then
-    rdap_cc=$(ip_geo_json_str country 1 < "$f_rdap")
-    if printf '%s' "$rdap_cc" | grep -Eq '^[A-Z]{2}$' && [ -n "$primary_cc" ]; then
-      if [ "$rdap_cc" = "$primary_cc" ]; then
-        native_str="原生 IP（RIR 注册 ${rdap_cc} = 定位 ${primary_cc}）"
-        native_state='native'
-      elif [ "$rdap_cc" = EU ]; then
-        native_str="区域注册（RIR 注册 EU，定位 ${primary_cc}）"
-        native_state='regional'
-      else
-        native_str="广播 IP（RIR 注册 ${rdap_cc} ≠ 定位 ${primary_cc}）"
-        native_state='broadcast'
+  rdap_cc=''
+  if [ -s "$f_ripe" ]; then
+    rdap_cc=$(ip_geo_json_str location < "$f_ripe")
+  fi
+  if ! printf '%s' "$rdap_cc" | grep -Eq '^[A-Z]{2}$'; then
+    [ -s "$f_rdap" ] || ip_probe_http_get "https://rdap.org/ip/${ip}" > "$f_rdap" || :
+    if [ -s "$f_rdap" ]; then
+      rdap_cc=$(ip_geo_json_str country 1 < "$f_rdap")
+      if ! printf '%s' "$rdap_cc" | grep -Eq '^[A-Z]{2}$'; then
+        rdap_cc=$(ip_geo_json_str cc < "$f_rdap")
       fi
     fi
   fi
-  [ -n "$native_str" ] || native_str='未确认（RIR RDAP 未返回注册国）'
+  if printf '%s' "$rdap_cc" | grep -Eq '^[A-Z]{2}$' && [ -n "$primary_cc" ]; then
+    if [ "$rdap_cc" = "$primary_cc" ]; then
+      native_str="原生 IP（RIR 注册 ${rdap_cc} = 定位 ${primary_cc}）"
+      native_state='native'
+    elif [ "$rdap_cc" = EU ]; then
+      native_str="区域注册（RIR 注册 EU，定位 ${primary_cc}）"
+      native_state='regional'
+    else
+      native_str="广播 IP（RIR 注册 ${rdap_cc} ≠ 定位 ${primary_cc}）"
+      native_state='broadcast'
+    fi
+  fi
+  [ -n "$native_str" ] || native_str='未确认（RIR 未返回注册国）'
   [ -n "$type_str" ] || type_str='未确认'
   [ -n "$risk_str" ] || risk_str='未确认'
   [ -n "$asn_str" ] || asn_str='未确认'
@@ -12664,7 +12684,7 @@ case "$v4_ip_native_state" in native) nat_col4="$C_GREEN" ;; broadcast) nat_col4
 case "$v6_ip_native_state" in native) nat_col6="$C_GREEN" ;; broadcast) nat_col6="$C_YELLOW" ;; esac
 print_ip_detail_row "服务器地区：" "IPinfo"         "$v4_geo_ipinfo" "$v6_geo_ipinfo"
 print_ip_detail_row ""             "IP2Location"    "$v4_geo_ip2loc" "$v6_geo_ip2loc"
-print_ip_detail_row ""             "MaxMind(ip.sb)" "$v4_geo_ipsb"   "$v6_geo_ipsb"
+print_ip_detail_row ""             "MaxMind"        "$v4_geo_ipsb"   "$v6_geo_ipsb"
 print_ip_detail_row "IP 质量属性：" "ASN / 组织"    "$v4_ip_asn"     "$v6_ip_asn"
 print_ip_detail_row ""             "IP 类型"        "$v4_ip_type"    "$v6_ip_type"
 print_ip_detail_row ""             "IP 性质"        "$v4_ip_native"  "$v6_ip_native" "$nat_col4" "$nat_col6"

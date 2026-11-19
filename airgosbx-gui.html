@@ -8,7 +8,7 @@
     参数、默认值、协议归属、开关与互斥、校验、命令生成与还原及功能说明必须保持一致。
     修改 showvars、协议归属、secp、warp、rep 或 URL 生成规则时，
     同时核对 PROTOCOLS、XRAY_PROFILES、FIELDS、collect、savedCommandPlan 和 validate。
-    GUI 版本：v1.1.1 (20261119.01)。XHTTP_DEFAULTS_VERSION 与 BUILD.presetVersion 仅在默认参数变化时更新。
+    GUI 版本：v1.2 (20261119.02)。XHTTP_DEFAULTS_VERSION 与 BUILD.presetVersion 仅在默认参数变化时更新。
     发布前须核对配套脚本是否已同步到 GitHub main；存在未发布接口变更时 remoteAligned 保持 false。
     无外部资源、请求、遥测或自动持久化。
     页面只生成文本，不执行命令。选择“对照脚本”时只读取用户明确选择的文件。
@@ -422,7 +422,7 @@
         <label class="ui-preference" for="ui-theme"><span>主题</span><select id="ui-theme" autocomplete="off"><option value="light">日间</option><option value="dark">夜间</option></select></label>
         <label class="ui-preference" for="ui-language"><span>语言</span><select id="ui-language" autocomplete="off"><option value="zh" data-ui-raw>简体中文</option><option value="en" data-ui-raw>English</option></select></label>
       </div>
-      <span id="build-version" class="meta">v1.1.1 (20261119.01) · 离线单文件</span><button id="reset" type="button">重置表单</button>
+      <span id="build-version" class="meta">v1.2 (20261119.02) · 离线单文件</span><button id="reset" type="button">重置表单</button>
     </div>
   </header>
   <noscript><p class="notice warning">此页面需要浏览器 JavaScript 才能生成命令。所有逻辑都在当前 HTML 内，不加载外部资源。</p></noscript>
@@ -483,7 +483,7 @@
         <div class="reference-body">
           <p class="section-description">脚本与 GUI 的维护对照</p><p class="intro">页面以当前工作区脚本为依据；HTML 不会自动读取磁盘或远端代码。</p>
           <div class="table-wrap"><table class="help-table"><thead><tr><th>功能位置</th><th>脚本入口</th><th>GUI 同步点</th></tr></thead><tbody><tr><td>协议及所属核心</td><td><code>showvars / ins</code></td><td>协议清单、能力标记、核心推导</td></tr><tr><td>Xray 扩展</td><td><code>各入口的 extra / mode / fm 变量</code></td><td>按协议默认方案、FM 组合与独立调参</td></tr><tr><td>XDRIVE 云存储</td><td><code>xdrive / xdriveservice / xdrivefolder / xdriveauthfile / xdriveclientfolder</code></td><td>后端与路径校验、条件字段、专用 JSON、命令往返</td></tr><tr><td>CDN / Argo</td><td><code>cdnym / argo / agn / agk</code></td><td>接入条件、端口、隧道绑定</td></tr><tr><td>出站</td><td><code>warp / secpN / securlN / secuotN</code></td><td>B1–B16 的目标、独立范围及 WARP 出站互斥；兼容旧版单 B</td></tr><tr><td>订阅</td><td><code>sub / subauth / subpt / subid / subpass / res</code></td><td>独立密码保护开关、路径 Token、手填或 VPS 独立随机密码、已有保护模式恢复</td></tr><tr><td>命令生成与还原</td><td><code>环境变量与管理命令</code></td><td>字段映射、引用转义、旧版通用参数继承</td></tr><tr><td>生命周期</td><td><code>rep / del / upx / ups …</code></td><td>操作清单、参数过滤、影响说明</td></tr></tbody></table></div>
-          <p class="note">覆盖范围：常用部署、证书、订阅、出站和管理入口。XDNS / XICMP 使用 Xray ≥26.7.28 的专用配置；XDRIVE 要求两端核心包含 2026-09-19 合并的官方实现，v26.9.9 不支持。这三类入口使用完整客户端 JSON，不加入通用订阅。XDRIVE 不监听公网端口，Google Drive 模式的 JSON 含云盘凭据，脚本仅提示路径。目录中标为不可配置的核心字段未接入脚本，内部证书续期和跳跃规则恢复命令由脚本管理。端口占用、服务归属、证书和真实连通性须在 VPS 检查。</p><p class="note">对照功能只提取你选择的脚本中的变量声明与帮助条目，不执行、不上传。它能提示变量清单差异，不能代替调用逻辑审查。</p><div class="tools" style="margin-top:14px"><label class="file-label">选择 airgosbx.sh 对照<input id="source-file" class="visually-hidden" type="file" accept=".sh,text/plain"></label><button id="clear-compare" type="button" class="text-button">清除对照</button></div><p id="sync-result" class="sync-result" role="status">GUI 版本：v1.1.1 (20261119.01)；XHTTP 默认参数版本：V26.09.08.1。尚未读取其他文件。</p>
+          <p class="note">覆盖范围：常用部署、证书、订阅、出站和管理入口。XDNS / XICMP 使用 Xray ≥26.7.28 的专用配置；XDRIVE 要求两端核心包含 2026-09-19 合并的官方实现，v26.9.9 不支持。这三类入口使用完整客户端 JSON，不加入通用订阅。XDRIVE 不监听公网端口，Google Drive 模式的 JSON 含云盘凭据，脚本仅提示路径。目录中标为不可配置的核心字段未接入脚本，内部证书续期和跳跃规则恢复命令由脚本管理。端口占用、服务归属、证书和真实连通性须在 VPS 检查。</p><p class="note">对照功能只提取你选择的脚本中的变量声明与帮助条目，不执行、不上传。它能提示变量清单差异，不能代替调用逻辑审查。</p><div class="tools" style="margin-top:14px"><label class="file-label">选择 airgosbx.sh 对照<input id="source-file" class="visually-hidden" type="file" accept=".sh,text/plain"></label><button id="clear-compare" type="button" class="text-button">清除对照</button></div><p id="sync-result" class="sync-result" role="status">GUI 版本：v1.2 (20261119.02)；XHTTP 默认参数版本：V26.09.08.1。尚未读取其他文件。</p>
         </div>
       </details>
     </main>
@@ -523,7 +523,7 @@
 <script>
 /* 配置清单集中在这里，避免表单、架构图与命令生成各自维护一套名称。 */
 'use strict';
-const BUILD = {version:'v1.1.1 (20261119.01)',presetVersion:'V26.09.08.1',remoteAligned:true, source:'https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/main/airgosbx.sh', schema:'通用字段基线：Xray v26.3.27；XDNS/XICMP：v26.7.28；XDRIVE：须包含 2026-09-19 合并的官方实现，v26.9.9 不支持'};
+const BUILD = {version:'v1.2 (20261119.02)',presetVersion:'V26.09.08.1',remoteAligned:true, source:'https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/main/airgosbx.sh', schema:'通用字段基线：Xray v26.3.27；XDNS/XICMP：v26.7.28；XDRIVE：须包含 2026-09-19 合并的官方实现，v26.9.9 不支持'};
 const OPERATIONS = [
   ['cert','维护已有证书（cert）'],
   ['install','安装 / 创建节点'],['rep','重建协议配置（rep）'],['restore-ip','恢复原 IP 策略'],['list','显示节点（list）'],['status','资源与流量（status）'],['update','更新脚本（update）'],['res','重启代理与隧道（res）'],['start','启动核心（start）'],['stop','停止核心（stop）'],['restart','重启核心（restart）'],['reload','重载配置（reload）'],['upx','升级 Xray（upx）'],['ups','升级 Sing-box（ups）'],['downx','降级 Xray（downx）'],['downs','降级 Sing-box（downs）'],['del','卸载（del）'],['vars','查看变量（vars）'],['cmds','查看命令（cmds）'],['help','完整帮助（help）']
@@ -2716,7 +2716,7 @@ const UI_EN_TEXT=Object.freeze({
   "Airgosbx · 本地配置工作台": "Airgosbx · Local Configuration Workbench",
   "配置工作台": "Configuration Workbench",
   "配置连接，生成 VPS 命令。": "Configure connections and generate VPS commands.",
-  "v1.1.1 (20261119.01) · 离线单文件": "v1.1.1 (20261119.01) · Offline, single file",
+  "v1.2 (20261119.02) · 离线单文件": "v1.2 (20261119.02) · Offline, single file",
   "重置表单": "Reset form",
   "此页面需要浏览器 JavaScript 才能生成命令。所有逻辑都在当前 HTML 内，不加载外部资源。": "This page requires browser JavaScript to generate commands. All logic is contained in this HTML file; no external resources are loaded.",
   "连接概览": "Connection overview",
@@ -2793,7 +2793,7 @@ const UI_EN_TEXT=Object.freeze({
   "对照功能只提取你选择的脚本中的变量声明与帮助条目，不执行、不上传。它能提示变量清单差异，不能代替调用逻辑审查。": "The comparison only extracts variable declarations and help entries from the script you select. It does not execute or upload the file. It can flag differences in the variable list, but cannot replace a review of the calling logic.",
   "选择 airgosbx.sh 对照": "Select airgosbx.sh to compare",
   "清除对照": "Clear comparison",
-  "GUI 版本：v1.1.1 (20261119.01)；XHTTP 默认参数版本：V26.09.08.1。尚未读取其他文件。": "GUI version: v1.1.1 (20261119.01); XHTTP default parameter version: V26.09.08.1. No other files have been read.",
+  "GUI 版本：v1.2 (20261119.02)；XHTTP 默认参数版本：V26.09.08.1。尚未读取其他文件。": "GUI version: v1.2 (20261119.02); XHTTP default parameter version: V26.09.08.1. No other files have been read.",
   "VPS 命令与配置": "VPS command & configuration",
   "协议": "Protocols",
   "命令区域模式": "Command panel mode",
