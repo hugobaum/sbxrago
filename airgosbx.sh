@@ -2,7 +2,7 @@
 # 配套维护：airgosbx.sh 与 airgosbx-gui.html 是同一套工具，必须成套维护、提交和发布。
 # 修改任一文件时，须同步核对并修改另一文件的对应内容。
 # 参数、默认值、协议归属、开关与互斥、校验、命令生成与还原及功能说明必须保持一致。
-AIRGOSBX_VERSION='v1.2 (20261119.02)'
+AIRGOSBX_VERSION='v1.3 (20261119.03)'
 # 仅在内置 XHTTP 默认参数改变时更新此标记，普通脚本版本更新不使旧命令失效。
 XHTTP_DEFAULTS_VERSION='V26.09.08.1'
 agsbxurl="${agsbxurl:-https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/main/airgosbx.sh}"
@@ -233,7 +233,20 @@ wait_component_listeners(){
   local core="$1" config tag file network port ready attempt pids listeners entry specs
   local -a planned_ports=()
   if [ "$core" = caddy ]; then
-    for attempt in {1..5}; do component_owns_listener caddy 443 tcp && return 0; sleep 1; done
+    for attempt in {1..5}; do
+      pids=$(agsbx_component_pids caddy)
+      listeners=$(ss -H -lntup 2>/dev/null) || return 1
+      if [ -n "$pids" ] && component_owns_listener caddy 443 tcp "$pids" "$listeners"; then
+        if component_owns_listener caddy 443 udp "$pids" "$listeners"; then
+          return 0
+        fi
+        if [ "$attempt" -eq 5 ]; then
+          echo "警告：Caddy 已监听 443/TCP（H2 可用），但未检测到 443/UDP 监听（HTTP/3 不可用）；请检查是否有其他进程占用 UDP/443。" >&2
+          return 0
+        fi
+      fi
+      sleep 1
+    done
     return 1
   fi
   [ "$core" = xray ] && config=xr.json || config=sb.json
@@ -2585,10 +2598,10 @@ load_xray_profile() {
   fi
 }
 
-# Caddyfile 双引号参数转义：防止 Naive 自定义凭据中的空格、引号或反斜杠破坏配置结构。
+# Caddyfile 双引号参数转义：Caddy lexer 在双引号内仅反转义 \"，其余反斜线按字面保留；
+# 反斜线已由 validate_naive_credentials 拦截，此处仅转义双引号，避免解析结果与导出凭据不一致。
 caddyfile_quote() {
   local input="$1"
-  input=${input//\\/\\\\}
   input=${input//\"/\\\"}
   printf '"%s"' "$input"
 }
@@ -2981,9 +2994,10 @@ enable_system_bbr() {
   mem_total_mb=$((mem_total_kb / 1024))
 
   # 自适应分级缓冲区配置策略：
-  #   - 极速小鸡 (≤512MB RAM): 限制最大缓冲区为 8MB (防止 OOM)
+  #   - 低配 VPS (≤512MB RAM): 限制最大缓冲区为 8MB (防止 OOM)
   #   - 标准 VPS (512MB < RAM ≤ 1536MB, 如1C1G): 最大缓冲区为 16MB (平衡安全与带宽)
-  #   - 高配 VPS (>1536MB RAM): 最大充盈 32MB (最大化释放高带宽高延迟长距离传输性能)
+  #   - 进阶 VPS (1536MB < RAM ≤ 3584MB, 如2G): 最大缓冲区为 32MB
+  #   - 高配 VPS (>3584MB RAM, ≥4G): TCP 最大窗口缓冲提升至 64MB (对齐 NaiveProxy 高 BDP 单连接建议)，UDP 维持 32MB
   if [ "$mem_total_mb" -gt 0 ] && [ "$mem_total_mb" -le 512 ]; then
     tcp_max_buf=8388608
     udp_buf=8388608
@@ -2994,18 +3008,21 @@ enable_system_bbr() {
     udp_buf=16777216
     default_buf=524288
     echo "检测到 VPS 物理内存为 ${mem_total_mb}MB (标准型)，已自适应将网络最大缓冲区设置为 16MB (平衡型)。🚀"
-  else
+  elif [ "$mem_total_mb" -gt 1536 ] && [ "$mem_total_mb" -le 3584 ]; then
     tcp_max_buf=33554432
     udp_buf=33554432
     default_buf=524288
-    if [ "$mem_total_mb" -gt 0 ]; then
-      echo "检测到 VPS 物理内存为 ${mem_total_mb}MB (高配型)，已自适应将网络最大缓冲区设置为 32MB 以最大化吞吐性能。🔥"
-    else
-      # 内存读取异常时兜底采用标准配置
-      tcp_max_buf=16777216
-      udp_buf=16777216
-      default_buf=524288
-    fi
+    echo "检测到 VPS 物理内存为 ${mem_total_mb}MB (进阶型)，已自适应将网络最大缓冲区设置为 32MB 以提升吞吐性能。🚀"
+  elif [ "$mem_total_mb" -gt 3584 ]; then
+    tcp_max_buf=67108864
+    udp_buf=33554432
+    default_buf=524288
+    echo "检测到 VPS 物理内存为 ${mem_total_mb}MB (高配型)，已自适应将 TCP 最大缓冲区设置为 64MB、UDP 为 32MB 以释放高 BDP 线路吞吐。🔥"
+  else
+    # 内存读取异常时兜底采用标准配置
+    tcp_max_buf=16777216
+    udp_buf=16777216
+    default_buf=524288
   fi
 
   local cur_rmem cur_wmem cur_rmem_def cur_wmem_def cur_udp_rmin cur_udp_wmin
@@ -3057,7 +3074,7 @@ enable_system_bbr() {
     # —— 通用 TCP 队列、连接超时与跨网路径优化（与 BBR 解耦，无 BBR 时仍生效） ——
     printf 'net.ipv4.tcp_slow_start_after_idle = 0\n'
     printf 'net.ipv4.tcp_rmem = 4096 87380 %s\n' "$tcp_max_buf"
-    printf 'net.ipv4.tcp_wmem = 4096 65536 %s\n' "$tcp_max_buf"
+    printf 'net.ipv4.tcp_wmem = 4096 131072 %s\n' "$tcp_max_buf"
     printf 'net.ipv4.tcp_notsent_lowat = 131072\n'
     printf 'net.ipv4.tcp_fin_timeout = 30\n'
     printf 'net.ipv4.tcp_keepalive_time = 1200\n'
@@ -3065,7 +3082,8 @@ enable_system_bbr() {
     printf 'net.core.somaxconn = 8192\n'
     printf 'net.core.netdev_max_backlog = 16384\n'
     printf 'net.ipv4.tcp_mtu_probing = 1\n'
-    printf 'net.ipv4.tcp_fastopen = 3\n'
+    # 对齐 NaiveProxy 官方 Performance-Tuning 抗指纹建议，显式关闭 TCP Fast Open。
+    printf 'net.ipv4.tcp_fastopen = 0\n'
     # —— BBR 拥塞控制（内核可用时启用） ——
     if [ "$bbr_available" = yes ]; then
       printf 'net.core.default_qdisc = fq\n'
@@ -4427,18 +4445,18 @@ if [ "$method" = dl ]; then
     }
   ')
   if [ -z "$latest_tag" ] || [ -z "$caddy_url" ]; then
-    echo "错误：无法从 GitHub Latest API 确认当前版本及目标资产，已拒绝无来源下载。"
+    echo "错误：无法从 GitHub Latest API 确认当前版本及目标资产，已拒绝无来源下载（如遇 API 限流或预编译不可用，可改用 naivebuild=build 现场编译）。"
     rm -rf "$cstage"; return 1
   fi
   if ! printf '%s' "$caddy_digest" | grep -Eq '^[0-9a-f]{64}$'; then
-    echo "错误：当前 Latest 版本 $latest_tag 未提供资产 $caddy_asset 的有效 SHA256，已终止安装。"
+    echo "错误：当前 Latest 版本 $latest_tag 未提供资产 $caddy_asset 的有效 SHA256，已终止安装（可改用 naivebuild=build 现场编译）。"
     rm -rf "$cstage"; return 1
   fi
   echo "正在从 klzgrad/forwardproxy 官方发布页下载最新版预编译 Caddy(naive)：$latest_tag ……"
   local url="$caddy_url"
   local tmp="$cstage/caddy.tar.xz"
   (command -v curl >/dev/null 2>&1 && curl -fLo "$tmp" -# --retry 2 "$url") || (command -v wget >/dev/null 2>&1 && wget -O "$tmp" --tries=2 "$url")
-  if [ ! -s "$tmp" ]; then echo "错误：Caddy 最新版下载失败（网络不可达或 Latest 发布缺少对应资源）。"; rm -rf "$cstage"; return 1; fi
+  if [ ! -s "$tmp" ]; then echo "错误：Caddy 最新版下载失败（网络不可达或 Latest 发布缺少对应资源；可改用 naivebuild=build 现场编译）。"; rm -rf "$cstage"; return 1; fi
   # SHA256 必须来自同一 Latest API 响应中、名称精确匹配的目标资产；取不到时已在下载前失败关闭。
   caddy_actual=$(sha256sum "$tmp" 2>/dev/null | awk '{print $1}')
   if [ "$caddy_digest" != "$caddy_actual" ]; then
@@ -4517,7 +4535,7 @@ else
          export GOROOT="$cstage/go" GOPATH="$cstage/gopath" GOBIN="$cstage/gobin"
          export GOCACHE="$cstage/gocache" GOMODCACHE="$cstage/gomodcache" GOTMPDIR="$cstage/gotmp" TMPDIR="$cstage/tmp"
          export XDG_CACHE_HOME="$cstage/xdg_cache" XDG_CONFIG_HOME="$cstage/xdg_config"
-         export GOENV=off GOWORK=off GO111MODULE=on GOTOOLCHAIN=local
+         export GOENV=off GOWORK=off GO111MODULE=on GOTOOLCHAIN=local CGO_ENABLED=0
          export GOPROXY="https://proxy.golang.org,direct" GOSUMDB="sum.golang.org"
          export GIT_TERMINAL_PROMPT=0 GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_COUNT=0
          export PATH="$GOROOT/bin:$GOBIN:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -9061,29 +9079,27 @@ cat > "$caddyfile_tmp" <<EOF
   tls $naivemail
   encode
 
-  # 1. 防收录标记与基础指纹收敛；避免加入会改变源站正常浏览行为的额外响应策略。
+  # 1. 防收录标记与基础指纹收敛；保留 Caddy 默认 Server 头以对齐常见 Caddy 站点外观。
   header {
     X-Robots-Tag "noindex, nofollow, noarchive"
-    -Server
     -X-Powered-By
   }
 
-  # 2. 本地拦截 robots.txt 请求，防止爬虫进一步探索
+  # 2. 未认证落入的 CONNECT 探测在本机直接返回 405，不透传到外部伪装站。
+  @unauth_connect method CONNECT
+  handle @unauth_connect {
+    respond 405
+  }
+
+  # 3. 本地拦截 robots.txt 请求，防止合规搜索引擎索引 SNI 域名（保持连接复用，不强制 close）。
   handle /robots.txt {
     respond 200 {
       body "User-agent: *
 Disallow: /"
-      close
     }
   }
 
-  # 3. 只拦截主动声明身份的常见爬虫；不把普通浏览器、命令行客户端或探针当作爬虫。
-  @obvious_crawler header_regexp User-Agent (?i)(Googlebot|bingbot|Baiduspider|YandexBot|PetalBot|Applebot|DuckDuckBot|AhrefsBot|SemrushBot|MJ12bot|DotBot|BLEXBot|Bytespider|GPTBot|OAI-SearchBot|ClaudeBot|CCBot|Amazonbot|crawler|spider|scrapy)
-  handle @obvious_crawler {
-    respond 404
-  }
-
-  # 4. NaiveProxy 代理核心组件
+  # 4. NaiveProxy 代理核心组件（已由全局 order forward_proxy first 排在最前）
   # 二级模式仅允许 CONNECT 进入代理，普通网站请求继续进入下面的伪装站。
   $naive_connect_rule
   forward_proxy${naive_forward_matcher} {
@@ -9102,17 +9118,25 @@ EOF
 else
 cat >> "$caddyfile_tmp" <<'EOF'
 
-    # 未启用二级出站时保留 Caddy 本地 ACL；二级模式的目标解析与私网拦截由配套 B 入口承担。
+    # 未启用二级出站时保留 Caddy 本地 ACL（Go net.IPNet 会自动将 IPv4-mapped IPv6 归入对应 IPv4 规则）；
+    # 二级模式的目标解析与私网拦截由配套 B 入口承担。
     acl {
+      deny 0.0.0.0/8
       deny 10.0.0.0/8
       deny 100.64.0.0/10
       deny 127.0.0.0/8
       deny 169.254.0.0/16
       deny 172.16.0.0/12
       deny 192.168.0.0/16
+      deny 224.0.0.0/4
+      deny 240.0.0.0/4
+      deny ::/128
       deny ::1/128
       deny fc00::/7
       deny fe80::/10
+      deny ff00::/8
+      deny localhost
+      deny *.localhost
       allow all
     }
 EOF
@@ -9193,10 +9217,15 @@ StartLimitIntervalSec=0
 [Service]
 Type=notify
 NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 PrivateTmp=true
 ProtectSystem=full
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
 UMask=0077
 LimitNOFILE=1048576
+LimitNPROC=512
 TimeoutStartSec=0
 TimeoutStopSec=5s
 WorkingDirectory=$HOME/agsbx
@@ -9930,6 +9959,10 @@ validate_naive_credentials(){
   }
   case "$naiveuser" in
     *:*) echo "错误：Naive 用户名不能包含冒号，否则 HTTP Basic 认证无法无歧义转交。"; return 1 ;;
+  esac
+  # Caddy 双引号分词仅反转义 \"，不反转义 \\；禁止反斜线避免 Caddyfile 解析结果与导出凭据不一致。
+  case "$naiveuser$naivepass" in
+    *\\*) echo '错误：Naive 用户名和密码不能包含反斜线 \，以免 Caddyfile 解析结果与导出凭据不一致。'; return 1 ;;
   esac
   # Caddy 在分词前替换环境变量；引号不能保护 {$，未闭合的表达式也可能跨行替换。
   if [[ "$naiveuser" == *'{$'* || "$naivepass" == *'{$'* ]]; then
@@ -13115,11 +13148,11 @@ naiveuser_uri=$(uri_percent_encode "$naiveuser")
 naivepass_uri=$(uri_percent_encode "$naivepass")
 naive_h2_title=$(uri_percent_encode "${sxname}naive-h2-$hostname")
 naive_h3_title=$(uri_percent_encode "${sxname}naive-h3-$hostname")
-naive_h2_link="naive+https://${naiveuser_uri}:${naivepass_uri}@$naivedomain:443?security=tls&sni=$naivedomain&insecure=0&allowInsecure=0#${naive_h2_title}"
-naive_h3_link="naive+quic://${naiveuser_uri}:${naivepass_uri}@$naivedomain:443?congestion_control=bbr&security=tls&sni=$naivedomain&insecure=0&allowInsecure=0#${naive_h3_title}"
-# Shadowrocket 使用 http2/http3 scheme 和 padding 参数，格式对照 YG argosbx 的 Naive 分享输出。
-naive_sr_h2_link="http2://${naiveuser_uri}:${naivepass_uri}@$naivedomain:443?security=tls&sni=$naivedomain&insecure=0&allowInsecure=0&padding=1&tfo=1#${naive_h2_title}"
-naive_sr_h3_link="http3://${naiveuser_uri}:${naivepass_uri}@$naivedomain:443?security=tls&sni=$naivedomain&insecure=0&allowInsecure=0&padding=1&tfo=1#${naive_h3_title}"
+naive_h2_link="naive+https://${naiveuser_uri}:${naivepass_uri}@$naivedomain:443?padding=1&security=tls&sni=$naivedomain&insecure=0&allowInsecure=0#${naive_h2_title}"
+naive_h3_link="naive+quic://${naiveuser_uri}:${naivepass_uri}@$naivedomain:443?padding=1&congestion_control=bbr&security=tls&sni=$naivedomain&insecure=0&allowInsecure=0#${naive_h3_title}"
+# Shadowrocket 使用 http2/http3 scheme 和 padding 参数，不启用 tfo（对齐官方抗指纹建议）。
+naive_sr_h2_link="http2://${naiveuser_uri}:${naivepass_uri}@$naivedomain:443?security=tls&sni=$naivedomain&insecure=0&allowInsecure=0&padding=1#${naive_h2_title}"
+naive_sr_h3_link="http3://${naiveuser_uri}:${naivepass_uri}@$naivedomain:443?security=tls&sni=$naivedomain&insecure=0&allowInsecure=0&padding=1#${naive_h3_title}"
 append_node_link "$naive_h2_link" || return 1
 append_node_link "$naive_h3_link" || return 1
 append_node_link "$naive_sr_h2_link" || return 1
@@ -13127,7 +13160,7 @@ append_node_link "$naive_sr_h3_link" || return 1
 node_title "💣【 NaiveProxy 】（Caddy 转发代理）" "$(protocol_outbound_badge naive caddy)"
 kv_row "账号：" "$naiveuser" 10
 kv_row "密码：" "$naivepass" 10
-echo "  原生分享（HTTPS · H1/H2，TCP）："
+echo "  原生分享（HTTPS · H2，TCP）："
 echo "$naive_h2_link"
 echo "  原生分享（QUIC · H3，UDP）："
 echo "$naive_h3_link"
