@@ -8,7 +8,7 @@
     参数、默认值、协议归属、开关与互斥、校验、命令生成与还原及功能说明必须保持一致。
     修改 showvars、协议归属、secp、warp、rep 或 URL 生成规则时，
     同时核对 PROTOCOLS、XRAY_PROFILES、FIELDS、collect、savedCommandPlan 和 validate。
-    GUI 版本：v1.1.1 (20261119)。XHTTP_DEFAULTS_VERSION 与 BUILD.presetVersion 仅在默认参数变化时更新。
+    GUI 版本：v1.1.1 (20261119.01)。XHTTP_DEFAULTS_VERSION 与 BUILD.presetVersion 仅在默认参数变化时更新。
     发布前须核对配套脚本是否已同步到 GitHub main；存在未发布接口变更时 remoteAligned 保持 false。
     无外部资源、请求、遥测或自动持久化。
     页面只生成文本，不执行命令。选择“对照脚本”时只读取用户明确选择的文件。
@@ -422,7 +422,7 @@
         <label class="ui-preference" for="ui-theme"><span>主题</span><select id="ui-theme" autocomplete="off"><option value="light">日间</option><option value="dark">夜间</option></select></label>
         <label class="ui-preference" for="ui-language"><span>语言</span><select id="ui-language" autocomplete="off"><option value="zh" data-ui-raw>简体中文</option><option value="en" data-ui-raw>English</option></select></label>
       </div>
-      <span id="build-version" class="meta">v1.1.1 (20261119) · 离线单文件</span><button id="reset" type="button">重置表单</button>
+      <span id="build-version" class="meta">v1.1.1 (20261119.01) · 离线单文件</span><button id="reset" type="button">重置表单</button>
     </div>
   </header>
   <noscript><p class="notice warning">此页面需要浏览器 JavaScript 才能生成命令。所有逻辑都在当前 HTML 内，不加载外部资源。</p></noscript>
@@ -483,7 +483,7 @@
         <div class="reference-body">
           <p class="section-description">脚本与 GUI 的维护对照</p><p class="intro">页面以当前工作区脚本为依据；HTML 不会自动读取磁盘或远端代码。</p>
           <div class="table-wrap"><table class="help-table"><thead><tr><th>功能位置</th><th>脚本入口</th><th>GUI 同步点</th></tr></thead><tbody><tr><td>协议及所属核心</td><td><code>showvars / ins</code></td><td>协议清单、能力标记、核心推导</td></tr><tr><td>Xray 扩展</td><td><code>各入口的 extra / mode / fm 变量</code></td><td>按协议默认方案、FM 组合与独立调参</td></tr><tr><td>XDRIVE 云存储</td><td><code>xdrive / xdriveservice / xdrivefolder / xdriveauthfile / xdriveclientfolder</code></td><td>后端与路径校验、条件字段、专用 JSON、命令往返</td></tr><tr><td>CDN / Argo</td><td><code>cdnym / argo / agn / agk</code></td><td>接入条件、端口、隧道绑定</td></tr><tr><td>出站</td><td><code>warp / secpN / securlN / secuotN</code></td><td>B1–B16 的目标、独立范围及 WARP 出站互斥；兼容旧版单 B</td></tr><tr><td>订阅</td><td><code>sub / subauth / subpt / subid / subpass / res</code></td><td>独立密码保护开关、路径 Token、手填或 VPS 独立随机密码、已有保护模式恢复</td></tr><tr><td>命令生成与还原</td><td><code>环境变量与管理命令</code></td><td>字段映射、引用转义、旧版通用参数继承</td></tr><tr><td>生命周期</td><td><code>rep / del / upx / ups …</code></td><td>操作清单、参数过滤、影响说明</td></tr></tbody></table></div>
-          <p class="note">覆盖范围：常用部署、证书、订阅、出站和管理入口。XDNS / XICMP 使用 Xray ≥26.7.28 的专用配置；XDRIVE 要求两端核心包含 2026-09-19 合并的官方实现，v26.9.9 不支持。这三类入口使用完整客户端 JSON，不加入通用订阅。XDRIVE 不监听公网端口，Google Drive 模式的 JSON 含云盘凭据，脚本仅提示路径。目录中标为不可配置的核心字段未接入脚本，内部证书续期和跳跃规则恢复命令由脚本管理。端口占用、服务归属、证书和真实连通性须在 VPS 检查。</p><p class="note">对照功能只提取你选择的脚本中的变量声明与帮助条目，不执行、不上传。它能提示变量清单差异，不能代替调用逻辑审查。</p><div class="tools" style="margin-top:14px"><label class="file-label">选择 airgosbx.sh 对照<input id="source-file" class="visually-hidden" type="file" accept=".sh,text/plain"></label><button id="clear-compare" type="button" class="text-button">清除对照</button></div><p id="sync-result" class="sync-result" role="status">GUI 版本：v1.1.1 (20261119)；XHTTP 默认参数版本：V26.09.08.1。尚未读取其他文件。</p>
+          <p class="note">覆盖范围：常用部署、证书、订阅、出站和管理入口。XDNS / XICMP 使用 Xray ≥26.7.28 的专用配置；XDRIVE 要求两端核心包含 2026-09-19 合并的官方实现，v26.9.9 不支持。这三类入口使用完整客户端 JSON，不加入通用订阅。XDRIVE 不监听公网端口，Google Drive 模式的 JSON 含云盘凭据，脚本仅提示路径。目录中标为不可配置的核心字段未接入脚本，内部证书续期和跳跃规则恢复命令由脚本管理。端口占用、服务归属、证书和真实连通性须在 VPS 检查。</p><p class="note">对照功能只提取你选择的脚本中的变量声明与帮助条目，不执行、不上传。它能提示变量清单差异，不能代替调用逻辑审查。</p><div class="tools" style="margin-top:14px"><label class="file-label">选择 airgosbx.sh 对照<input id="source-file" class="visually-hidden" type="file" accept=".sh,text/plain"></label><button id="clear-compare" type="button" class="text-button">清除对照</button></div><p id="sync-result" class="sync-result" role="status">GUI 版本：v1.1.1 (20261119.01)；XHTTP 默认参数版本：V26.09.08.1。尚未读取其他文件。</p>
         </div>
       </details>
     </main>
@@ -523,7 +523,7 @@
 <script>
 /* 配置清单集中在这里，避免表单、架构图与命令生成各自维护一套名称。 */
 'use strict';
-const BUILD = {version:'v1.1.1 (20261119)',presetVersion:'V26.09.08.1',remoteAligned:true, source:'https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/main/airgosbx.sh', schema:'通用字段基线：Xray v26.3.27；XDNS/XICMP：v26.7.28；XDRIVE：须包含 2026-09-19 合并的官方实现，v26.9.9 不支持'};
+const BUILD = {version:'v1.1.1 (20261119.01)',presetVersion:'V26.09.08.1',remoteAligned:true, source:'https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/main/airgosbx.sh', schema:'通用字段基线：Xray v26.3.27；XDNS/XICMP：v26.7.28；XDRIVE：须包含 2026-09-19 合并的官方实现，v26.9.9 不支持'};
 const OPERATIONS = [
   ['cert','维护已有证书（cert）'],
   ['install','安装 / 创建节点'],['rep','重建协议配置（rep）'],['restore-ip','恢复原 IP 策略'],['list','显示节点（list）'],['status','资源与流量（status）'],['update','更新脚本（update）'],['res','重启代理与隧道（res）'],['start','启动核心（start）'],['stop','停止核心（stop）'],['restart','重启核心（restart）'],['reload','重载配置（reload）'],['upx','升级 Xray（upx）'],['ups','升级 Sing-box（ups）'],['downx','降级 Xray（downx）'],['downs','降级 Sing-box（downs）'],['del','卸载（del）'],['vars','查看变量（vars）'],['cmds','查看命令（cmds）'],['help','完整帮助（help）']
@@ -818,7 +818,8 @@ const FIELDS = {
   uuid:{label:'UUID / 通用密码',type:'password',placeholder:'留空自动生成',help:'VLESS / VMess 请用有效 UUID；部分协议仍复用它作密码。SOCKS 凭据、传输路径和订阅 Token 独立生成。'},
   reym:{label:'REALITY 目标域名',placeholder:'留空由脚本按地区选择'},
   ipv:{label:'系统 IP 栈策略',options:[['keep','保持现状，不传 ipv'],['4','仅 IPv4'],['6','仅 IPv6'],['4;6','双栈，IPv4 优先'],['6;4','双栈，IPv6 优先'],['restore','取消受管策略，恢复原状态']],value:'keep',help:'会影响 VPS 网络配置；ipv=6 在脚本中要求 NetworkManager 等前提。'},
-  certMode:{label:'TLS 证书方案',help:'此选项配置 Xray / Sing-box 的共享 TLS 证书。订阅优先复用有效 Caddy / ACME 证书；申请或导入选项仅在没有可复用 CA 时生效。Naive 由 Caddy 独立管理证书。独立 acme.sh 在申请和续期检查前获取官方 latest 稳定正式版，排除预发布版；配套 Cloudflare DNS 插件同步更新。更新失败时仅复用完整可用的旧版。客户端更新本身不申请证书，下载与运行发生在 VPS。',options:[['auto','脚本默认：复用或自签'],['interactive','ACME · 在 VPS 交互选择'],['http','ACME · HTTP-01'],['alpn','ACME · TLS-ALPN-01'],['dns','ACME · Cloudflare DNS-01'],['ip','ACME · IP 证书'],['external','导入 VPS 已有证书']],value:'auto'},
+  certMode:{label:'TLS 证书方案',help:'此选项配置 Xray / Sing-box 的共享 TLS 证书。存在有效 Caddy（Naive）或本地公信 CA 证书时会直接复用，不会重复启动 acme.sh；仅在没有可复用证书时才按下方方案申请或导入。Naive 由 Caddy 独立管理证书。独立 acme.sh 在申请和续期检查前获取官方 latest 稳定正式版（排除预发布版），并同步更新 Cloudflare DNS 插件；下载与运行发生在 VPS。',options:[['auto','脚本默认：复用或自签'],['acme','使用 acme.sh 申请公信 CA 证书'],['external','导入 VPS 已有证书']],value:'auto'},
+  acmeMethod:{label:'ACME 申请方式',options:[['interactive','在 VPS 终端交互选择'],['http','HTTP-01（域名，需 80/TCP）'],['alpn','TLS-ALPN-01（域名，需 443/TCP）'],['dns','Cloudflare DNS-01（免 80/443，支持泛域名）'],['ip','IP 短期证书（HTTP-01，需 80/TCP）']],value:'interactive',help:'留默认“在 VPS 终端交互选择”即可直接到 VPS 命令行挑选；若已确定方式，可直接选定并填写下方对应参数。'},
   certym:{label:'证书域名 / 导入证书的域名或 IP',placeholder:'proxy.example.com',help:'导入时可填写具体域名或 IP，也可留空由证书推导；泛域名证书应填写匹配的具体域名。VPS 会检查证书链、有效期、私钥和 SAN。'},
   certip:{label:'证书 IP',placeholder:'一个或两个公网 IP，空格分隔'},
   certwild:{label:'同时申请泛域名',type:'checkbox'},
@@ -831,7 +832,7 @@ const FIELDS = {
   CF_Email:{label:'旧版 Cloudflare 账户邮箱',type:'email',placeholder:'与 CF_Key 配对'},
   acmem:{label:'ACME 注册邮箱 / Caddy 邮箱',type:'email',placeholder:'填写你可以收信的邮箱地址',help:'ZeroSSL 通常只需邮箱地址，由客户端自动取得 EAB，无需手动填写下面的 ZeroSSL 密钥；已有完整 EAB 时邮箱可留空。SSL.com 首次注册需要邮箱和对应 EAB。Naive/Caddy 也使用此邮箱，但下面的 EAB 不会传给 Caddy。这里只填邮箱地址，不需要邮箱密码。'},
   acmetimeout:{label:'单家 CA 超时（秒）',placeholder:'5 至 600，留空使用默认值'},
-  acmeca:{label:'独立 acme.sh 使用的 CA',options:[['auto','在 VPS 交互选择 CA（无 TTY 按默认优先级）'],['letsencrypt','仅 Let’s Encrypt'],['zerossl','仅 ZeroSSL'],['sslcom','仅 SSL.com']],value:'auto',help:'只影响没有可复用证书时的独立申请，不改变 Caddy。选定具体 CA 与申请方式后可在 VPS 直接签发，免去终端交互；选默认项则在 VPS 终端交互选择（失败退回 CA 菜单，不自动切换），仅非交互无 TTY 环境按 Let’s Encrypt → ZeroSSL → 已配置 SSL.com 优先级尝试。HTTP-01 / DNS-01 支持三家；IP / TLS-ALPN-01 仅支持 Let’s Encrypt。续期沿用原签发 CA。'},
+  acmeca:{label:'ACME CA 机构',options:[['auto','在 VPS 终端交互选择（无 TTY 按默认优先级）'],['letsencrypt','Let’s Encrypt'],['zerossl','ZeroSSL'],['sslcom','SSL.com']],value:'auto',help:'选默认项时命令不指定 CA，在 VPS 终端先选 CA 再选方式（失败退回 CA 菜单，不自动切换）；无 TTY 环境按 Let’s Encrypt → ZeroSSL → 已配置 SSL.com 优先级尝试。选定具体 CA 后下方仅显示该 CA 需要的参数。HTTP-01 / DNS-01 支持三家；IP / TLS-ALPN-01 仅支持 Let’s Encrypt。'},
   zerossl_eab_kid:{label:'ZeroSSL EAB Key ID',type:'password',maxLength:512,help:'可选，与 HMAC 成对填写；留空可由上方注册邮箱自动获取 EAB。手动获取：登录 ZeroSSL → Developer → EAB → Generate；不要填写普通 API Access Key。仅用于脚本 HTTP-01 / DNS-01 的 ZeroSSL 签发。'},
   zerossl_eab_hmac:{label:'ZeroSSL EAB HMAC',type:'password',maxLength:1024,help:'与 Key ID 配对，粘贴时不要添加空格。完整手填后无需另外填写注册邮箱；不用于 Caddy、IP 证书、TLS-ALPN-01 或外部证书。'},
   sslcom_eab_kid:{label:'SSL.com EAB Key ID',type:'password',help:'仅 HTTP-01 / DNS-01 的 SSL.com 签发使用；不使用这家 CA 时可留空。首次使用请注册并登录 SSL.com，在 Dashboard → developers and integration → api credentials 中复制 Account/ACME Key，与 HMAC 配对填写。'},
@@ -872,7 +873,7 @@ for(let id=1;id<=SECONDARY_LIMIT;id++){
 const PRIVATE_KEYS = new Set(['agk','uuid','naivepass','mierupass','securl','CF_Token','CF_Key','zerossl_eab_kid','zerossl_eab_hmac','sslcom_eab_kid','sslcom_eab_hmac','obfs_pass','subid','subpass','fmpass','fmheader',...SECONDARY_KEYS.filter(key=>key.startsWith('securl'))]);
 PRIVATE_KEYS.add('xheaders64');
 for(const profile of Object.values(XRAY_PROFILES))for(const base of profile.keys)if(['fmpass','fmheader','xheaders64'].includes(base))PRIVATE_KEYS.add(profile.prefix+'_'+base);
-const UI_ONLY = new Set(['operation','scriptSource','scriptPath','scriptURL','target','version','cdnEnabled','argoEnabled','argoKind','warpEnabled','secondaryEnabled','certMode']);
+const UI_ONLY = new Set(['operation','scriptSource','scriptPath','scriptURL','target','version','cdnEnabled','argoEnabled','argoKind','warpEnabled','secondaryEnabled','certMode','acmeMethod']);
 let filter='all', secondaryGroups=[], lastCommand='', sourceNames=null, compareRevision=0, filterSnapshot=null, previousFilter='';
 let commandMode='generate',commandDraft='',importMessage='',importError=false,generatedPreview='',commandErrorCount=0,commandHasSecrets=false,sourcePreset='';
 const $=id=>document.getElementById(id);
@@ -1377,12 +1378,12 @@ function initialize(){
   mount('task-fields',['operation','scriptSource']);mount('source-fields',['scriptPath','scriptURL']);mount('management-fields',['target','version','ippz']);
   mount('access-fields',['cdnEnabled','argoEnabled']);mount('cdn-fields',['cdnym']);mount('argo-fields',['argo','argoKind','agn','agk']);
   mount('outbound-fields',['warpEnabled','secondaryEnabled']);mount('warp-fields',['warp']);resetSecondaryGroups();
-  mount('common-fields',['name','uuid','reym','ipv']);mount('certificate-fields',['certMode','acmeca']);
+  mount('common-fields',['name','uuid','reym','ipv']);mount('certificate-fields',['certMode']);
   const certHelp=$('help-certMode');certHelp.classList.add('note');
   $('certificate-notes-body').prepend(certHelp,node('p','note','已有证书仍有效时优先复用。受管 ACME / Caddy 证书每 6 小时巡检：普通证书至少提前 7 天安排续期，IP 短期证书至少提前 24 小时，并预留巡检间隔；客户端原有的更早续期安排继续保留。续期仍遵守 CA 限流等待时间。Caddy 如需提高续期比例但当前内核不支持，会保留原配置并报错；发起续期不等于 CA 一定签发成功。Caddy 初次申请等待 60 秒，失败后停止受管进程并关闭开机启动，保留账户和证书；排除原因后可在顶部选择“维护已有证书（cert）”手动尝试。导入的外部证书需自行续期。'));
   const certOperationLink=node('a','note','当前操作保留证书，查看维护入口');certOperationLink.id='cert-operation-link';certOperationLink.href='#operation';certOperationLink.dataset.issueTarget='operation';certOperationLink.hidden=true;
   $('certMode').closest('[data-field]').append(certOperationLink);
-  mount('certificate-specific',['certym','certip','certwild','certcrt','certkey','CF_Token','acmem','zerossl_eab_kid','zerossl_eab_hmac','sslcom_eab_kid','sslcom_eab_hmac']);
+  mount('certificate-specific',['acmeMethod','acmeca','certym','certip','certwild','certcrt','certkey','CF_Token','acmem','zerossl_eab_kid','zerossl_eab_hmac','sslcom_eab_kid','sslcom_eab_hmac']);
   mount('subscription-fields',['sub']);mount('subscription-specific',['subpt','subid','subauth','subpass']);
   const subscriptionNotes=node('details','wide');subscriptionNotes.append(node('summary','','订阅密码与客户端说明'));
   subscriptionNotes.append(node('p','note','订阅输出三个入口：“Clash 订阅地址”用于客户端获取 YAML；“聚合订阅地址”用于客户端获取 TXT；“网页查看”用于浏览器显示 TXT，一键复制或下载协议链接。三者共用密码保护开关，默认关闭；关闭时仅凭完整地址即可访问，TXT 网页不显示密码框。开启后，客户端用单独填写的密码解密订阅，无需 HTTP Basic 用户名；TXT 网页先加载 HTTPS 页面，再输入同一密码解锁并显示内容。密码不写入 URL，也不在页面中自动保存。'));
@@ -1543,6 +1544,7 @@ function plannedEgress(p,protocols){
   return match[1]?'WARP IPv'+match[1]+' 出站 / 其余直连':'WARP 出站';
 }
 function setFieldVisibility(key,visible){$(key).closest('[data-field]').hidden=!visible;}
+function effectiveCertMode(cert,method){return cert==='acme'?method:cert;}
 function zeroSSLEabApplicable(operation,cert,sub){
   return ['install','rep'].includes(operation)&&(operation!=='rep'||sub)&&(['http','dns','interactive'].includes(cert)||cert==='auto'&&sub);
 }
@@ -1581,29 +1583,35 @@ function updateVisibility(deploy,protocols){
   $('subauth').disabled=!value('sub');
   $('subpass').disabled=!value('sub')||!value('subauth');
   text('help-subpass',value('sub')&&value('subauth')?FIELDS.subpass.help:'密码保护已关闭，此项不写入生成命令，也不会在 VPS 生成订阅密码。'+(value('subpass')?' 已填密码仅保留在当前表单；重新开启保护后可编辑并使用。':''));
-  const cert=value('certMode'),rep=value('operation')==='rep',certLocked=rep&&!value('sub');
-  const acmeActive=!certLocked&&(cert!=='external'&&(cert!=='auto'||value('sub')));
-  const caChoice=value('acmeca'),hasNaive=protocols.some(p=>p.id==='naive');
+  const certRaw=value('certMode'),cert=effectiveCertMode(certRaw,value('acmeMethod')),rep=value('operation')==='rep',certLocked=rep&&!value('sub');
+  const acmeSelected=!certLocked&&certRaw==='acme',acmeActive=!certLocked&&(certRaw==='acme'||certRaw==='auto'&&value('sub'));
+  const caChoice=acmeSelected?value('acmeca'):'auto',hasNaive=protocols.some(p=>p.id==='naive');
   const zeroSSLApplicable=zeroSSLEabApplicable(value('operation'),cert,value('sub'));
   const autoCert=[...$('certMode').options].find(option=>option.value==='auto');
   autoCert.textContent=value('sub')?'复用已有 CA；没有则在 VPS 申请':'脚本默认：复用或自签';
   $('certMode').disabled=certLocked;
   text('help-certMode',certLocked?'当前 rep 未开启订阅，因此保留已有证书。需要续期或恢复证书时，在顶部选择“维护已有证书（cert）”，不要卸载重装。开启订阅后，可复用已有 CA 或申请 IP / 域名证书。':FIELDS.certMode.help);
   $('cert-operation-link').hidden=!certLocked;
-  setFieldVisibility('acmeca',acmeActive);
+  setFieldVisibility('acmeMethod',acmeSelected);
+  setFieldVisibility('acmeca',acmeSelected);
+  $('acmeMethod').disabled=!acmeSelected;
+  for(const option of $('acmeca').options)if(['zerossl','sslcom'].includes(option.value))option.disabled=acmeSelected&&['ip','alpn'].includes(cert);
   for(const key of ['certym','certip','certwild','certcrt','certkey','CF_Token']){
     const visible=({certym:['http','alpn','dns','external'],certip:['ip'],certwild:['dns'],certcrt:['external'],certkey:['external'],CF_Token:['dns']})[key].includes(cert)&&!certLocked;
     setFieldVisibility(key,visible);
   }
-  const showAcmem=!certLocked&&(hasNaive||Boolean(value('acmem'))||acmeActive&&(caChoice==='zerossl'||caChoice==='sslcom'||caChoice==='auto'&&zeroSSLApplicable));
-  const showZeroSSL=!certLocked&&(zeroSSLApplicable&&(caChoice==='zerossl'||caChoice==='auto')||Boolean(value('zerossl_eab_kid'))||Boolean(value('zerossl_eab_hmac')));
-  const showSSLCom=!certLocked&&(zeroSSLApplicable&&(caChoice==='sslcom'||caChoice==='auto')||Boolean(value('sslcom_eab_kid'))||Boolean(value('sslcom_eab_hmac')));
+  const showAcmem=!certLocked&&(hasNaive||Boolean(value('acmem'))||acmeSelected&&(caChoice==='zerossl'||caChoice==='sslcom'));
+  const showZeroSSL=!certLocked&&(acmeSelected&&caChoice==='zerossl'&&zeroSSLApplicable||Boolean(value('zerossl_eab_kid'))||Boolean(value('zerossl_eab_hmac')));
+  const showSSLCom=!certLocked&&(acmeSelected&&caChoice==='sslcom'&&zeroSSLApplicable||Boolean(value('sslcom_eab_kid'))||Boolean(value('sslcom_eab_hmac')));
   setFieldVisibility('acmem',showAcmem);
   for(const key of ['zerossl_eab_kid','zerossl_eab_hmac'])setFieldVisibility(key,showZeroSSL);
   for(const key of ['sslcom_eab_kid','sslcom_eab_hmac'])setFieldVisibility(key,showSSLCom);
+  $('certificate-specific').hidden=![...$('certificate-specific').children].some(el=>!el.hidden);
   for(const key of ['acmem','acmetimeout','CF_Account_ID','CF_Zone_ID','CF_Key','CF_Email','sslcom_eab_kid','sslcom_eab_hmac','certdns'])$(key).disabled=certLocked;
   for(const key of ['CF_Account_ID','CF_Zone_ID','CF_Key','CF_Email','certdns'])$(key).disabled=certLocked||cert!=='dns';
-  for(const key of ['acmeca','acmetimeout','sslcom_eab_kid','sslcom_eab_hmac'])$(key).disabled=!acmeActive;
+  $('acmeca').disabled=!acmeSelected;
+  $('acmetimeout').disabled=!acmeActive;
+  for(const key of ['sslcom_eab_kid','sslcom_eab_hmac'])$(key).disabled=!acmeActive&&!value(key);
   for(const key of ['zerossl_eab_kid','zerossl_eab_hmac']){
     $(key).disabled=!zeroSSLApplicable&&!value(key);
     text('help-'+key,FIELDS[key].help+(zeroSSLApplicable?'':' 当前方案不使用此凭据；如已填写，可在这里清空，或切换至 HTTP-01 / DNS-01 或交互选择。'));
@@ -1682,12 +1690,20 @@ function collect(deploy,protocols){
     if(value('ipv')!=='keep')add('ipv',value('ipv')==='restore'?'':value('ipv'),true);
     if(value('sub')){add('sub','y');add('subpt',value('subpt').trim());add('subid',value('subid'));add('subauth',value('subauth')?'y':'n');if(value('subauth'))add('subpass',value('subpass'));}
     if(value('operation')!=='rep'||value('sub')){
-      const cert=value('certMode');
+      const certRaw=value('certMode'),cert=effectiveCertMode(certRaw,value('acmeMethod'));
+      const acmeSelected=certRaw==='acme';
       if(cert==='interactive')add('alns','y');
       if(['http','alpn','dns','ip'].includes(cert)){add('alns','y');add('acmemode',cert);if(cert==='ip')add('certip',value('certip').trim());else add('certym',value('certym').trim());}
       if(cert==='dns'){add('certwild',value('certwild')?'y':'n');for(const key of ['CF_Token','CF_Account_ID','CF_Zone_ID','CF_Key','CF_Email','certdns'])add(key,value(key));}
       if(cert==='external'){add('certcrt',value('certcrt'));add('certkey',value('certkey'));add('certym',value('certym').trim());}
-      if(cert!=='external'&&(cert!=='auto'||value('sub'))){for(const key of ['acmeca','acmetimeout','sslcom_eab_kid','sslcom_eab_hmac'])add(key,value(key));}
+      if(acmeSelected){
+        if(value('acmeca')!=='auto')add('acmeca',value('acmeca'));
+        add('acmetimeout',value('acmetimeout'));
+        if(value('acmeca')==='sslcom'||value('sslcom_eab_kid')||value('sslcom_eab_hmac'))for(const key of ['sslcom_eab_kid','sslcom_eab_hmac'])add(key,value(key));
+      }else if(cert==='auto'&&value('sub')){
+        add('acmetimeout',value('acmetimeout'));
+        if(value('sslcom_eab_kid')||value('sslcom_eab_hmac'))for(const key of ['sslcom_eab_kid','sslcom_eab_hmac'])add(key,value(key));
+      }
       if(zeroSSLEabApplicable(value('operation'),cert,value('sub')))for(const key of ['zerossl_eab_kid','zerossl_eab_hmac'])add(key,value(key));
       add('acmem',value('acmem'));
     }
@@ -1905,14 +1921,16 @@ function savedCommandPlan(parsed){
   if(pairs.get('certcrt')||pairs.get('certkey'))fields.certMode='external';
   else if(pairs.get('acmemode')){
     if(!['http','alpn','dns','ip'].includes(pairs.get('acmemode')))throw new Error('无法还原此 ACME 模式。');
-    fields.certMode=pairs.get('acmemode');
-  }else if(pairs.get('certip'))fields.certMode='ip';
-  else if(pairs.get('certdns')==='cf')fields.certMode='dns';
-  else if(pairs.get('alns')&&bool(pairs.get('alns'),'alns'))fields.certMode='interactive';
-  if(pairs.get('certym')&&fields.certMode==='auto')throw new Error('命令提供了 certym，但未说明 ACME 模式；请补充 acmemode 后再还原。');
+    fields.certMode='acme';fields.acmeMethod=pairs.get('acmemode');
+  }else if(pairs.get('certip')){fields.certMode='acme';fields.acmeMethod='ip';}
+  else if(pairs.get('certdns')==='cf'){fields.certMode='acme';fields.acmeMethod='dns';}
+  else if(pairs.get('alns')&&bool(pairs.get('alns'),'alns')){fields.certMode='acme';fields.acmeMethod='interactive';}
+  else if(['letsencrypt','zerossl','sslcom'].includes(fields.acmeca)){fields.certMode='acme';fields.acmeMethod='interactive';}
+  const effectiveCert=effectiveCertMode(fields.certMode,fields.acmeMethod);
+  if(pairs.get('certym')&&effectiveCert==='auto')throw new Error('命令提供了 certym，但未说明 ACME 模式；请补充 acmemode 后再还原。');
   if(fields.certMode==='external'&&(pairs.get('acmemode')||pairs.get('certdns')))throw new Error('命令同时指定了导入证书与 ACME 方式，当前表单无法完整表示。');
-  if(fields.certMode==='interactive'&&pairs.get('certym'))throw new Error('交互式证书命令同时指定了域名，请补充明确的 acmemode 以保留全部信息。');
-  if((fields.zerossl_eab_kid||fields.zerossl_eab_hmac)&&!zeroSSLEabApplicable(fields.operation,fields.certMode,fields.sub))throw new Error('命令提供了 ZeroSSL EAB，但当前操作或证书方案不会使用它；请明确选择 HTTP-01 / DNS-01 或交互申请。未还原，避免丢失凭据。');
+  if(effectiveCert==='interactive'&&pairs.get('certym'))throw new Error('交互式证书命令同时指定了域名，请补充明确的 acmemode 以保留全部信息。');
+  if((fields.zerossl_eab_kid||fields.zerossl_eab_hmac)&&!zeroSSLEabApplicable(fields.operation,effectiveCert,fields.sub))throw new Error('命令提供了 ZeroSSL EAB，但当前操作或证书方案不会使用它；请明确选择 HTTP-01 / DNS-01 或交互申请。未还原，避免丢失凭据。');
   if(pairs.get('cfgver')==='V26.09.07')notes.push('已按旧版本保留模式选择；如需采用新的直连默认，请将 XHTTP 模式改为 auto。重新生成时使用新版本标记。');
   let legacy=false;
   for(const [id,profile] of Object.entries(XRAY_PROFILES)){
@@ -2502,7 +2520,8 @@ function validate(deploy,protocols,pairs){
   if(value('sub')&&value('subauth')&&value('subpass')&&!/^[A-Za-z0-9._~-]{16,128}$/.test(value('subpass')))error('订阅密码使用 16 至 128 位字母、数字、点、下划线、波浪线或短横线，不含空格。','subpass');
   if(value('sub')&&value('subauth')&&value('subpass')&&value('subid')&&value('subpass')===value('subid'))error('订阅密码必须与路径 Token 不同。','subpass');
   if(value('sub')&&!value('subauth')&&value('subpass'))warn('密码保护已关闭，已填密码仅保留在当前表单，不写入本次命令；持有订阅 URL 即可访问。','subauth');
-  const cert=value('certMode');
+  const certRaw=value('certMode'),cert=effectiveCertMode(certRaw,value('acmeMethod'));
+  const acmeCA=certRaw==='acme'?value('acmeca'):'auto';
   const email=pairs.find(([key])=>key==='acmem')?.[1]||'';
   const mayRequestCertificate=(value('operation')!=='rep'||value('sub'))&&cert!=='external'&&(cert!=='auto'||value('sub'));
   if(email&&(ids.has('naive')||mayRequestCertificate)&&!/^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$/.test(email))error('ACME / Caddy 邮箱格式无效。','acmem');
@@ -2512,9 +2531,9 @@ function validate(deploy,protocols,pairs){
     const problem=zeroSSLEabProblem(zeroSSLKid,zeroSSLHmac);if(problem)error(problem.message,problem.id);
   }
   if(value('operation')!=='rep'||value('sub')){
-    if(['ip','alpn'].includes(cert)&&!['auto','letsencrypt'].includes(value('acmeca')))error('IP / TLS-ALPN-01 仅支持 Let’s Encrypt；切换 CA 请使用 HTTP-01 或 DNS-01。','acmeca');
-    if(value('acmeca')==='zerossl'&&!value('acmem')&&!zeroSSLKid)warn('ZeroSSL 需要邮箱自动获取 EAB，或已有完整 EAB；留空将在 VPS 询问。','acmem');
-    if(value('acmeca')==='sslcom'&&(!value('acmem')||!value('sslcom_eab_kid')||!value('sslcom_eab_hmac')))warn('SSL.com 首次注册需要邮箱和官网取得的两项 EAB；已有 VPS 账户可复用。','sslcom_eab_kid');
+    if(['ip','alpn'].includes(cert)&&!['auto','letsencrypt'].includes(acmeCA))error('IP / TLS-ALPN-01 仅支持 Let’s Encrypt；切换 CA 请使用 HTTP-01 或 DNS-01。','acmeca');
+    if(acmeCA==='zerossl'&&!value('acmem')&&!zeroSSLKid)warn('ZeroSSL 需要邮箱自动获取 EAB，或已有完整 EAB；留空将在 VPS 询问。','acmem');
+    if(acmeCA==='sslcom'&&(!value('acmem')||!value('sslcom_eab_kid')||!value('sslcom_eab_hmac')))warn('SSL.com 首次注册需要邮箱和官网取得的两项 EAB；已有 VPS 账户可复用。','sslcom_eab_kid');
     if(value('sub')&&cert==='auto')warn('订阅优先复用已有公信 CA；没有时在 VPS 申请。无人值守执行请明确选择 IP 或域名证书方案。','certMode');
     if(value('sub')&&value('operation')==='rep')warn('此次 rep 可能把共享 TLS 证书从自签升级为 CA，完成后请重新导入 TLS 节点和订阅地址。','certMode');
     if(ids.has('xvcdnpt')&&cert==='auto')warn('CDN 的 HTTPS 回源需要 Cloudflare 接受源站证书；严格校验模式应使用域名匹配的可信证书。可选择 DNS-01 或导入证书。','certMode');
@@ -2527,7 +2546,7 @@ function validate(deploy,protocols,pairs){
       if(!value('CF_Token')&&!value('CF_Key'))warn('DNS Token 留空，将在 VPS 上隐藏输入。','CF_Token');
       if(value('CF_Token')&&(value('CF_Key')||value('CF_Email')))warn('同时填写两种 Cloudflare 凭据；脚本优先使用 DNS Token。','CF_Key');
     }
-    if(ids.has('naive')&&cert==='alpn')warn('Naive/Caddy 会使用 443；TLS-ALPN-01 也要求独占 443，请考虑复用 Caddy 证书或 DNS-01。','certMode');
+    if(ids.has('naive')&&cert==='alpn')warn('Naive/Caddy 会使用 443；TLS-ALPN-01 也要求独占 443，请考虑复用 Caddy 证书或 DNS-01。','acmeMethod');
     if(cert!=='external'&&(cert!=='auto'||value('sub'))){
       if(value('acmetimeout')&&(!/^\d+$/.test(value('acmetimeout'))||Number(value('acmetimeout'))<5||Number(value('acmetimeout'))>600))error('ACME 超时应为 5 至 600 秒。','acmetimeout');
       if(Boolean(value('sslcom_eab_kid'))!==Boolean(value('sslcom_eab_hmac')))error('SSL.com EAB Key ID 与 HMAC 应成对填写。','sslcom_eab_kid');
@@ -2697,7 +2716,7 @@ const UI_EN_TEXT=Object.freeze({
   "Airgosbx · 本地配置工作台": "Airgosbx · Local Configuration Workbench",
   "配置工作台": "Configuration Workbench",
   "配置连接，生成 VPS 命令。": "Configure connections and generate VPS commands.",
-  "v1.1.1 (20261119) · 离线单文件": "v1.1.1 (20261119) · Offline, single file",
+  "v1.1.1 (20261119.01) · 离线单文件": "v1.1.1 (20261119.01) · Offline, single file",
   "重置表单": "Reset form",
   "此页面需要浏览器 JavaScript 才能生成命令。所有逻辑都在当前 HTML 内，不加载外部资源。": "This page requires browser JavaScript to generate commands. All logic is contained in this HTML file; no external resources are loaded.",
   "连接概览": "Connection overview",
@@ -2774,7 +2793,7 @@ const UI_EN_TEXT=Object.freeze({
   "对照功能只提取你选择的脚本中的变量声明与帮助条目，不执行、不上传。它能提示变量清单差异，不能代替调用逻辑审查。": "The comparison only extracts variable declarations and help entries from the script you select. It does not execute or upload the file. It can flag differences in the variable list, but cannot replace a review of the calling logic.",
   "选择 airgosbx.sh 对照": "Select airgosbx.sh to compare",
   "清除对照": "Clear comparison",
-  "GUI 版本：v1.1.1 (20261119)；XHTTP 默认参数版本：V26.09.08.1。尚未读取其他文件。": "GUI version: v1.1.1 (20261119); XHTTP default parameter version: V26.09.08.1. No other files have been read.",
+  "GUI 版本：v1.1.1 (20261119.01)；XHTTP 默认参数版本：V26.09.08.1。尚未读取其他文件。": "GUI version: v1.1.1 (20261119.01); XHTTP default parameter version: V26.09.08.1. No other files have been read.",
   "VPS 命令与配置": "VPS command & configuration",
   "协议": "Protocols",
   "命令区域模式": "Command panel mode",
@@ -3122,11 +3141,17 @@ const UI_EN_TEXT=Object.freeze({
   "取消受管策略，恢复原状态": "Remove the managed policy and restore the original state",
   "会影响 VPS 网络配置；ipv=6 在脚本中要求 NetworkManager 等前提。": "Affects the VPS network configuration; ipv=6 requires prerequisites such as NetworkManager in the script.",
   "TLS 证书方案": "TLS certificate mode",
-  "此选项配置 Xray / Sing-box 的共享 TLS 证书。订阅优先复用有效 Caddy / ACME 证书；申请或导入选项仅在没有可复用 CA 时生效。Naive 由 Caddy 独立管理证书。独立 acme.sh 在申请和续期检查前获取官方 latest 稳定正式版，排除预发布版；配套 Cloudflare DNS 插件同步更新。更新失败时仅复用完整可用的旧版。客户端更新本身不申请证书，下载与运行发生在 VPS。": "This option configures the shared TLS certificate for Xray / Sing-box. Subscriptions prefer reusing a valid Caddy / ACME certificate; issuance or import options apply only when no reusable CA-issued certificate is available. Naive certificates are managed independently by Caddy. Before issuance and renewal checks, standalone acme.sh fetches the official latest stable release, excluding prereleases; the corresponding Cloudflare DNS plugin is updated at the same time. If the update fails, only a complete, usable older version is reused. Updating the client alone does not request a certificate. Downloads and execution take place on the VPS.",
+  "此选项配置 Xray / Sing-box 的共享 TLS 证书。存在有效 Caddy（Naive）或本地公信 CA 证书时会直接复用，不会重复启动 acme.sh；仅在没有可复用证书时才按下方方案申请或导入。Naive 由 Caddy 独立管理证书。独立 acme.sh 在申请和续期检查前获取官方 latest 稳定正式版（排除预发布版），并同步更新 Cloudflare DNS 插件；下载与运行发生在 VPS。": "This option configures the shared TLS certificate for Xray / Sing-box. When a valid Caddy (Naive) or local trusted CA certificate exists, it is reused directly without running acme.sh again; the issuance or import option below applies only when no reusable certificate is available. Naive certificates are managed independently by Caddy. Before issuance and renewal checks, standalone acme.sh fetches the official latest stable release (excluding prereleases) and updates the Cloudflare DNS plugin. Downloads and execution take place on the VPS.",
   "脚本默认：复用或自签": "Script default: reuse or self-sign",
-  "ACME · 在 VPS 交互选择": "ACME · Choose interactively on the VPS",
-  "ACME · IP 证书": "ACME · IP certificate",
+  "使用 acme.sh 申请公信 CA 证书": "Request a public CA certificate with acme.sh",
   "导入 VPS 已有证书": "Import an existing VPS certificate",
+  "ACME 申请方式": "ACME issuance method",
+  "在 VPS 终端交互选择": "Choose interactively in VPS terminal",
+  "HTTP-01（域名，需 80/TCP）": "HTTP-01 (domain, requires 80/TCP)",
+  "TLS-ALPN-01（域名，需 443/TCP）": "TLS-ALPN-01 (domain, requires 443/TCP)",
+  "Cloudflare DNS-01（免 80/443，支持泛域名）": "Cloudflare DNS-01 (no 80/443 needed, wildcard supported)",
+  "IP 短期证书（HTTP-01，需 80/TCP）": "Short-lived IP certificate (HTTP-01, requires 80/TCP)",
+  "留默认“在 VPS 终端交互选择”即可直接到 VPS 命令行挑选；若已确定方式，可直接选定并填写下方对应参数。": "Keep the default “Choose interactively in VPS terminal” to pick in the VPS CLI, or select a specific method and fill in the required fields below.",
   "证书域名 / 导入证书的域名或 IP": "Certificate domain / domain or IP for imported certificate",
   "导入时可填写具体域名或 IP，也可留空由证书推导；泛域名证书应填写匹配的具体域名。VPS 会检查证书链、有效期、私钥和 SAN。": "For imports, enter a specific domain or IP, or leave blank to derive it from the certificate; for a wildcard certificate, enter a specific matching domain. The VPS checks the certificate chain, validity period, private key, and SAN.",
   "证书 IP": "Certificate IP addresses",
@@ -3145,12 +3170,9 @@ const UI_EN_TEXT=Object.freeze({
   "ZeroSSL 通常只需邮箱地址，由客户端自动取得 EAB，无需手动填写下面的 ZeroSSL 密钥；已有完整 EAB 时邮箱可留空。SSL.com 首次注册需要邮箱和对应 EAB。Naive/Caddy 也使用此邮箱，但下面的 EAB 不会传给 Caddy。这里只填邮箱地址，不需要邮箱密码。": "ZeroSSL usually needs only an email address; the client obtains EAB automatically, so you do not need to enter the ZeroSSL keys below manually. If you already have a complete EAB pair, the email may be left blank. Initial SSL.com registration requires an email address and the corresponding EAB. Naive/Caddy also uses this email, but the EAB below is not passed to Caddy. Enter only the email address, not your email password.",
   "单家 CA 超时（秒）": "Timeout per CA (seconds)",
   "5 至 600，留空使用默认值": "5–600; leave blank to use the default",
-  "独立 acme.sh 使用的 CA": "CA for standalone acme.sh",
-  "在 VPS 交互选择 CA（无 TTY 按默认优先级）": "Choose CA interactively on VPS (default priority without TTY)",
-  "仅 Let’s Encrypt": "Let’s Encrypt only",
-  "仅 ZeroSSL": "ZeroSSL only",
-  "仅 SSL.com": "SSL.com only",
-  "只影响没有可复用证书时的独立申请，不改变 Caddy。选定具体 CA 与申请方式后可在 VPS 直接签发，免去终端交互；选默认项则在 VPS 终端交互选择（失败退回 CA 菜单，不自动切换），仅非交互无 TTY 环境按 Let’s Encrypt → ZeroSSL → 已配置 SSL.com 优先级尝试。HTTP-01 / DNS-01 支持三家；IP / TLS-ALPN-01 仅支持 Let’s Encrypt。续期沿用原签发 CA。": "Only affects standalone issuance when no reusable certificate exists; does not change Caddy. Selecting a specific CA and issuance method runs directly on the VPS without terminal prompts; the default option prompts interactively on a VPS terminal (returning to the CA menu on failure without auto-switching) and uses Let’s Encrypt → ZeroSSL → configured SSL.com only in non-interactive environments without a TTY. HTTP-01 / DNS-01 supports all three CAs; IP / TLS-ALPN-01 supports only Let’s Encrypt. Renewals keep the original issuing CA.",
+  "ACME CA 机构": "ACME Certificate Authority",
+  "在 VPS 终端交互选择（无 TTY 按默认优先级）": "Choose interactively in VPS terminal (default priority without TTY)",
+  "选默认项时命令不指定 CA，在 VPS 终端先选 CA 再选方式（失败退回 CA 菜单，不自动切换）；无 TTY 环境按 Let’s Encrypt → ZeroSSL → 已配置 SSL.com 优先级尝试。选定具体 CA 后下方仅显示该 CA 需要的参数。HTTP-01 / DNS-01 支持三家；IP / TLS-ALPN-01 仅支持 Let’s Encrypt。": "With the default option, the command does not fix a CA: on a VPS terminal you pick the CA first and then the method (returning to the CA menu on failure without auto-switching), while non-interactive runs without a TTY try Let’s Encrypt → ZeroSSL → configured SSL.com. Selecting a specific CA reveals only the fields required by that CA. HTTP-01 / DNS-01 supports all three CAs; IP / TLS-ALPN-01 supports only Let’s Encrypt.",
   "可选，与 HMAC 成对填写；留空可由上方注册邮箱自动获取 EAB。手动获取：登录 ZeroSSL → Developer → EAB → Generate；不要填写普通 API Access Key。仅用于脚本 HTTP-01 / DNS-01 的 ZeroSSL 签发。": "Optional; enter together with HMAC. Leave blank to obtain EAB automatically using the registration email above. To obtain it manually: sign in to ZeroSSL → Developer → EAB → Generate; do not enter a regular API Access Key. Used only for ZeroSSL issuance through the script's HTTP-01 / DNS-01 flow.",
   "与 Key ID 配对，粘贴时不要添加空格。完整手填后无需另外填写注册邮箱；不用于 Caddy、IP 证书、TLS-ALPN-01 或外部证书。": "Pair with Key ID, and do not add spaces when pasting. After entering the complete pair manually, no separate registration email is required. Not used for Caddy, IP certificates, TLS-ALPN-01, or external certificates.",
   "仅 HTTP-01 / DNS-01 的 SSL.com 签发使用；不使用这家 CA 时可留空。首次使用请注册并登录 SSL.com，在 Dashboard → developers and integration → api credentials 中复制 Account/ACME Key，与 HMAC 配对填写。": "Used only for SSL.com issuance with HTTP-01 / DNS-01; leave blank if you do not use this CA. For first use, register and sign in to SSL.com, then copy Account/ACME Key from Dashboard → developers and integration → api credentials and enter it together with HMAC.",
