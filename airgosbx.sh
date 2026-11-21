@@ -2,7 +2,7 @@
 # 配套维护：airgosbx.sh 与 airgosbx-gui.html 是同一套工具，必须成套维护、提交和发布。
 # 修改任一文件时，须同步核对并修改另一文件的对应内容。
 # 参数、默认值、协议归属、开关与互斥、校验、命令生成与还原及功能说明必须保持一致。
-AIRGOSBX_VERSION='v1.3.1 (20261119.04)'
+AIRGOSBX_VERSION='v1.3.2 (20261121)'
 # 仅在内置 XHTTP 默认参数改变时更新此标记，普通脚本版本更新不使旧命令失效。
 XHTTP_DEFAULTS_VERSION='V26.09.08.1'
 agsbxurl="${agsbxurl:-https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/main/airgosbx.sh}"
@@ -3914,7 +3914,7 @@ while IFS= read -r endpoint; do
 done <<< "$nameservers"
 [ "$rows" -gt 0 ] || kv_row 'DNS 入口：' '未读取到有效 nameserver' 16
 if [ "$rows" -gt 0 ]; then
-  kv_row '入口协议：' '按 resolv.conf 使用普通 DNS（UDP/TCP 53）；不代表后续上游协议' 16
+  kv_row '入口协议：' '按 resolv.conf 使用普通 DNS（UDP/TCP 53）' 16
 fi
 if [ "$nss_resolve" = yes ]; then
   kv_row '系统解析：' 'NSS 配置包含 systemd-resolved；程序也可能直接使用上述 DNS 入口' 16
