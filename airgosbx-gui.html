@@ -8,7 +8,7 @@
     参数、默认值、协议归属、开关与互斥、校验、命令生成与还原及功能说明必须保持一致。
     修改 showvars、协议归属、secp、warp、rep 或 URL 生成规则时，
     同时核对 PROTOCOLS、XRAY_PROFILES、FIELDS、collect、savedCommandPlan 和 validate。
-    GUI 版本：v1.3.2 (20261121)。XHTTP_DEFAULTS_VERSION 与 BUILD.presetVersion 仅在默认参数变化时更新。
+    GUI 版本：v1.4 (20261124)。XHTTP_DEFAULTS_VERSION 与 BUILD.presetVersion 仅在默认参数变化时更新。
     发布前须核对配套脚本是否已同步到 GitHub main；存在未发布接口变更时 remoteAligned 保持 false。
     无外部资源、请求、遥测或自动持久化。
     页面只生成文本，不执行命令。选择“对照脚本”时只读取用户明确选择的文件。
@@ -165,7 +165,7 @@
     .field input:not([type=checkbox]):disabled,.field select:disabled,.field textarea:disabled{background:var(--sunken);border-color:var(--line);color:var(--faint);cursor:not-allowed}
     .field [aria-invalid=true]:not([type=checkbox]),.port[aria-invalid=true]{border-color:var(--danger)!important}
     .field-error{font-size:12px;color:var(--danger)!important;line-height:1.6}
-    .check-field{display:flex;flex-direction:row;align-items:center;gap:10px;min-height:42px;font-size:13.5px;cursor:pointer}
+    .check-field{display:flex;flex-direction:row;align-items:center;gap:10px;min-height:42px;font-size:13.5px}
     #show-secrets{width:17px;height:17px;margin:0;accent-color:var(--accent);flex-shrink:0}
     .check-field .field-label{display:flex;justify-content:flex-start;gap:6px}.wide{grid-column:1/-1}
     .form-grid .check-field{display:grid;grid-template-columns:42px minmax(0,1fr);align-items:start;gap:4px 10px;align-content:start}
@@ -234,7 +234,7 @@
     .extension-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px}
     .extension-title{min-width:0}.extension-title strong{display:block;font:500 15px/1.45 var(--serif);color:var(--ink)}
     .extension-subtitle{font-size:12px;color:var(--muted);margin-top:1px}
-    .toggle{display:flex;align-items:center;gap:8px;min-height:40px;cursor:pointer;flex-shrink:0}
+    .toggle{display:flex;align-items:center;gap:8px;min-height:40px;flex-shrink:0}
     .toggle-state{font-size:12px;color:var(--faint);min-width:34px}
     .extension.is-enabled{border-color:var(--accent-line)}
     .extension.is-enabled .toggle-state{color:var(--accent-text)}
@@ -247,7 +247,7 @@
     .extension-custom>summary{font-weight:500}
     .extension-custom .tools{justify-content:space-between;margin:4px 0 12px}
     .mask-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;min-width:0}
-    .mask-choice{display:grid;grid-template-columns:42px minmax(0,1fr);align-items:start;gap:10px;min-width:0;padding:11px 12px;border:1px solid var(--line);border-radius:var(--control);background:var(--raised);cursor:pointer;transition:border-color 120ms ease,background-color 120ms ease}
+    .mask-choice{display:grid;grid-template-columns:42px minmax(0,1fr);align-items:start;gap:10px;min-width:0;padding:11px 12px;border:1px solid var(--line);border-radius:var(--control);background:var(--raised);transition:border-color 120ms ease,background-color 120ms ease}
     .mask-choice input{margin:1px 0 0}
     .mask-caption{min-width:0}.mask-name{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:13px;font-weight:500}
     .mask-caption code{display:block;color:var(--faint);font-size:10.5px;margin-top:1px}
@@ -255,7 +255,7 @@
     .mask-state{font-size:10.5px;padding:0 7px;border-radius:999px;line-height:1.7;font-weight:500}
     .mask-choice.is-checked{background:var(--accent-wash);border-color:var(--accent-line)}
     .mask-choice.is-checked .mask-state{background:var(--accent-btn);color:var(--on-accent)}
-    .mask-choice.is-disabled{background:var(--sunken);border-style:dashed;border-color:var(--line-strong);color:var(--muted);cursor:not-allowed}
+    .mask-choice.is-disabled{background:var(--sunken);border-style:dashed;border-color:var(--line-strong);color:var(--muted)}
     .mask-choice.is-disabled input{cursor:not-allowed}
     .mask-choice.is-disabled .mask-state{background:var(--line);color:var(--muted)}
     .mask-choice.is-disabled small,.mask-choice.is-disabled code{color:var(--faint)}
@@ -302,12 +302,12 @@
     /* 出站 */
     .routing-choice{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:14px 0 12px}
     .secondary-list{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
-    .secondary-list label{display:flex;align-items:center;gap:7px;min-height:38px;padding:5px 11px 5px 7px;border:1px solid var(--line-strong);border-radius:var(--control);background:var(--raised);font-size:12.5px;cursor:pointer}
+    .secondary-list .secondary-item{display:flex;align-items:center;gap:7px;min-height:38px;padding:5px 11px 5px 7px;border:1px solid var(--line-strong);border-radius:var(--control);background:var(--raised);font-size:12.5px}
     .secondary-list input:not(#show-secrets){width:34px;height:20px}
     .secondary-list input:not(#show-secrets)::before{width:19px;height:16px}
     .secondary-list input:not(#show-secrets):checked::before{transform:translateX(11px)}
-    .secondary-list label.is-disabled{background:var(--sunken);border-color:var(--line);color:var(--faint);cursor:not-allowed}
-    .secondary-list label.is-conflict{border-color:var(--danger-line);background:var(--danger-bg);color:var(--danger)}
+    .secondary-list .secondary-item.is-disabled{background:var(--sunken);border-color:var(--line);color:var(--faint)}
+    .secondary-list .secondary-item.is-conflict{border-color:var(--danger-line);background:var(--danger-bg);color:var(--danger)}
     .secondary-group{margin-top:16px;padding:18px;border:1px solid var(--line);border-radius:var(--nested);background:var(--paper);min-width:0}
     .secondary-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px}
     .secondary-heading h3{font:500 16px/1.4 var(--serif)}
@@ -336,7 +336,7 @@
     .command-actions{display:grid;align-items:start}
     .command-actions>div{grid-area:1/1;min-width:0}
     .command-actions>[aria-hidden=true]{visibility:hidden;pointer-events:none}
-    .output-main .check-field{min-height:36px;font-size:12.5px;color:var(--muted);margin-top:4px}
+    .output-main .check-field{min-height:36px;font-size:12.5px;color:var(--muted);margin-top:4px;cursor:pointer}
     .output-main button.primary{width:100%;min-height:44px;margin-top:6px;background:var(--accent-btn);border-color:var(--accent-btn);color:var(--on-accent);font-size:14px;font-weight:600}
     .output-main button.primary:disabled{background:var(--sunken);border-color:var(--line);color:var(--faint)}
     .output-main .command-clear{width:100%;margin-top:8px;background:transparent;border-color:var(--line-strong);color:var(--muted);font-size:13px}
@@ -386,8 +386,6 @@
       .output-main .command-clear:not(:disabled):hover{background:var(--hover);color:var(--ink)}
       .protocol:not(.is-selected):hover{background:var(--hover)}
       .core-heading:hover .core-label strong{color:var(--accent-text)}
-      .mask-choice:not(.is-disabled):not(.is-conflict):hover{border-color:var(--accent-line)}
-      .secondary-list label:not(.is-disabled):not(.is-conflict):hover{border-color:var(--accent-line)}
       .file-label:hover{background:var(--hover)}
     }
     /* 输入控件仅改变边框颜色并加柔和光晕，不再向外增加轮廓线。 */
@@ -501,7 +499,7 @@
     .field input:not([type=checkbox]):disabled,.field select:disabled{background:#f0f2ed;border-color:#dce1d7;color:#758070;cursor:not-allowed}
     .field [aria-invalid=true]:not([type=checkbox]),.port[aria-invalid=true]{border-color:var(--red)!important}
     .field-error{font-size:11px;color:var(--red)!important;line-height:1.6}
-    .check-field{display:flex;flex-direction:row;align-items:center;gap:10px;min-height:42px;font-size:13px;cursor:pointer}
+    .check-field{display:flex;flex-direction:row;align-items:center;gap:10px;min-height:42px;font-size:13px}
     #show-secrets{width:18px;height:18px;margin:0;accent-color:var(--green);flex-shrink:0}
     .check-field .field-label{display:flex;justify-content:flex-start;gap:6px}.wide{grid-column:1/-1}
     .form-grid .check-field{display:grid;grid-template-columns:42px minmax(0,1fr);align-items:start;gap:4px 10px;align-content:start}
@@ -557,7 +555,7 @@
     .extension-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px 14px}
     .extension-title{min-width:0}.extension-title strong{font-size:13px;display:block;font-weight:600}
     .extension-subtitle{font-size:11px;color:var(--muted);margin-top:2px}
-    .toggle{display:flex;align-items:center;gap:8px;min-height:40px;cursor:pointer;flex-shrink:0}
+    .toggle{display:flex;align-items:center;gap:8px;min-height:40px;flex-shrink:0}
     .toggle-state{font-size:11px;color:var(--muted);min-width:34px}
     .extension.is-enabled{border-color:#abc5a0}
     .extension.is-enabled .toggle-state{color:var(--green)}
@@ -570,7 +568,7 @@
     .extension-custom>summary{font-weight:600}
     .extension-custom .tools{justify-content:space-between;margin:4px 0 12px}
     .mask-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;min-width:0}
-    .mask-choice{display:grid;grid-template-columns:42px minmax(0,1fr);align-items:start;gap:9px;min-width:0;cursor:pointer;padding:11px;border:1px solid #cfd9c9;border-radius:var(--control);background:#fff}
+    .mask-choice{display:grid;grid-template-columns:42px minmax(0,1fr);align-items:start;gap:9px;min-width:0;padding:11px;border:1px solid #cfd9c9;border-radius:var(--control);background:#fff}
     .mask-choice input{margin:1px 0 0}
     .mask-caption{min-width:0}.mask-name{display:flex;align-items:center;gap:5px;flex-wrap:wrap;font-size:12px;font-weight:500}
     .mask-caption code{display:block;color:var(--muted);font-size:10px;margin-top:1px}
@@ -578,7 +576,7 @@
     .mask-state{font-size:10px;padding:1px 5px;border-radius:var(--badge);line-height:1.6;font-weight:500}
     .mask-choice.is-checked{background:#eef5e9;border-color:#90b580}
     .mask-choice.is-checked .mask-state{background:#d7e8ce;color:#355b2b}
-    .mask-choice.is-disabled{background:#e9ede6;border-style:dashed;border-color:#c4cbbf;cursor:not-allowed;color:#697062}
+    .mask-choice.is-disabled{background:#e9ede6;border-style:dashed;border-color:#c4cbbf;color:#697062}
     .mask-choice.is-disabled input{cursor:not-allowed}
     .mask-choice.is-disabled .mask-state{background:#d6ddd0;color:#4d5c44}
     .mask-choice.is-disabled small,.mask-choice.is-disabled code{color:#6d7864}
@@ -619,13 +617,13 @@
     .catalog-note p{margin-top:7px}.catalog-note code{display:block;margin-top:5px}
     .routing-choice{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:12px 0}
     .secondary-list{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
-    .secondary-list label{display:flex;align-items:center;gap:7px;font-size:12px;border:1px solid var(--line);border-radius:var(--control);padding:5px 10px 5px 7px;min-height:40px;cursor:pointer}
+    .secondary-list .secondary-item{display:flex;align-items:center;gap:7px;font-size:12px;border:1px solid var(--line);border-radius:var(--control);padding:5px 10px 5px 7px;min-height:40px}
     .secondary-list input:not(#show-secrets){width:34px;height:20px}
     .secondary-list input:not(#show-secrets)::before{width:19px;height:16px}
     .secondary-list input:not(#show-secrets):checked::before{transform:translateX(11px)}
     .secondary-group{margin-top:16px;padding:16px;border:1px solid var(--line);border-radius:var(--nested);background:var(--soft);min-width:0}
     .secondary-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px}
-    .secondary-list label.is-disabled{color:var(--muted)}.secondary-list label.is-conflict{border-color:var(--red);background:var(--red-bg)}
+    .secondary-list .secondary-item.is-disabled{color:var(--muted)}.secondary-list .secondary-item.is-conflict{border-color:var(--red);background:var(--red-bg)}
     /* 右栏完整参与页面高度计算，变量展开后由整页滚动，页脚排在内容之后。 */
     .output{position:sticky;top:20px;min-width:0}
     .output-main{background:#20392d;color:#edf3e6;border:1px solid #274c39;border-radius:var(--radius);padding:22px}
@@ -638,7 +636,7 @@
     .summary-lines dt{color:#abc2a7}.summary-lines dd{margin:0;overflow-wrap:anywhere}
     .command-area{display:block;width:100%;min-width:0;resize:vertical;min-height:185px;border:1px solid #526e56;border-radius:var(--control);background:#162a1f;color:#e7f1dc;padding:14px;font:11px/1.9 var(--mono);white-space:pre-wrap;overflow-wrap:anywhere;tab-size:2}
     .command-area:focus{outline:none;border-color:#86ab91;box-shadow:inset 0 0 0 1px #86ab91}
-    .output-main .check-field{font-size:11px;color:#bdd0b5;margin-top:8px}
+    .output-main .check-field{font-size:11px;color:#bdd0b5;margin-top:8px;cursor:pointer}
     .output-main button.primary{background:#edf2df;color:#203c27;border:1px solid #f8faee;width:100%;font-size:13px;font-weight:650;margin-top:5px;min-height:44px}
     .output-main button.primary:disabled{background:#57714d;color:#c0ceb6}
     .command-area::placeholder{color:#a2b698;opacity:1}
@@ -683,7 +681,7 @@
     .visually-hidden{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
     .sync-result{font-size:11px;white-space:pre-wrap;overflow-wrap:anywhere;margin-top:12px}
     .empty{padding:24px 0;color:var(--muted);text-align:center;font-size:13px}
-    @media(hover:hover){button:not(:disabled):hover{border-color:var(--green)}.theme-switcher button:not(:disabled):hover{border-color:transparent;color:var(--green)}.core-heading:hover{color:#143d25}.mask-choice:not(.is-disabled):hover{border-color:#84a476}}
+    @media(hover:hover){button:not(:disabled):hover{border-color:var(--green)}.theme-switcher button:not(:disabled):hover{border-color:transparent;color:var(--green)}.core-heading:hover{color:#143d25}}
     @media(hover:hover) and (pointer:fine){
       .architecture,.nav,.panel,.output-main,.parameter-box{transition:box-shadow 180ms ease-out}
       .architecture:hover,.nav:hover,.panel:hover,.output-main:hover,.parameter-box:hover{box-shadow:var(--panel-shadow-hover)}
@@ -778,9 +776,9 @@
     :root[data-theme=dark] .field .disabled-reason{color:#a7b3c5}
     :root[data-theme=dark] .field .official-field{color:#b1c4d8}
     :root[data-theme=dark] .mask-parameters{border-top-color:#56657b;color:#b3c3d7}
-    :root[data-theme=dark] .secondary-list label{background:#3b4252}
-    :root[data-theme=dark] .secondary-list label.is-disabled{background:#343c4b;color:#98a5b8}
-    :root[data-theme=dark] .secondary-list label.is-conflict{background:var(--red-bg);border-color:var(--red)}
+    :root[data-theme=dark] .secondary-list .secondary-item{background:#3b4252}
+    :root[data-theme=dark] .secondary-list .secondary-item.is-disabled{background:#343c4b;color:#98a5b8}
+    :root[data-theme=dark] .secondary-list .secondary-item.is-conflict{background:var(--red-bg);border-color:var(--red)}
     :root[data-theme=dark] .output-main{background:#353f50;border-color:#53627a;color:var(--ink)}
     :root[data-theme=dark] .output-head #reset{background:#434c5e;border-color:#698c9d;color:var(--ink)}
     :root[data-theme=dark] .status{background:#314753;border-color:#698c9d;color:#b7e0e9}
@@ -809,7 +807,6 @@
     @media(hover:hover){
       :root[data-theme=dark] button:not(:disabled):hover{border-color:var(--green)}
       :root[data-theme=dark] .core-heading:hover{color:#b7e0e9}
-      :root[data-theme=dark] .mask-choice:not(.is-disabled):not(.is-conflict):hover{border-color:#a1d1df}
       :root[data-theme=dark] .output-main button.primary:not(:disabled):hover{background:#9dd2df;border-color:#c2e7ef;color:#213540}
       :root[data-theme=dark] .command-modes button:not(:disabled):hover{border-color:transparent}
       :root[data-theme=dark] .command-modes button:not([aria-pressed=true]):not(:disabled):hover{color:#edf4fb}
@@ -1086,7 +1083,7 @@
     .field input:not([type=checkbox]):disabled,.field select:disabled,.field textarea:disabled{background:var(--tonal);border-color:var(--line);color:var(--faint);cursor:not-allowed}
     .field [aria-invalid=true]:not([type=checkbox]),.port[aria-invalid=true]{border-color:var(--danger)!important}
     .field-error{font-size:12px;color:var(--danger)!important;line-height:1.6}
-    .check-field{display:flex;flex-direction:row;align-items:center;gap:10px;min-height:42px;font-size:13.5px;cursor:pointer}
+    .check-field{display:flex;flex-direction:row;align-items:center;gap:10px;min-height:42px;font-size:13.5px}
     #show-secrets{width:18px;height:18px;margin:0;accent-color:var(--accent-strong);flex-shrink:0}
     .check-field .field-label{display:flex;justify-content:flex-start;gap:6px}.wide{grid-column:1/-1}
     .form-grid .check-field{display:grid;grid-template-columns:42px minmax(0,1fr);align-items:start;gap:4px 10px;align-content:start}
@@ -1151,7 +1148,7 @@
     .extension-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px 16px}
     .extension-title{min-width:0}.extension-title strong{display:block;font:500 14.5px/1.45 var(--sans);color:var(--ink)}
     .extension-subtitle{font-size:12px;color:var(--muted);margin-top:2px}
-    .toggle{display:flex;align-items:center;gap:9px;min-height:40px;cursor:pointer;flex-shrink:0}
+    .toggle{display:flex;align-items:center;gap:9px;min-height:40px;flex-shrink:0}
     .toggle-state{font-size:12px;color:var(--faint);min-width:34px}
     .extension.is-enabled{border-color:var(--accent-line)}
     .extension.is-enabled .toggle-state{color:var(--accent-text);font-weight:500}
@@ -1164,7 +1161,7 @@
     .extension-custom>summary{font-weight:500}
     .extension-custom .tools{justify-content:space-between;margin:4px 0 12px}
     .mask-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;min-width:0}
-    .mask-choice{display:grid;grid-template-columns:42px minmax(0,1fr);align-items:start;gap:10px;min-width:0;padding:12px 13px;border:1px solid var(--line);border-radius:var(--control);background:var(--surface);cursor:pointer;transition:border-color 150ms var(--ease),background-color 150ms var(--ease)}
+    .mask-choice{display:grid;grid-template-columns:42px minmax(0,1fr);align-items:start;gap:10px;min-width:0;padding:12px 13px;border:1px solid var(--line);border-radius:var(--control);background:var(--surface);transition:border-color 150ms var(--ease),background-color 150ms var(--ease)}
     .mask-choice input{margin:1px 0 0}
     .mask-caption{min-width:0}.mask-name{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:13px;font-weight:500}
     .mask-caption code{display:block;color:var(--faint);font-size:10.5px;margin-top:1px}
@@ -1172,7 +1169,7 @@
     .mask-state{font-size:10.5px;padding:1px 8px;border-radius:var(--pill);line-height:1.65;font-weight:500}
     .mask-choice.is-checked{background:var(--accent-wash);border-color:var(--accent-line)}
     .mask-choice.is-checked .mask-state{background:var(--accent-container);color:var(--on-accent-container)}
-    .mask-choice.is-disabled{background:var(--tonal);border-style:dashed;border-color:var(--line-strong);color:var(--muted);cursor:not-allowed}
+    .mask-choice.is-disabled{background:var(--tonal);border-style:dashed;border-color:var(--line-strong);color:var(--muted)}
     .mask-choice.is-disabled input{cursor:not-allowed}
     .mask-choice.is-disabled .mask-state{background:var(--tonal-strong);color:var(--muted)}
     .mask-choice.is-disabled small,.mask-choice.is-disabled code{color:var(--faint)}
@@ -1219,12 +1216,12 @@
     /* 出站 */
     .routing-choice{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:14px 0 12px}
     .secondary-list{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
-    .secondary-list label{display:flex;align-items:center;gap:8px;min-height:38px;padding:5px 13px 5px 7px;border:1px solid var(--line-strong);border-radius:var(--pill);background:var(--surface);font-size:12.5px;cursor:pointer;transition:border-color 150ms var(--ease),background-color 150ms var(--ease)}
+    .secondary-list .secondary-item{display:flex;align-items:center;gap:8px;min-height:38px;padding:5px 13px 5px 7px;border:1px solid var(--line-strong);border-radius:var(--pill);background:var(--surface);font-size:12.5px;transition:border-color 150ms var(--ease),background-color 150ms var(--ease)}
     .secondary-list input:not(#show-secrets){width:34px;height:20px}
     .secondary-list input:not(#show-secrets)::before{width:19px;height:16px}
     .secondary-list input:not(#show-secrets):checked::before{transform:translateX(11px)}
-    .secondary-list label.is-disabled{background:var(--tonal);border-color:var(--line);color:var(--faint);cursor:not-allowed}
-    .secondary-list label.is-conflict{border-color:var(--danger-line);background:var(--danger-bg);color:var(--danger)}
+    .secondary-list .secondary-item.is-disabled{background:var(--tonal);border-color:var(--line);color:var(--faint)}
+    .secondary-list .secondary-item.is-conflict{border-color:var(--danger-line);background:var(--danger-bg);color:var(--danger)}
     .secondary-group{margin-top:16px;padding:18px;border:1px solid var(--line);border-radius:var(--nested);background:var(--tonal);min-width:0}
     .secondary-group button:disabled{background:var(--tonal-strong)}
     .secondary-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px}
@@ -1255,7 +1252,7 @@
     .command-actions{display:grid;align-items:start}
     .command-actions>div{grid-area:1/1;min-width:0}
     .command-actions>[aria-hidden=true]{visibility:hidden;pointer-events:none}
-    .output-main .check-field{min-height:36px;font-size:12.5px;color:var(--muted);margin-top:4px}
+    .output-main .check-field{min-height:36px;font-size:12.5px;color:var(--muted);margin-top:4px;cursor:pointer}
     /* 主按钮：纯净胶囊表面配 1px 细边框，背后高模糊四原色光晕逆时针连续旋转 */
     .output-main button.primary{position:relative;isolation:isolate;overflow:visible;width:100%;min-height:46px;margin:12px 0 6px;border:0;border-radius:var(--pill);background:transparent;color:var(--ink);font-size:14px;font-weight:600;box-shadow:none}
     .output-main button.primary::before{content:"";position:absolute;inset:-3px;z-index:-2;border-radius:var(--pill);pointer-events:none;background:conic-gradient(from var(--gemini-angle),rgba(var(--g-blue-rgb),.96) 0deg,rgba(var(--g-blue-rgb),.82) 34deg,rgba(var(--g-red-rgb),.86) 96deg,rgba(var(--g-yellow-rgb),.96) 174deg,rgba(var(--g-green-rgb),.88) 262deg,rgba(var(--g-blue-rgb),.96) 360deg);filter:blur(14px);opacity:var(--btn-halo-opacity);transform:translateZ(0);transition:inset 240ms var(--ease),opacity 240ms var(--ease),filter 240ms var(--ease);animation:gemini-ccw 5.2s linear infinite}
@@ -1313,8 +1310,6 @@
       .output-main .command-clear:not(:disabled):hover{background:var(--hover);border-color:var(--accent-line);color:var(--ink)}
       .protocol:not(.is-selected):hover{background:var(--hover);border-color:var(--accent-line)}
       .core-heading:hover .core-label strong{color:var(--accent-text)}
-      .mask-choice:not(.is-disabled):not(.is-conflict):hover{border-color:var(--accent-line);background:var(--hover)}
-      .secondary-list label:not(.is-disabled):not(.is-conflict):hover{border-color:var(--accent-line);background:var(--hover)}
       .file-label:hover{background:var(--hover);border-color:var(--accent-line)}
       .ui-preference select:hover{border-color:var(--accent-line)}
     }
@@ -1360,7 +1355,7 @@
   <header class="masthead">
     <div class="brand"><div class="brand-mark" aria-hidden="true"><svg class="brand-mark-gpt" viewBox="0 0 32 32" focusable="false"><g fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M14 12.54H20.2A3.81 3.81 0 1 0 20.2 4.92H11.8"/><path d="M14 12.54H20.2A3.81 3.81 0 1 0 20.2 4.92H11.8" transform="rotate(60 16 16)"/><path d="M14 12.54H20.2A3.81 3.81 0 1 0 20.2 4.92H11.8" transform="rotate(120 16 16)"/><path d="M14 12.54H20.2A3.81 3.81 0 1 0 20.2 4.92H11.8" transform="rotate(180 16 16)"/><path d="M14 12.54H20.2A3.81 3.81 0 1 0 20.2 4.92H11.8" transform="rotate(240 16 16)"/><path d="M14 12.54H20.2A3.81 3.81 0 1 0 20.2 4.92H11.8" transform="rotate(300 16 16)"/></g></svg><svg class="brand-mark-claude" viewBox="0 0 32 32" focusable="false"><path d="M16 3.5v9M16 19.5v9M3.5 16h9M19.5 16h9M7.2 7.2l6.1 6.1M18.7 18.7l6.1 6.1M24.8 7.2l-6.1 6.1M13.3 18.7l-6.1 6.1" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></svg><svg class="brand-mark-gemini" viewBox="0 0 32 32" focusable="false"><defs><clipPath id="gemini-star-clip"><path d="M16 2C16 10 22 16 30 16C22 16 16 22 16 30C16 22 10 16 2 16C10 16 16 10 16 2Z"/></clipPath><radialGradient id="g-spark-red" cx="15" cy="3" r="16" gradientUnits="userSpaceOnUse"><stop offset="0%" stop-color="#ea4335"/><stop offset="40%" stop-color="#ea4335"/><stop offset="100%" stop-color="#ea4335" stop-opacity="0"/></radialGradient><radialGradient id="g-spark-yellow" cx="3" cy="17" r="16" gradientUnits="userSpaceOnUse"><stop offset="0%" stop-color="#fbbc04"/><stop offset="42%" stop-color="#fbbc04"/><stop offset="100%" stop-color="#fbbc04" stop-opacity="0"/></radialGradient><radialGradient id="g-spark-green" cx="17" cy="29" r="16" gradientUnits="userSpaceOnUse"><stop offset="0%" stop-color="#34a853"/><stop offset="42%" stop-color="#34a853"/><stop offset="100%" stop-color="#34a853" stop-opacity="0"/></radialGradient><radialGradient id="g-spark-blue" cx="29" cy="15" r="16" gradientUnits="userSpaceOnUse"><stop offset="0%" stop-color="#4285f4"/><stop offset="44%" stop-color="#4285f4"/><stop offset="100%" stop-color="#4285f4" stop-opacity="0"/></radialGradient></defs><g class="gemini-star-fill" clip-path="url(#gemini-star-clip)"><rect width="32" height="32" fill="#4285f4"/><rect width="32" height="32" fill="url(#g-spark-red)"/><rect width="32" height="32" fill="url(#g-spark-yellow)"/><rect width="32" height="32" fill="url(#g-spark-green)"/><rect width="32" height="32" fill="url(#g-spark-blue)"/></g><path class="gemini-star-hc" fill="none" d="M16 2C16 10 22 16 30 16C22 16 16 22 16 30C16 22 10 16 2 16C10 16 16 10 16 2Z"/></svg></div><div><div class="eyebrow">AIRGOSBX / WORKBENCH</div><h1>配置工作台</h1><p class="meta">配置连接，生成 VPS 命令。</p></div></div>
     <div class="tools">
-      <span id="build-version" class="meta">v1.3.2 (20261121) · 离线单文件</span>
+      <span id="build-version" class="meta">v1.4 (20261124) · 离线单文件</span>
       <div class="ui-preferences">
         <label class="ui-preference" for="ui-style"><span>风格</span><select id="ui-style" autocomplete="off"><option value="claude" data-ui-raw>Claude</option><option value="gpt" data-ui-raw>GPT</option><option value="gemini" data-ui-raw>Gemini</option></select></label>
         <label class="ui-preference" for="ui-language"><span>语言</span><select id="ui-language" autocomplete="off"><option value="zh" data-ui-raw>简体中文</option><option value="en" data-ui-raw>English</option></select></label>
@@ -1382,7 +1377,7 @@
       <div class="flow-arrow" aria-hidden="true"></div>
       <div class="flow-cell"><h3 class="flow-label"><span class="flow-index">03</span> 出站</h3><p class="flow-subtitle">VPS 访问目标</p><div class="chips"><span id="flow-out-direct" class="chip">直接访问目标</span><span id="flow-warp" class="chip">Cloudflare WARP</span><span id="flow-secondary" class="chip">B 服务器</span></div><p id="egress-detail" class="flow-detail"></p></div>
     </div>
-    <p class="flow-caption">Cloudflared 建立隧道，Caddy 承载 Naive，Mita 承载 Mieru。入口与出站可独立配置。</p>
+    <p class="flow-caption">Cloudflared 建立隧道，Caddy 承载 Naive，Mita 承载 Mieru，Sudoku 承载官方独立协议。入口与出站可独立配置。</p>
   </section>
 
   <form id="builder" autocomplete="off" novalidate>
@@ -1394,7 +1389,7 @@
       <div id="deployment">
       <section class="panel" id="protocols"><div class="panel-heading"><div><h2 class="step"><span class="section-index">01</span>入站协议</h2><p class="section-description">选择协议与入站方式</p><p class="intro">可以组合多种协议。端口留空使用脚本默认的随机分配。</p></div><span id="selected-count" class="chip active">0 个已选</span></div>
         <div id="access-fields" class="form-grid"></div><div id="cdn-fields" class="form-grid" style="margin-top:14px" hidden></div><div id="argo-fields" class="form-grid" style="margin-top:14px" hidden></div>
-        <details><summary>这些接入方式有什么区别</summary><p class="intro">直连直接访问 VPS 的协议入口。CDN 在前面代理 HTTP 流量，多个受支持协议共用 cdnym。Argo 由 cloudflared 主动建立隧道，本脚本一次绑定 vmpt、vwpt 或 xvargopt 中的一种。XDRIVE 通过云存储交换数据，不监听公网端口。不同接入方式可以并存。</p></details>
+        <details><summary>这些接入方式有什么区别</summary><p class="intro">直连直接访问 VPS 的协议入口。CDN 在前面代理 HTTP 流量，多个受支持协议共用 cdnym。Argo 由 cloudflared 主动建立隧道，本脚本一次绑定 vmpt、vwpt、xvargopt 或 sudokupt 中的一种。XDRIVE 通过云存储交换数据，不监听公网端口。不同接入方式可以并存。</p></details>
         <div class="search-row" style="margin-top:20px"><input id="search" type="search" aria-label="搜索协议、核心或变量" placeholder="搜索协议、核心或变量"><div class="filters" role="group" aria-label="按接入能力筛选"><button type="button" data-filter="all" aria-pressed="true">全部</button><button type="button" data-filter="direct" aria-pressed="false">直连</button><button type="button" data-filter="cdn" aria-pressed="false">CDN</button><button type="button" data-filter="argo" aria-pressed="false">Argo</button><button type="button" data-filter="storage" aria-pressed="false">云存储</button></div></div>
         <div class="list-toolbar"><span id="filter-summary" class="meta"></span><div class="tools"><button type="button" class="text-button" data-core-action="expand">全部展开</button><button type="button" class="text-button" data-core-action="collapse">全部收起</button></div></div>
         <p class="note">参数标记：<span class="parameter-side">client</span> 仅作用于客户端（用户本地端）；<span class="parameter-side">server</span> 仅作用于服务端（VPS）。按本页配套配置标注，两端适用的参数不标记。客户端参数由 VPS 脚本写入配套链接或 JSON。两端适用不代表数值必须相同，具体匹配关系见字段说明。</p>
@@ -1428,8 +1423,8 @@
         <summary class="reference-heading"><h2><span>维护对照</span><span class="reference-toggle" aria-hidden="true"><span class="reference-open">展开</span><span class="reference-close">收起</span><span class="tree-chevron"></span></span></h2></summary>
         <div class="reference-body">
           <p class="section-description">脚本与 GUI 的维护对照</p><p class="intro">页面以当前工作区脚本为依据；HTML 不会自动读取磁盘或远端代码。</p>
-          <div class="table-wrap"><table class="help-table"><thead><tr><th>功能位置</th><th>脚本入口</th><th>GUI 同步点</th></tr></thead><tbody><tr><td>协议及所属核心</td><td><code>showvars / ins</code></td><td>协议清单、能力标记、核心推导</td></tr><tr><td>Xray 扩展</td><td><code>各入口的 extra / mode / fm 变量</code></td><td>按协议默认方案、FM 组合与独立调参</td></tr><tr><td>XDRIVE 云存储</td><td><code>xdrive / xdriveservice / xdrivefolder / xdriveauthfile / xdriveclientfolder</code></td><td>后端与路径校验、条件字段、专用 JSON、命令往返</td></tr><tr><td>CDN / Argo</td><td><code>cdnym / argo / agn / agk</code></td><td>接入条件、端口、隧道绑定</td></tr><tr><td>出站</td><td><code>warp / secpN / securlN / secuotN</code></td><td>B1–B16 的目标、独立范围及 WARP 出站互斥；兼容旧版单 B</td></tr><tr><td>订阅</td><td><code>sub / subauth / subpt / subid / subpass / res</code></td><td>独立密码保护开关、路径 Token、手填或 VPS 独立随机密码、已有保护模式恢复</td></tr><tr><td>命令生成与还原</td><td><code>环境变量与管理命令</code></td><td>字段映射、引用转义、旧版通用参数继承</td></tr><tr><td>生命周期</td><td><code>rep / del / upx / ups …</code></td><td>操作清单、参数过滤、影响说明</td></tr></tbody></table></div>
-          <p class="note">覆盖范围：常用部署、证书、订阅、出站和管理入口。XDNS / XICMP 使用 Xray ≥26.7.28 的专用配置；XDRIVE 要求两端核心包含 2026-09-19 合并的官方实现，v26.9.9 不支持。这三类入口使用完整客户端 JSON，不加入通用订阅。XDRIVE 不监听公网端口，Google Drive 模式的 JSON 含云盘凭据，脚本仅提示路径。目录中标为不可配置的核心字段未接入脚本，内部证书续期和跳跃规则恢复命令由脚本管理。端口占用、服务归属、证书和真实连通性须在 VPS 检查。</p><p class="note">对照功能只提取你选择的脚本中的变量声明与帮助条目，不执行、不上传。它能提示变量清单差异，不能代替调用逻辑审查。</p><div class="tools" style="margin-top:14px"><label class="file-label">选择 airgosbx.sh 对照<input id="source-file" class="visually-hidden" type="file" accept=".sh,text/plain"></label><button id="clear-compare" type="button" class="text-button">清除对照</button></div><p id="sync-result" class="sync-result" role="status">GUI 版本：v1.3.2 (20261121)；XHTTP 默认参数版本：V26.09.08.1。尚未读取其他文件。</p>
+          <div class="table-wrap"><table class="help-table"><thead><tr><th>功能位置</th><th>脚本入口</th><th>GUI 同步点</th></tr></thead><tbody><tr><td>协议及所属核心</td><td><code>showvars / ins</code></td><td>协议清单、能力标记、核心推导</td></tr><tr><td>Xray 扩展</td><td><code>各入口的 extra / mode / fm 变量</code></td><td>按协议默认方案、FM 组合与独立调参</td></tr><tr><td>Sudoku 独立协议</td><td><code>sudokupt / sudokukey / sudokuaead / sudokutable / sudokuct / sudokupad / sudokupure / sudokumask / sudokupath / sudokumux / sudokufb</code></td><td>独立核心分组、高级参数折叠、离线位表生成、ws 与 CDN/Argo 联动、命令往返</td></tr><tr><td>XDRIVE 云存储</td><td><code>xdrive / xdriveservice / xdrivefolder / xdriveauthfile / xdriveclientfolder</code></td><td>后端与路径校验、条件字段、专用 JSON、命令往返</td></tr><tr><td>CDN / Argo</td><td><code>cdnym / argo / agn / agk</code></td><td>接入条件、端口、隧道绑定</td></tr><tr><td>出站</td><td><code>warp / secpN / securlN / secuotN</code></td><td>B1–B16 的目标、独立范围及 WARP 出站互斥；兼容旧版单 B</td></tr><tr><td>订阅</td><td><code>sub / subauth / subpt / subid / subpass / res</code></td><td>独立密码保护开关、路径 Token、手填或 VPS 独立随机密码、已有保护模式恢复</td></tr><tr><td>命令生成与还原</td><td><code>环境变量与管理命令</code></td><td>字段映射、引用转义、旧版通用参数继承</td></tr><tr><td>生命周期</td><td><code>rep / del / upx / ups / upsu …</code></td><td>操作清单、参数过滤、影响说明</td></tr></tbody></table></div>
+          <p class="note">覆盖范围：常用部署、证书、订阅、出站和管理入口。XDNS / XICMP 使用 Xray ≥26.7.28 的专用配置；XDRIVE 要求两端核心包含 2026-09-19 合并的官方实现，v26.9.9 不支持。这三类入口使用完整客户端 JSON，不加入通用订阅。XDRIVE 不监听公网端口，Google Drive 模式的 JSON 含云盘凭据，脚本仅提示路径。目录中标为不可配置的核心字段未接入脚本，内部证书续期和跳跃规则恢复命令由脚本管理。端口占用、服务归属、证书和真实连通性须在 VPS 检查。</p><p class="note">对照功能只提取你选择的脚本中的变量声明与帮助条目，不执行、不上传。它能提示变量清单差异，不能代替调用逻辑审查。</p><div class="tools" style="margin-top:14px"><label class="file-label">选择 airgosbx.sh 对照<input id="source-file" class="visually-hidden" type="file" accept=".sh,text/plain"></label><button id="clear-compare" type="button" class="text-button">清除对照</button></div><p id="sync-result" class="sync-result" role="status">GUI 版本：v1.4 (20261124)；XHTTP 默认参数版本：V26.09.08.1。尚未读取其他文件。</p>
         </div>
       </details>
     </main>
@@ -1469,13 +1464,13 @@
 <script>
 /* 配置清单集中在这里，避免表单、架构图与命令生成各自维护一套名称。 */
 'use strict';
-const BUILD = {version:'v1.3.2 (20261121)',presetVersion:'V26.09.08.1',remoteAligned:true, source:'https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/main/airgosbx.sh', schema:'通用字段基线：Xray v26.3.27；XDNS/XICMP：v26.7.28；XDRIVE：须包含 2026-09-19 合并的官方实现，v26.9.9 不支持'};
+const BUILD = {version:'v1.4 (20261124)',presetVersion:'V26.09.08.1',remoteAligned:true, source:'https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/main/airgosbx.sh', schema:'通用字段基线：Xray v26.3.27；XDNS/XICMP：v26.7.28；XDRIVE：须包含 2026-09-19 合并的官方实现，v26.9.9 不支持'};
 const OPERATIONS = [
   ['cert','维护已有证书（cert）'],
-  ['install','安装 / 创建节点'],['rep','重建协议配置（rep）'],['restore-ip','恢复原 IP 策略'],['list','显示节点（list）'],['status','资源与流量（status）'],['update','更新脚本（update）'],['res','重启代理与隧道（res）'],['start','启动核心（start）'],['stop','停止核心（stop）'],['restart','重启核心（restart）'],['reload','重载配置（reload）'],['upx','升级 Xray（upx）'],['ups','升级 Sing-box（ups）'],['downx','降级 Xray（downx）'],['downs','降级 Sing-box（downs）'],['del','卸载（del）'],['vars','查看变量（vars）'],['cmds','查看命令（cmds）'],['help','完整帮助（help）']
+  ['install','安装 / 创建节点'],['rep','重建协议配置（rep）'],['restore-ip','恢复原 IP 策略'],['list','显示节点（list）'],['status','资源与流量（status）'],['update','更新脚本（update）'],['res','重启代理与隧道（res）'],['start','启动核心（start）'],['stop','停止核心（stop）'],['restart','重启核心（restart）'],['reload','重载配置（reload）'],['upx','升级 Xray（upx）'],['ups','升级 Sing-box（ups）'],['upsu','升级 Sudoku（upsu）'],['downx','降级 Xray（downx）'],['downs','降级 Sing-box（downs）'],['downsu','降级 Sudoku（downsu）'],['del','卸载（del）'],['vars','查看变量（vars）'],['cmds','查看命令（cmds）'],['help','完整帮助（help）']
 ];
 const CORE_INFO = [
-  ['xray','Xray-core','VLESS、XHTTP、REALITY 与兼容协议'],['singbox','Sing-box','Hysteria2、TUIC、AnyTLS 等'],['caddy','Caddy','NaiveProxy 与证书托管'],['mita','Mita','Mieru 独立系统服务'],['auto','Auto','VMess / SOCKS 由启用的固定核心决定']
+  ['xray','Xray-core','VLESS、XHTTP、REALITY 与兼容协议'],['singbox','Sing-box','Hysteria2、TUIC、AnyTLS 等'],['caddy','Caddy','NaiveProxy 与证书托管'],['sudoku','Sudoku','SUDOKU-ASCII 官方独立服务端（区别于 Xray FM）'],['mita','Mita','Mieru 独立系统服务'],['auto','Auto','VMess / SOCKS 由启用的固定核心决定']
 ];
 const PROTOCOLS = [
   {id:'vlpt',name:'vless + tcp/raw + Reality + vision',core:'xray',access:['direct'],sockets:['tcp'],description:'基础直连；默认无 FinalMask。',fields:['vlfm']},
@@ -1496,6 +1491,7 @@ const PROTOCOLS = [
   {id:'vmpt',name:'vmess + WebSocket (+CDN) (+Argo)',core:'auto',access:['direct','cdn','argo'],sockets:['tcp'],description:'保留迁移兼容；仅归属 Xray 且直接接入时可选 FM。',fields:['vmfm']},
   {id:'sopt',name:'socks5',core:'auto',access:['direct'],sockets:['tcp','udp'],description:'SOCKS5 入口，本身不加密，可直接访问目标或选入 secp 经 B 出站。仅终端输出完整 URL，不加入订阅或私有掩码。'},
   {id:'naive',name:'NaiveProxy (HTTPS;HTTP2;HTTP3)',core:'caddy',access:['direct'],sockets:['tcp','udp'],fixed:443,description:'Caddy 独立服务，需真实域名；secp 使用 Sing-box 转交。聚合订阅含 Shadowrocket 的 http2/http3 链接，也可通过网页查看入口复制；不写入 Mihomo YAML。',fields:['naive','naiveuser','naivepass','naivebuild','naivesite']},
+  {id:'sudokupt',name:'Sudoku (+CDN) (+Argo)',core:'sudoku',access:['direct','cdn','argo'],sockets:['tcp'],description:'SUDOKU-ASCII 官方独立服务端（区别于 Xray FinalMask）；仅直连出站，不支持 WARP 与二级代理。UDP 经 UoT 承载，ws 模式支持 CDN 与 Argo；导出 Shadowrocket 原生 sudoku:// 与 Mihomo YAML。',fields:['sudokumask','sudokupure','sudokuaead','sudokutable','sudokuct','sudokupad','sudokupath','sudokumux','sudokufb','sudokukey']},
   {id:'mieru',name:'Mieru',core:'mita',access:['direct'],sockets:['tcp'],portKey:'mierupt',description:'独立 Mita 服务，仅适用脚本支持的 systemd + deb/rpm 平台。二级出站需单独选中，最低 Mita 3.37.0，由 VPS 校验版本与能力。导出 Mihomo YAML 与原生链接，均保留 Traffic Pattern。',fields:['mierutrans','mieruuser','mierupass']}
 ];
 const WARP_RULES = [
@@ -1696,13 +1692,13 @@ const FIELDS = {
   scriptSource:{label:'执行入口',options:[['repo','GitHub main 分支'],['local','VPS 本地 airgosbx.sh'],['custom','指定版本或 URL'],['shortcut','已安装的 agsbx 命令']],value:BUILD.remoteAligned?'repo':'local'},
   scriptPath:{label:'VPS 上的脚本路径',value:'./airgosbx.sh',help:'这是 VPS 上的路径，不是 Mac 路径；请先把对应脚本放到 VPS。'},
   scriptURL:{label:'提交哈希 / Tag / 脚本 URL',placeholder:'例如 462bdac、v1.3.1 或完整 https://...',help:'支持 Git 提交哈希、Tag 版本号或完整 HTTPS URL；页面本身不访问该地址。'},
-  target:{label:'目标核心',options:[['all','全部（不含 Mita）'],['xray','Xray'],['sb','Sing-box'],['caddy','Caddy'],['mita','Mita / Mieru']],value:'all'},
+  target:{label:'目标核心',options:[['all','全部（不含 Mita）'],['xray','Xray'],['sb','Sing-box'],['caddy','Caddy'],['sudoku','Sudoku'],['mita','Mita / Mieru']],value:'all'},
   version:{label:'目标版本',placeholder:'留空取最新；降级时必填',help:'填写形如 v26.3.27 或 1.12.0 的版本号。'},
   ippz:{label:'节点地址优先使用',options:[['','自动'],['4','IPv4'],['6','IPv6']],help:'只影响节点输出地址，不等同于系统 IP 栈策略。'},
   cdnEnabled:{label:'Cloudflare CDN 回源',type:'checkbox'},
   argoEnabled:{label:'Cloudflare Argo Tunnel',type:'checkbox'},
   cdnym:{label:'CDN 域名',placeholder:'cdn.example.com',help:'与 Cloudflare 上的站点、DNS 和回源设置对应。'},
-  argo:{label:'Argo 绑定的协议',options:[['vmpt','vmess WebSocket · vmpt'],['vwpt','vlessenc WebSocket · vwpt'],['xvargopt','vlessenc xhttp · xvargopt']],value:'xvargopt'},
+  argo:{label:'Argo 绑定的协议',options:[['vmpt','vmess WebSocket · vmpt'],['vwpt','vlessenc WebSocket · vwpt'],['xvargopt','vlessenc xhttp · xvargopt'],['sudokupt','Sudoku WebSocket · sudokupt']],value:'xvargopt'},
   argoKind:{label:'隧道类型',options:[['temporary','临时隧道'],['fixed','固定隧道']],value:'temporary'},
   agn:{label:'固定隧道域名',placeholder:'tunnel.example.com'},
   agk:{label:'固定隧道 Token',type:'password',help:'不写入 HTML 文件或浏览器存储；复制命令时包含实际值。'},
@@ -1755,6 +1751,16 @@ const FIELDS = {
   mierutrans:{label:'Mieru 传输',options:[['tcp','TCP'],['udp','UDP']],value:'tcp'},
   mieruuser:{label:'Mieru 用户名',placeholder:'留空由 VPS 询问或生成'},
   mierupass:{label:'Mieru 密码',type:'password',placeholder:'留空由 VPS 询问或生成'},
+  sudokumask:{label:'HTTP Mask 模式',options:[['legacy','legacy · 直连伪 HTTP 头（默认）'],['ws','ws · WebSocket 隧道（支持 CDN / Argo）'],['off','off · 关闭 HTTP Mask（纯裸流）']],value:'legacy',help:'legacy 仅用于直连，无法过 CDN 或 Argo；ws 可搭配 cdnym 或 argo=sudokupt。'},
+  sudokupure:{label:'Pure Downlink 纯数独下行',options:[['n','关闭 · 约 1.33× 省流压缩下行（默认）'],['y','开启 · 约 4× 纯数独下行']],value:'n',help:'两端必须严格一致；默认关闭可节省约 3 倍下载流量，脚本自动写入 Shadowrocket 链接。'},
+  sudokuaead:{label:'AEAD 加密算法',options:[['chacha20-poly1305','chacha20-poly1305（默认）'],['aes-128-gcm','aes-128-gcm'],['none','none（无加密，仅建议外层有 TLS 时考虑）']],value:'chacha20-poly1305',help:'手机端推荐使用 chacha20-poly1305；直连请勿选择 none。'},
+  sudokutable:{label:'数独表外观（Table Type）',options:[['prefer_entropy','prefer_entropy · 低熵固定位型（默认）'],['prefer_ascii','prefer_ascii · 可打印 ASCII 文本外观'],['up_ascii_down_entropy','up_ascii_down_entropy · 上行 ASCII / 下行低熵'],['up_entropy_down_ascii','up_entropy_down_ascii · 上行低熵 / 下行 ASCII']],value:'prefer_entropy',help:'控制线上字节统计分布；prefer_ascii 呈纯文本特征，不启用自定义位表。'},
+  sudokuct:{label:'自定义位表（Custom Tables）',placeholder:'留空＝内置表；可填 auto 或 xpxvvpvv,vxpvxvvp',help:'仅在 entropy 方向生效。留空用内置表；填 auto 由 VPS 随机生成 2 组；或用逗号分隔 1–8 组 8 位模板（每组恰含 2 个 x、2 个 p、4 个 v）。'},
+  sudokupad:{label:'随机填充比例（%）',value:'5-15',placeholder:'5-15',help:'0–100 内的整数或 min-max 范围（百分比，不是字节数）。默认 5-15；Shadowrocket 手填默认 10-30。'},
+  sudokupath:{label:'WebSocket 路径前缀（Path Root）',placeholder:'留空自动生成随机前缀，例如 prefix',help:'仅 ws 模式使用，1–64 位字母、数字、下划线或短横线（可选前导 /）；两端保持一致。'},
+  sudokumux:{label:'连接复用（Muxing）',options:[['off','off · 关闭（默认）'],['auto','auto · 仅复用 HTTPMask 连接'],['on','on · 开启多路复用（Shadowrocket 启用 mux=1）']],value:'off',help:'高并发短连接可按需开启 on；常规使用保持 off 更稳妥。'},
+  sudokufb:{label:'防主动探测回落',side:'server',placeholder:'留空＝silent 静默丢弃；可填 127.0.0.1:80',help:'留空或填 silent 时静默丢弃非法探测；填写 host:port 或 [IPv6]:port 时启用 fallback 转发至伪装站。'},
+  sudokukey:{label:'自定义共享密钥',type:'password',maxLength:128,placeholder:'留空由 VPS 自动 -keygen 生成 Ed25519 密钥对',help:'最多 128 字符，不含冒号 : 或 @。留空时 VPS 仅保存 Master Public Key，并导出派生客户端私钥，更安全。'},
   warpEnabled:{label:'经 Cloudflare WARP 出站',type:'checkbox'},
   warp:{label:'WARP 出站作用范围',options:WARP_RULES,value:'sx',help:'s 表示 Sing-box，x 表示 Xray；4/6 选择目标 IP 族。同一入站协议的流量已配置经所属核心的 WARP 出站时，须先取消该核心的 WARP 出站才能选 B，包括仅 IPv4/IPv6 的规则。'},
   secondaryEnabled:{label:'配置多个二级代理出站',type:'checkbox',help:'每组独立填写 B 的 URL，并选择 A 接受客户端连接的入站。同一入站只能属于一个 B，且不能同时经所属核心的 WARP 出站。'},
@@ -1816,7 +1822,7 @@ for(let id=1;id<=SECONDARY_LIMIT;id++){
   FIELDS['secuot'+id]={...FIELDS.secuot};
   SECONDARY_KEYS.push('secp'+id,'securl'+id,'secuot'+id);
 }
-const PRIVATE_KEYS = new Set(['agk','uuid','naivepass','mierupass','securl','CF_Token','CF_Key','zerossl_eab_kid','zerossl_eab_hmac','sslcom_eab_kid','sslcom_eab_hmac','obfs_pass','subid','subpass','fmpass','fmheader',...SECONDARY_KEYS.filter(key=>key.startsWith('securl'))]);
+const PRIVATE_KEYS = new Set(['agk','uuid','naivepass','mierupass','sudokukey','securl','CF_Token','CF_Key','zerossl_eab_kid','zerossl_eab_hmac','sslcom_eab_kid','sslcom_eab_hmac','obfs_pass','subid','subpass','fmpass','fmheader',...SECONDARY_KEYS.filter(key=>key.startsWith('securl'))]);
 PRIVATE_KEYS.add('xheaders64');
 for(const profile of Object.values(XRAY_PROFILES))for(const base of profile.keys)if(['fmpass','fmheader','xheaders64'].includes(base))PRIVATE_KEYS.add(profile.prefix+'_'+base);
 const UI_ONLY = new Set(['operation','scriptSource','scriptPath','scriptURL','target','version','cdnEnabled','argoEnabled','argoKind','warpEnabled','secondaryEnabled','certMode','acmeMethod']);
@@ -1841,12 +1847,37 @@ function fieldDefault(key){
   if(entry?.extra&&value(entry.extra)==='y')return extensionPreset(entry.extra).mode;
   return spec?.value??'';
 }
+const SUDOKU_PRIMARY_KEYS=['sudokumask','sudokupure','sudokuaead'];
+const SUDOKU_ADVANCED_KEYS=['sudokutable','sudokuct','sudokupad','sudokupath','sudokumux','sudokufb','sudokukey'];
+const SUDOKU_ALL_KEYS=[...SUDOKU_PRIMARY_KEYS,...SUDOKU_ADVANCED_KEYS];
+function validSudokuCustomTable(item){
+  if(!/^[xpv]{8}$/.test(item))return false;
+  let x=0,p=0,v=0;for(const ch of item){if(ch==='x')x++;else if(ch==='p')p++;else if(ch==='v')v++;}
+  return x===2&&p===2&&v===4;
+}
+function validSudokuFallback(raw){
+  const v6=raw.match(/^\[([0-9a-fA-F:]+)\]:([0-9]{1,5})$/),v4=raw.match(/^([^:/\s]+):([0-9]{1,5})$/),m=v6||v4;
+  if(!m)return false;
+  const host=m[1],port=Number(m[2]);
+  if(port<1||port>65535)return false;
+  return v6?isIPv6(host):(isIPv4(host)||validDomain(host)||host==='localhost');
+}
+function generateSudokuCustomTables(){
+  const randByte=()=>{if(window.crypto&&crypto.getRandomValues){const b=new Uint8Array(1);crypto.getRandomValues(b);return b[0];}return Math.floor(Math.random()*256);};
+  const one=()=>{const arr=['x','x','p','p','v','v','v','v'];for(let i=arr.length-1;i>0;i--){const j=randByte()%(i+1);[arr[i],arr[j]]=[arr[j],arr[i]];}return arr.join('');};
+  const first=one();let second=one();
+  for(let tries=0;tries<16&&second===first;tries++)second=one();
+  return first===second?'xpxvvpvv,vxpvxvvp':first+','+second;
+}
 function comparableFieldValue(key,raw){
   const spec=FIELDS[key],kind=spec?.extra?.kind,base=spec?.base||key;
   if(kind==='keepalive'&&/^-?\d+$/.test(String(raw).trim()))return String(Number(raw));
-  if(XRAY_RANGES[base]&&/^\d+(-\d+)?$/.test(String(raw).trim())){
+  if((XRAY_RANGES[base]||key==='sudokupad')&&/^\d+(-\d+)?$/.test(String(raw).trim())){
     const parts=String(raw).trim().split('-').map(Number);return parts[0]+':'+(parts[1]??parts[0]);
   }
+  if(key==='sudokuct')return String(raw).replace(/\s+/g,'').toLowerCase();
+  if(key==='sudokupath')return String(raw).trim().replace(/^\/+/,'');
+  if(key==='sudokufb'){const t=String(raw).trim();return /^(silent|none)$/i.test(t)?'':t;}
   return spec?.type==='headers'?String(raw).replace(/\r\n/g,'\n').trim():kind?String(raw).trim():String(raw);
 }
 function isDefaultField(key){return comparableFieldValue(key,value(key))===comparableFieldValue(key,fieldDefault(key));}
@@ -2141,9 +2172,9 @@ function appendMaskModule(parent,mask,network,key,profile){
   const activeNetwork=profile?.kind==='udp'?'udp':'tcp';
   const bind=Boolean(key)&&(mask.type!=='both'||network===activeNetwork);
   const module=treeSection(mask.label,mask.id,'module',false,mask.side);module.section.dataset.maskModule=mask.id;
-  const choice=node('label','mask-choice'+(bind?'':' is-disabled')),input=node('input');input.type='checkbox';input.value=mask.id;
+  const choice=node('div','mask-choice'+(bind?'':' is-disabled')),input=node('input');input.type='checkbox';input.value=mask.id;
   if(bind){input.dataset.maskGroup=key;input.dataset.mask=mask.id;}else input.disabled=true;
-  const caption=node('span','mask-caption'),name=node('span','mask-name',bind?'启用此模块':'当前不可配置');
+  const caption=node('span','mask-caption'),name=node('span','mask-name',bind?'启用此模块':'当前不可配置');name.id='mask-name-'+(key||'ro')+'-'+network+'-'+mask.id;input.setAttribute('aria-labelledby',name.id);
   const badge=node('span','mask-state');badge.dataset.maskState='';name.append(badge);
   const hint=node('small');hint.textContent=bind?'':key?'当前节点不使用 '+network.toUpperCase()+' 掩码层。':'此入口尚未开放配套配置或 URL 导出。';
   if(bind){hint.id='mask-hint-'+key+'-'+mask.id;input.setAttribute('aria-describedby',hint.id);}
@@ -2234,7 +2265,7 @@ function makeExtension(key){
   const heading=node('div','extension-heading'),title=node('div','extension-title');
   const name=node('strong');name.append(parameterLabel(fm?'FinalMask':'XHTTP Extra',fm&&['cdn','tunnel'].includes(profile.kind)?'client':''));name.id='title-'+key;
   title.append(name,node('p','extension-subtitle',fm?'TCP / UDP 掩码与 QUIC 参数分层配置':'按功能分层配置请求、上传、连接复用与下载'));
-  const toggle=node('label','toggle'),input=node('input');
+  const toggle=node('div','toggle'),input=node('input');
   input.type='checkbox';input.id=fm?'enable-'+key:key;input.dataset.extensionToggle=key;input.setAttribute('role','switch');
   input.setAttribute('aria-label',id+' 启用 '+(fm?'TCP/UDP 掩码':'XHTTP Extra'));input.setAttribute('aria-controls','body-'+key);
   const state=node('span','toggle-state','关闭');state.id='state-'+key;toggle.append(input,state);heading.append(title,toggle);group.append(heading);
@@ -2263,7 +2294,7 @@ function makeExtension(key){
 function makeField(key){
   const spec=FIELDS[key];
   if(['masks','extra'].includes(spec.type))return makeExtension(key);
-  const wrap=node('label',spec.type==='checkbox'?'field check-field':'field');wrap.dataset.field=key;
+  const wrap=node(spec.type==='checkbox'?'div':'label',spec.type==='checkbox'?'field check-field':'field');wrap.dataset.field=key;
   const title=node('span','field-label');title.append(parameterLabel(spec.label,spec.side));if(!UI_ONLY.has(key))title.append(node('code','',key));
   let input;
   if(spec.options){input=node('select');for(const [v,label] of spec.options){const option=node('option','',label);option.value=v;input.append(option);}}
@@ -2274,8 +2305,9 @@ function makeField(key){
   input.id=key;input.name=key;
   if(/^secuot\d*$/.test(key)){wrap.hidden=true;input.disabled=true;}
   if(/^securl\d*$/.test(key))wrap.classList.add('wide');
-  if(spec.type==='checkbox'){input.checked=Boolean(spec.value);wrap.append(input,title);}else{input.value=spec.value??'';wrap.append(title,input);}
+  if(spec.type==='checkbox'){title.id='field-label-'+key;input.setAttribute('aria-labelledby',title.id);input.checked=Boolean(spec.value);wrap.append(input,title);}else{input.value=spec.value??'';wrap.append(title,input);}
   if(spec.help){const help=node('small','',spec.help);help.id='help-'+key;input.setAttribute('aria-describedby',help.id);wrap.append(help);}
+  if(key==='sudokuct'){const tools=node('div','tools');const gen=node('button','small-button','随机生成 2 组位表');gen.type='button';gen.id='sudoku-gen-ct';gen.dataset.sudokuGenCt='true';const clear=node('button','small-button','清空（用内置表）');clear.type='button';clear.id='sudoku-clear-ct';clear.dataset.sudokuClearCt='true';tools.append(gen,clear);wrap.append(tools);}
   if(key==='scriptURL'){const preview=node('small');preview.id='script-url-preview';preview.hidden=true;preview.setAttribute('role','status');input.setAttribute('aria-describedby',(input.getAttribute('aria-describedby')||'')+' '+preview.id);wrap.append(preview);}
   if(/^securl\d+$/.test(key)){const summary=node('small');summary.id='secondary-summary-'+key.slice(6);summary.hidden=true;summary.setAttribute('role','status');input.setAttribute('aria-describedby',(input.getAttribute('aria-describedby')||'')+' '+summary.id);wrap.append(summary);}
   if(spec.extra){
@@ -2309,6 +2341,7 @@ function secondaryWarpConflict(p,protocols,enabled=value('warpEnabled'),rule=val
   return enabled&&(['xray','singbox'].includes(core))&&rule.includes(core==='xray'?'x':'s');
 }
 function secondaryUnavailableReason(group,p,protocols){
+  if(p.core==='sudoku')return 'Sudoku 仅支持直连出站';
   if(secondaryWarpConflict(p,protocols))return '先取消此核心的 WARP 出站';
   const owner=secondaryGroups.find(item=>item.id!==group.id&&item.selection.has(p.id));
   return owner?'已分配 B'+owner.id:'';
@@ -2357,8 +2390,19 @@ function initialize(){
       const catalogCore=['xray','auto'].includes(p.core);
       if(p.fields||catalogCore){
         const settings=node('div','protocol-settings');settings.id='settings-'+p.id;settings.hidden=true;const grid=node('div','form-grid');
-        const basic=(p.fields||[]).filter(key=>!['masks','extra'].includes(FIELDS[key].type)&&(p.id!=='xhypt'||!QUIC_FIELD_KEYS.includes(key))),extensions=(p.fields||[]).filter(key=>['masks','extra'].includes(FIELDS[key].type));
-        for(const key of [...basic,...extensions])grid.append(makeField(key));settings.append(grid);
+        if(p.id==='sudokupt'){
+          for(const key of SUDOKU_PRIMARY_KEYS)grid.append(makeField(key));
+          settings.append(grid);
+          const adv=node('details','extension-custom');adv.id='sudoku-advanced';
+          adv.append(node('summary','','高级参数与默认策略（全部可调，默认项不写入命令）'));
+          const advGrid=node('div','form-grid');
+          for(const key of SUDOKU_ADVANCED_KEYS)advGrid.append(makeField(key));
+          adv.append(advGrid,node('p','extension-note','与脚本默认值一致的选项不会写入命令；任意改动都会同步输出到 VPS 命令，并支持粘贴还原。'));
+          settings.append(adv);
+        }else{
+          const basic=(p.fields||[]).filter(key=>!['masks','extra'].includes(FIELDS[key].type)&&(p.id!=='xhypt'||!QUIC_FIELD_KEYS.includes(key))),extensions=(p.fields||[]).filter(key=>['masks','extra'].includes(FIELDS[key].type));
+          for(const key of [...basic,...extensions])grid.append(makeField(key));settings.append(grid);
+        }
         if(['xdns','xicmp'].includes(p.id)){
           const details=node('details','extension-catalog');details.append(node('summary','','参数作用端与对应关系'),maskReferenceList(MASKS.find(mask=>mask.id===p.id)));
           details.append(node('p','note',p.id==='xdns'?'委派域名同时用于两端，因此该输入不标单端。MTU 是两端各自发送时的限制，本页固定两端为 80。':'本页客户端固定 dgram=false，服务端不读取此开关；ips 保持未设置，不启用目标覆盖或来源筛选。'));
@@ -2506,8 +2550,15 @@ function updateVisibility(deploy,protocols){
   setFieldVisibility('scriptPath',value('scriptSource')==='local');setFieldVisibility('scriptURL',value('scriptSource')==='custom');
   $('management-fields').hidden=deploy;
   setFieldVisibility('target',['start','stop','restart','reload'].includes(value('operation')));
-  setFieldVisibility('version',['upx','ups','downx','downs'].includes(value('operation')));setFieldVisibility('ippz',value('operation')==='list');
+  setFieldVisibility('version',['upx','ups','upsu','downx','downs','downsu'].includes(value('operation')));setFieldVisibility('ippz',value('operation')==='list');
   $('cdn-fields').hidden=!value('cdnEnabled');$('argo-fields').hidden=!value('argoEnabled');
+  const sudokuWs=value('sudokumask')==='ws',sudokuAscii=value('sudokutable')==='prefer_ascii';
+  setFieldVisibility('sudokupath',sudokuWs||Boolean(value('sudokupath').trim()));
+  $('sudokupath').disabled=!sudokuWs&&!value('sudokupath').trim();
+  $('sudokuct').disabled=sudokuAscii&&!value('sudokuct').trim();
+  if($('sudoku-gen-ct'))$('sudoku-gen-ct').disabled=sudokuAscii;
+  if($('sudoku-clear-ct'))$('sudoku-clear-ct').disabled=!value('sudokuct').trim();
+  text('help-sudokuct',sudokuAscii?'当前 Table Type 为 prefer_ascii，自定义位表不生效（仅 entropy 方向使用）；如已填写可点击清空。':FIELDS.sudokuct.help);
   for(const key of ['xdriveauthfile','xdriveclientfolder']){
     const applicable=xdriveFieldApplicable(key,value('xdriveservice'));
     setFieldVisibility(key,applicable);$(key).disabled=!applicable;
@@ -2565,8 +2616,12 @@ function updateVisibility(deploy,protocols){
   }
   updateExtensions(protocols);
   const streamOne=[...$('vxmode').options].find(option=>option.value==='stream-one');streamOne.disabled=value('cdnEnabled');
-  $('argo-origin-hint').hidden=!(value('argoEnabled')&&value('argo')==='xvargopt');
-  text('argo-origin-hint',value('argoKind')==='fixed'?'固定 Tunnel 的 Cloudflare 回源服务应设为 http://127.0.0.1:'+(value('port-xvargopt').trim()||'填写的端口')+'。客户端使用 HTTPS。':'临时 XHTTP Tunnel 使用回环 HTTP、packet-up 和 noSSEHeader=true。');
+  $('argo-origin-hint').hidden=!(value('argoEnabled')&&['xvargopt','sudokupt'].includes(value('argo')));
+  if(value('argo')==='sudokupt'){
+    text('argo-origin-hint',value('argoKind')==='fixed'?'固定 Tunnel 的 Cloudflare 回源服务应设为 http://127.0.0.1:'+(value('port-sudokupt').trim()||'填写的端口')+'（HTTP/WS）。客户端经 443 HTTPS + ws + TLS 接入。':'临时 Sudoku Argo 隧道使用回环 HTTP/WS 回源；客户端经 443 HTTPS + ws + TLS 接入。');
+  }else{
+    text('argo-origin-hint',value('argoKind')==='fixed'?'固定 Tunnel 的 Cloudflare 回源服务应设为 http://127.0.0.1:'+(value('port-xvargopt').trim()||'填写的端口')+'。客户端使用 HTTPS。':'临时 XHTTP Tunnel 使用回环 HTTP、packet-up 和 noSSEHeader=true。');
+  }
   const query=value('search').trim().toLowerCase();let visibleCount=0;
   for(const p of PROTOCOLS){
     const row=document.querySelector('.protocol[data-id="'+p.id+'"]'),chosen=$('select-'+p.id).checked;
@@ -2597,15 +2652,15 @@ function updateVisibility(deploy,protocols){
     if(container.dataset.signature!==signature){
       container.dataset.signature=signature;container.replaceChildren();
       for(const p of protocols){
-        const label=node('label'),input=node('input');input.type='checkbox';input.dataset.secondary=p.id;input.dataset.secondaryGroup=String(group.id);input.setAttribute('aria-label',p.id+' 经 B'+group.id);
-        label.append(input,node('span','',p.id+' · '+(p.core==='caddy'?'Caddy':p.core==='mita'?'Mita':coreOf(p,protocols)==='xray'?'Xray':'Sing-box')),node('small'));container.append(label);
+        const item=node('span','secondary-item'),input=node('input');input.type='checkbox';input.dataset.secondary=p.id;input.dataset.secondaryGroup=String(group.id);input.setAttribute('aria-label',p.id+' 经 B'+group.id);
+        item.append(input,node('span','',p.id+' · '+(p.core==='caddy'?'Caddy':p.core==='mita'?'Mita':p.core==='sudoku'?'Sudoku':coreOf(p,protocols)==='xray'?'Xray':'Sing-box')),node('small'));container.append(item);
       }
       if(!protocols.length)container.append(node('span','meta','先选择支持二级代理的协议。'));
     }
     for(const input of container.querySelectorAll('input')){
-      const p=protocols.find(item=>item.id===input.dataset.secondary),reason=secondaryUnavailableReason(group,p,protocols),label=input.closest('label');
+      const p=protocols.find(item=>item.id===input.dataset.secondary),reason=secondaryUnavailableReason(group,p,protocols),item=input.closest('.secondary-item');
       input.checked=group.selection.has(p.id);input.disabled=Boolean(reason)&&!input.checked;
-      label.classList.toggle('is-disabled',input.disabled);label.classList.toggle('is-conflict',Boolean(reason)&&input.checked);label.querySelector('small').textContent=reason;
+      item.classList.toggle('is-disabled',input.disabled);item.classList.toggle('is-conflict',Boolean(reason)&&input.checked);item.querySelector('small').textContent=reason;
     }
     for(const button of $('secondary-group-'+group.id).querySelectorAll('[data-secp]'))button.disabled=button.dataset.secp==='none'?!group.selection.size:!protocols.some(p=>(button.dataset.secp==='all'||coreOf(p,protocols)===button.dataset.secp)&&!secondaryUnavailableReason(group,p,protocols));
   }
@@ -2624,6 +2679,17 @@ function collect(deploy,protocols){
         if(key==='naive'||FIELDS[key].type==='extra'&&value(key)==='n')continue;
         if(p.id==='xdrive'&&!xdriveFieldApplicable(key,value('xdriveservice')))continue;
         if(XRAY_PROFILES[p.id]?.mode===key&&isDefaultField(key))continue;
+        if(p.id==='sudokupt'){
+          if(key==='sudokupath'&&value('sudokumask')!=='ws'&&!value(key).trim())continue;
+          if(key==='sudokuct'&&value('sudokutable')==='prefer_ascii'&&!value(key).trim())continue;
+          if(isDefaultField(key))continue;
+          let out=value(key);
+          if(key==='sudokupad')out=String(out).trim();
+          else if(key==='sudokuct')out=String(out).replace(/\s+/g,'').toLowerCase();
+          else if(key==='sudokupath')out=String(out).trim().replace(/^\/+/,'');
+          else if(key==='sudokufb'){out=String(out).trim();if(/^(silent|none)$/i.test(out))continue;}
+          add(key,out);continue;
+        }
         add(key,value(key));
       }
     }
@@ -2672,7 +2738,7 @@ function shellQuote(input){
 function commandArgs(){
   const op=value('operation');if(['install','restore-ip'].includes(op))return [];
   if(['start','stop','restart','reload'].includes(op))return [op,value('target')];
-  if(['upx','ups','downx','downs'].includes(op))return [op,...(value('version').trim()?[value('version').trim()]:[])];
+  if(['upx','ups','upsu','downx','downs','downsu'].includes(op))return [op,...(value('version').trim()?[value('version').trim()]:[])];
   return [op];
 }
 function buildCommand(pairs,mask){
@@ -2779,7 +2845,7 @@ function parseSavedCommand(raw){
     result.operation=aliases[values[0]]||values[0];
     if(!OPERATIONS.some(([id])=>id===result.operation)||['install','restore-ip'].includes(result.operation))throw new Error('命令的操作名称不在当前 GUI 支持范围内。');
     if(['start','stop','restart','reload'].includes(result.operation)){if(values.length>2)throw new Error('核心管理命令有多余参数。');result.target=({x:'xray','sing-box':'sb',mieru:'mita'})[values[1]]||values[1]||'all';}
-    else if(['upx','ups','downx','downs'].includes(result.operation)){if(values.length>2)throw new Error('版本管理命令有多余参数。');result.version=values[1]||'';}
+    else if(['upx','ups','upsu','downx','downs','downsu'].includes(result.operation)){if(values.length>2)throw new Error('版本管理命令有多余参数。');result.version=values[1]||'';}
     else if(values.length>1)throw new Error('这项管理操作不接受额外位置参数。');
   }
   if(!FIELDS.target.options.some(([id])=>id===result.target))throw new Error('无法还原这个目标核心名称。');
@@ -2830,6 +2896,13 @@ function savedCommandPlan(parsed){
     if(key==='warp')value=({'':'sx',xs:'sx',x4s4:'s4x4',x6s4:'s4x6',x4s6:'s6x4',x6s6:'s6x6',x4s:'sx4',x6s:'sx6',s4x:'xs4',s6x:'xs6'})[raw]||raw;
     if(key==='ipv')value=raw===''?'restore':raw;
     if(key==='naive'&&['y','yes','1'].includes(raw))value='';
+    if(key==='sudokupure'){
+      if(['y','yes','1','true'].includes(raw.toLowerCase()))value='y';
+      else if(['n','no','0','false'].includes(raw.toLowerCase()))value='n';
+    }
+    if(key==='sudokuct')value=raw.replace(/\s+/g,'').toLowerCase();
+    if(key==='sudokupath')value=raw.trim().replace(/^\/+/,'');
+    if(key==='sudokufb'&&/^(silent|none)$/i.test(raw.trim()))value='';
     if(key==='xvcdnmode'&&['','auto'].includes(raw))value='packet-up';
     if(key==='acmeca'&&value==='interactive')value='auto';
     // 空覆盖参数继承通用值，稍后按同一优先级解析；枚举控件不能静默变成空选项。
@@ -2845,6 +2918,8 @@ function savedCommandPlan(parsed){
   }
   const xdriveKeys=PROTOCOLS.find(p=>p.id==='xdrive').fields;
   if(!selected.has('xdrive')&&xdriveKeys.some(key=>pairs.has(key)))throw new Error('XDRIVE 参数需要同时设置 xdrive；未还原，避免隐藏参数丢失。');
+  if(!selected.has('sudokupt')&&SUDOKU_ALL_KEYS.some(key=>pairs.has(key)))throw new Error('Sudoku 参数需要同时设置 sudokupt；未还原，避免隐藏参数丢失。');
+  if(selected.has('sudokupt')&&pairs.get('argo')==='sudokupt'&&!pairs.has('sudokumask'))fields.sudokumask='ws';
   if(selected.has('xdrive')){
     for(const key of xdriveKeys)if(pairs.has(key)&&!xdriveFieldApplicable(key,fields.xdriveservice)){
       if(pairs.get(key)!=='')throw new Error(key+' 不适用于 '+fields.xdriveservice+' 后端；请移除不匹配参数，未改动表单。');
@@ -2909,8 +2984,10 @@ function savedCommandPlan(parsed){
         const matches=protocols.filter(p=>coreOf(p,protocols)===(token==='xr'?'xray':'singbox'));
         if(!matches.length)throw new Error(key+' 的核心分组没有匹配到已选协议。');
         matches.forEach(p=>selection.add(p.id));
-      }else if(selected.has(token))selection.add(token);
-      else throw new Error(key+' 包含未启用或不支持二级出站的协议。');
+      }else if(selected.has(token)){
+        if(token==='sudokupt')throw new Error('Sudoku 官方服务端当前仅支持直连出站，不能分配到二级代理。');
+        selection.add(token);
+      }else throw new Error(key+' 包含未启用或不支持二级出站的协议。');
     }
     for(const protocolId of selection){
       if(owners.has(protocolId))throw new Error(protocolId+' 同时分配给 B'+owners.get(protocolId)+' 与 B'+id+'。每个入站只能选择一个 B。');
@@ -2946,6 +3023,7 @@ function applySavedCommandPlan(plan){
     }
   }
   for(const group of document.querySelectorAll('.core-group'))group.open=PROTOCOLS.some(p=>p.core===group.dataset.core&&plan.selected.has(p.id));
+  if($('sudoku-advanced'))$('sudoku-advanced').open=plan.selected.has('sudokupt')&&SUDOKU_ADVANCED_KEYS.some(key=>!isDefaultField(key));
   commandMode='generate';importError=false;update();
   importMessage='已还原 '+plan.selected.size+' 个协议、'+plan.variableCount+' 个命令变量。'+(commandErrorCount?'当前组合有 '+commandErrorCount+' 项需要处理，见下方提示。':'可以查看选项、继续修改并生成命令。');
   if(plan.notes.length)importMessage+='\n'+plan.notes.join('\n');
@@ -3341,8 +3419,8 @@ function validate(deploy,protocols,pairs){
   if(/[\u0000-\u001F\u007F]/.test(value('scriptPath')))error('脚本来源不能包含换行或控制字符。','scriptPath');
   if(/[\u0000-\u001F\u007F]/.test(value('scriptURL')))error('脚本来源不能包含换行或控制字符。','scriptURL');
   if(!deploy){
-    if(['downx','downs'].includes(value('operation'))&&!value('version').trim())error('降级操作必须填写目标版本。','version');
-    if(['upx','ups','downx','downs'].includes(value('operation'))&&value('version')&&!/^v?\d+\.\d+\.\d+(?:[-.][A-Za-z0-9.-]+)?$/.test(value('version').trim()))error('版本号格式无效，例如 v26.3.27。','version');
+    if(['downx','downs','downsu'].includes(value('operation'))&&!value('version').trim())error('降级操作必须填写目标版本。','version');
+    if(['upx','ups','upsu','downx','downs','downsu'].includes(value('operation'))&&value('version')&&!/^v?\d+\.\d+\.\d+(?:[-.][A-Za-z0-9.-]+)?$/.test(value('version').trim()))error('版本号格式无效，例如 v26.3.27。','version');
     if(value('operation')==='del')warn('这条命令在 VPS 执行后会卸载组件并删除脚本管理的文件；页面不会执行它。','operation');
     return issues;
   }
@@ -3411,13 +3489,36 @@ function validate(deploy,protocols,pairs){
     if(value('naivesite')&&!validDomain(value('naivesite').replace(/^https?:\/\//,'')))error('伪装站须为支持 HTTPS 的域名，不包含端口或路径。','naivesite');
   }
   if(value('uuid')&&protocols.some(p=>['vlpt','xhpt','vxpt','vwpt','vmpt','xvcdnpt','xvargopt','xdns','xicmp','xdrive'].includes(p.id))&&!/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(value('uuid')))error('VLESS / VMess 请填写标准 UUID，或留空自动生成。','uuid');
+  if(ids.has('sudokupt')){
+    const skey=value('sudokukey');
+    if(skey&&(skey.length>128||/[:@]/.test(skey)))error('自定义 sudokukey 不能超过 128 字符，且不能包含冒号 : 或 @。','sudokukey');
+    const sct=value('sudokuct').replace(/\s+/g,'').toLowerCase();
+    if(sct&&sct!=='auto'){
+      const items=sct.split(',');
+      if(items.some(item=>!item)||items.length>8||items.some(item=>!validSudokuCustomTable(item)))error('sudokuct 须填 auto，或逗号分隔的 1–8 组 8 位模板（每组恰含 2 个 x、2 个 p、4 个 v）。','sudokuct');
+    }
+    if(sct&&value('sudokutable')==='prefer_ascii')warn('当前 Table Type 为 prefer_ascii，自定义位表不会生效；可清空 sudokuct 或切换其他 Table Type。','sudokuct');
+    const spad=value('sudokupad').trim();
+    if(!/^\d{1,3}(?:-\d{1,3})?$/.test(spad)){error('sudokupad 须为 0-100 内的整数或 min-max 范围（例如 5-15）。','sudokupad');}
+    else{const parts=spad.split('-').map(Number);if(parts[0]<0||parts[parts.length-1]>100||parts[0]>parts[parts.length-1])error('sudokupad 须满足 0 <= min <= max <= 100。','sudokupad');}
+    const spath=value('sudokupath').trim().replace(/^\/+/,'');
+    if(spath&&!/^[A-Za-z0-9_-]{1,64}$/.test(spath))error('sudokupath 仅支持 1–64 位字母、数字、下划线或短横线（可选前导 /）。','sudokupath');
+    if(spath&&value('sudokumask')!=='ws')warn('sudokupath 仅在 HTTP Mask 为 ws 模式时生效；当前模式不使用路径前缀。','sudokupath');
+    const sfb=value('sudokufb').trim();
+    if(sfb&&!/^(silent|none)$/i.test(sfb)&&!validSudokuFallback(sfb))error('sudokufb 须留空（silent）或填写有效的 host:port / [IPv6]:port。','sudokufb');
+    if(value('sudokuaead')==='none'&&!(value('argoEnabled')&&value('argo')==='sudokupt'))warn('AEAD 设为 none 时直连没有内层加密，建议改用 chacha20-poly1305 或 aes-128-gcm。','sudokuaead');
+    if(value('sudokupure')==='y')warn('Pure Downlink 已开启：下载流量会产生约 4× 膨胀；如需省流建议关闭（默认 n）。','sudokupure');
+  }
   if(value('cdnEnabled')){
     if(!validDomain(value('cdnym').trim()))error('启用 CDN 后需要填写有效的 cdnym 域名。','cdnym');
-    const cdn=protocols.filter(p=>p.access.includes('cdn'));if(!cdn.length)error('当前选择没有支持 CDN 的协议；可选择 vxpt、vwpt 或 vmpt。','protocols');
+    const sudokuCdnActive=ids.has('sudokupt')&&value('sudokumask')==='ws'&&!(value('argoEnabled')&&value('argo')==='sudokupt');
+    const cdn=protocols.filter(p=>p.id==='sudokupt'?sudokuCdnActive:p.access.includes('cdn'));
+    if(!cdn.length)error(ids.has('sudokupt')&&value('sudokumask')!=='ws'?'Sudoku 经 CDN 接入需要将 HTTP Mask 模式设为 ws（或另选 vxpt、vwpt、vmpt）。':'当前选择没有支持 CDN 的协议；可选择 vxpt、vwpt、vmpt 或 Sudoku (ws)。',ids.has('sudokupt')&&value('sudokumask')!=='ws'?'sudokumask':'protocols');
     for(const p of cdn.filter(p=>!p.blocked)){const port=value('port-'+p.id).trim()||p.defaultPort||'',allowed=p.id==='xvcdnpt'?CDN_HTTPS_PORTS:CDN_HTTP_PORTS;if(port&&!allowed.has(String(Number(port))))error(p.id+' 需要对应的 Cloudflare '+(p.id==='xvcdnpt'?'HTTPS':'HTTP')+' 代理端口。','port-'+p.id);}
   }
   if(value('argoEnabled')){
     const p=value('argo');if(!ids.has(p))error('Argo 绑定的 '+p+' 尚未选中。','select-'+p);
+    if(p==='sudokupt'&&ids.has('sudokupt')&&value('sudokumask')!=='ws')error('argo=sudokupt 必须将 HTTP Mask 模式设为 ws（legacy/off 无法穿过 Argo 隧道）。','sudokumask');
     if(value('argoKind')==='fixed'){
       if(!validDomain(value('agn').trim()))error('固定 Argo 需要有效域名。','agn');if(!value('agk').trim())error('固定 Argo 需要隧道 Token。','agk');
       if(!value('port-'+p).trim())error('固定 Argo 的回源端口应显式填写，并与 Cloudflare 的配置一致。','port-'+p);
@@ -3453,7 +3554,7 @@ function validate(deploy,protocols,pairs){
     if(value('xhycc')==='force-brutal'&&(Number(value('xhyup'))<=0||Number(value('xhydown'))<=0))error('Force Brutal 需要明确的正值上下行速率。','xhycc');
   }
   if(value('warpEnabled')){
-    const w=value('warp');if(w.includes('x')&&!cores.includes('xray')||w.includes('s')&&!cores.includes('singbox'))warn('WARP 出站规则包含当前没有启用的核心，这部分规则不会覆盖 Naive 或 Mieru。','warp');
+    const w=value('warp');if(w.includes('x')&&!cores.includes('xray')||w.includes('s')&&!cores.includes('singbox'))warn('WARP 出站规则包含当前没有启用的核心，这部分规则不会覆盖 Naive、Mieru 或 Sudoku。','warp');
     if(!cores.includes('xray')&&!cores.includes('singbox'))error('当前所选协议不能直接使用脚本的 Xray / Sing-box WARP 出站规则。','warpEnabled');
   }
   if(value('secondaryEnabled')){
@@ -3464,6 +3565,7 @@ function validate(deploy,protocols,pairs){
       if([...group.selection].some(id=>!ids.has(id)))error(label+'只能选择已启用的 A 入站协议。',listKey);
       if(!group.selection.size)error(label+'至少选择一种入站协议，或移除此组。',listKey);
       for(const p of protocols.filter(item=>group.selection.has(item.id))){
+        if(p.core==='sudoku')error(label+'Sudoku 官方服务端当前仅支持直连出站，不能分配到二级代理。',listKey);
         if(owners.has(p.id))error(p.id+' 同时分配给 B'+owners.get(p.id)+' 与 B'+group.id+'；每个入站只能选择一个 B。',listKey);
         if(secondaryWarpConflict(p,protocols))error(label+p.id+' 的流量已配置经所属核心的 WARP 出站。请取消该核心的 WARP 出站，或取消这个入站的 B 分配。',listKey);
         owners.set(p.id,group.id);
@@ -3635,6 +3737,7 @@ function onFormEdit(event){
     if(value('argoEnabled')){
       if(value('argo')!=='xvargopt')$('select-xvargopt').checked=false;
       const selected=$('select-'+value('argo'));selected.checked=true;selected.closest('.core-group').open=true;
+      if(value('argo')==='sudokupt'&&value('sudokumask')!=='ws')$('sudokumask').value='ws';
     }else $('select-xvargopt').checked=false;
   }
   if(target.dataset.protocol==='xvcdnpt'&&target.checked)$('cdnEnabled').checked=true;
@@ -3661,6 +3764,8 @@ document.addEventListener('click',event=>{
   const removeSecondary=event.target.closest('[data-remove-secondary]');if(removeSecondary){
     const id=Number(removeSecondary.dataset.removeSecondary);secondaryGroups=secondaryGroups.filter(group=>group.id!==id);$('secondary-group-'+id).remove();update();$('add-secondary').focus();
   }
+  if(event.target.closest('[data-sudoku-gen-ct]')){$('sudokuct').value=generateSudokuCustomTables();update();}
+  if(event.target.closest('[data-sudoku-clear-ct]')){$('sudokuct').value='';update();}
 });
 $('add-secondary').addEventListener('click',()=>{
   const id=Array.from({length:SECONDARY_LIMIT},(_,index)=>index+1).find(id=>!secondaryGroups.some(group=>group.id===id));
@@ -3709,7 +3814,7 @@ const UI_EN_TEXT=Object.freeze({
   "Airgosbx · 本地配置工作台": "Airgosbx · Local Configuration Workbench",
   "配置工作台": "Configuration Workbench",
   "配置连接，生成 VPS 命令。": "Configure connections and generate VPS commands.",
-  "v1.3.2 (20261121) · 离线单文件": "v1.3.2 (20261121) · Offline, single file",
+  "v1.4 (20261124) · 离线单文件": "v1.4 (20261124) · Offline, single file",
   "重置表单": "Reset form",
   "此页面需要浏览器 JavaScript 才能生成命令。所有逻辑都在当前 HTML 内，不加载外部资源。": "This page requires browser JavaScript to generate commands. All logic is contained in this HTML file; no external resources are loaded.",
   "连接概览": "Connection overview",
@@ -3721,7 +3826,31 @@ const UI_EN_TEXT=Object.freeze({
   "出站": "Outbound",
   "VPS 访问目标": "VPS connects to the destination",
   "B 服务器": "Server B",
-  "Cloudflared 建立隧道，Caddy 承载 Naive，Mita 承载 Mieru。入口与出站可独立配置。": "Cloudflared establishes the tunnel, Caddy serves Naive, and Mita serves Mieru. Inbound and outbound can be configured independently.",
+  "Cloudflared 建立隧道，Caddy 承载 Naive，Mita 承载 Mieru，Sudoku 承载官方独立协议。入口与出站可独立配置。": "Cloudflared establishes the tunnel, Caddy serves Naive, Mita serves Mieru, and Sudoku runs the official standalone server. Inbound and outbound can be configured independently.",
+  "SUDOKU-ASCII 官方独立服务端（区别于 Xray FM）": "Official standalone SUDOKU-ASCII server (distinct from Xray FM)",
+  "SUDOKU-ASCII 官方独立服务端（区别于 Xray FinalMask）；仅直连出站，不支持 WARP 与二级代理。UDP 经 UoT 承载，ws 模式支持 CDN 与 Argo；导出 Shadowrocket 原生 sudoku:// 与 Mihomo YAML。": "Official standalone SUDOKU-ASCII server (distinct from Xray FinalMask). Direct outbound only (no WARP or secondary proxy). Carries UDP via UoT; ws mode supports CDN and Argo. Exports native Shadowrocket sudoku:// links and Mihomo YAML.",
+  "升级 Sudoku（upsu）": "Upgrade Sudoku (upsu)",
+  "降级 Sudoku（downsu）": "Downgrade Sudoku (downsu)",
+  "HTTP Mask 模式": "HTTP Mask mode",
+  "legacy · 直连伪 HTTP 头（默认）": "legacy · Direct forged HTTP header (default)",
+  "ws · WebSocket 隧道（支持 CDN / Argo）": "ws · WebSocket tunnel (CDN / Argo capable)",
+  "off · 关闭 HTTP Mask（纯裸流）": "off · Disable HTTP Mask (raw stream)",
+  "Pure Downlink 纯数独下行": "Pure Downlink",
+  "关闭 · 约 1.33× 省流压缩下行（默认）": "Off · ~1.33x packed downlink (default)",
+  "开启 · 约 4× 纯数独下行": "On · ~4x pure Sudoku downlink",
+  "AEAD 加密算法": "AEAD cipher",
+  "数独表外观（Table Type）": "Table Type",
+  "自定义位表（Custom Tables）": "Custom Tables",
+  "随机生成 2 组位表": "Generate 2 random tables",
+  "清空（用内置表）": "Clear (use built-in)",
+  "随机填充比例（%）": "Padding range (%)",
+  "WebSocket 路径前缀（Path Root）": "WebSocket path root",
+  "连接复用（Muxing）": "Multiplexing (Muxing)",
+  "防主动探测回落": "Active-probe fallback",
+  "自定义共享密钥": "Custom shared key",
+  "高级参数与默认策略（全部可调，默认项不写入命令）": "Advanced options & defaults (all editable; defaults omitted from command)",
+  "Sudoku 仅支持直连出站": "Sudoku supports direct outbound only",
+  "Sudoku 独立协议": "Standalone Sudoku protocol",
   "入站协议": "Inbound protocols",
   "出站配置": "Outbound configuration",
   "证书与订阅": "Certificates & subscriptions",
@@ -3733,7 +3862,7 @@ const UI_EN_TEXT=Object.freeze({
   "可以组合多种协议。端口留空使用脚本默认的随机分配。": "You can combine multiple protocols. Leave ports blank to use the script's default random allocation.",
   "0 个已选": "0 selected",
   "这些接入方式有什么区别": "How these connection methods differ",
-  "直连直接访问 VPS 的协议入口。CDN 在前面代理 HTTP 流量，多个受支持协议共用 cdnym。Argo 由 cloudflared 主动建立隧道，本脚本一次绑定 vmpt、vwpt 或 xvargopt 中的一种。XDRIVE 通过云存储交换数据，不监听公网端口。不同接入方式可以并存。": "Direct connections access the protocol endpoint on the VPS. A CDN proxies HTTP traffic in front of it, with multiple supported protocols sharing cdnym. Argo uses cloudflared to establish an outbound tunnel; this script binds one of vmpt, vwpt, or xvargopt at a time. XDRIVE exchanges data through cloud storage and does not listen on a public port. Different connection methods can coexist.",
+  "直连直接访问 VPS 的协议入口。CDN 在前面代理 HTTP 流量，多个受支持协议共用 cdnym。Argo 由 cloudflared 主动建立隧道，本脚本一次绑定 vmpt、vwpt、xvargopt 或 sudokupt 中的一种。XDRIVE 通过云存储交换数据，不监听公网端口。不同接入方式可以并存。": "Direct connections access the protocol endpoint on the VPS. A CDN proxies HTTP traffic in front of it, with multiple supported protocols sharing cdnym. Argo uses cloudflared to establish an outbound tunnel; this script binds one of vmpt, vwpt, xvargopt, or sudokupt at a time. XDRIVE exchanges data through cloud storage and does not listen on a public port. Different connection methods can coexist.",
   "全部": "All",
   "搜索协议、核心或变量": "Search protocols, cores, or variables",
   "按接入能力筛选": "Filter by connection capability",
@@ -3786,7 +3915,7 @@ const UI_EN_TEXT=Object.freeze({
   "对照功能只提取你选择的脚本中的变量声明与帮助条目，不执行、不上传。它能提示变量清单差异，不能代替调用逻辑审查。": "The comparison only extracts variable declarations and help entries from the script you select. It does not execute or upload the file. It can flag differences in the variable list, but cannot replace a review of the calling logic.",
   "选择 airgosbx.sh 对照": "Select airgosbx.sh to compare",
   "清除对照": "Clear comparison",
-  "GUI 版本：v1.3.2 (20261121)；XHTTP 默认参数版本：V26.09.08.1。尚未读取其他文件。": "GUI version: v1.3.2 (20261121); XHTTP default parameter version: V26.09.08.1. No other files have been read.",
+  "GUI 版本：v1.4 (20261124)；XHTTP 默认参数版本：V26.09.08.1。尚未读取其他文件。": "GUI version: v1.4 (20261124); XHTTP default parameter version: V26.09.08.1. No other files have been read.",
   "VPS 命令与配置": "VPS command & configuration",
   "协议": "Protocols",
   "命令区域模式": "Command panel mode",

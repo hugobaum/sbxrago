@@ -2,7 +2,7 @@
 # 配套维护：airgosbx.sh 与 airgosbx-gui.html 是同一套工具，必须成套维护、提交和发布。
 # 修改任一文件时，须同步核对并修改另一文件的对应内容。
 # 参数、默认值、协议归属、开关与互斥、校验、命令生成与还原及功能说明必须保持一致。
-AIRGOSBX_VERSION='v1.3.2 (20261121)'
+AIRGOSBX_VERSION='v1.4 (20261124)'
 # 仅在内置 XHTTP 默认参数改变时更新此标记，普通脚本版本更新不使旧命令失效。
 XHTTP_DEFAULTS_VERSION='V26.09.08.1'
 agsbxurl="${agsbxurl:-https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/main/airgosbx.sh}"
@@ -12,7 +12,7 @@ export -n zerossl_eab_kid zerossl_eab_hmac sslcom_eab_kid sslcom_eab_hmac fmpass
   vx_fmheader vw_fmheader vm_fmheader hy_fmheader 2>/dev/null || true
 export -n xheaders64 xh_xheaders64 vx_xheaders64 xvd_xheaders64 xva_xheaders64 2>/dev/null || true
 export -n xdrive_client_id xdrive_client_secret xdrive_refresh_token 2>/dev/null || true
-export -n uuid obfs_pass subid subauth subpass securl naiveuser naivepass mieruuser mierupass agk ARGO_AUTH \
+export -n uuid obfs_pass subid subauth subpass securl naiveuser naivepass mieruuser mierupass sudokukey agk ARGO_AUTH \
   CF_Token CF_Key CF_Email CF_Account_ID CF_Zone_ID 2>/dev/null || true
 # 编号 URL 与旧 securl 具有同等敏感性，任何子进程启动前移除 export 属性。
 for secondary_input_name in ${!securl@}; do export -n "$secondary_input_name" 2>/dev/null || true; done
@@ -40,10 +40,11 @@ is_root(){
   [ "$(id -u 2>/dev/null)" = "0" ]
 }
 
-# 进程探测助手：判断 agsbx 管理的 sing-box / xray / caddy 内核或 Mieru 代理是否在运行。
+# 进程探测助手：判断 agsbx 管理的 sing-box / xray / caddy / sudoku 内核或 Mieru 代理是否在运行。
 # 此前该长管道在第 1/8/12 段被逐字复制三次，现统一收敛为单一函数，杜绝逻辑漂移与维护遗漏。
 agsbx_running(){
   agsbx_component_running xray || agsbx_component_running sing-box || agsbx_component_running caddy \
+    || agsbx_component_running sudoku \
     || { [ -f "$HOME/agsbx/mita_managed" ] && command -v mita >/dev/null 2>&1 && mita status 2>/dev/null | grep -q 'RUNNING'; }
 }
 
@@ -69,6 +70,7 @@ agsbx_component_pids(){
     xray) expected_exe="$HOME/agsbx/xray" ;;
     sing-box) expected_exe="$HOME/agsbx/sing-box" ;;
     caddy) expected_exe="$HOME/agsbx/caddy" ;;
+    sudoku) expected_exe="$HOME/agsbx/sudoku" ;;
     cloudflared) expected_exe="$HOME/agsbx/cloudflared" ;;
     *) return 1 ;;
   esac
@@ -105,6 +107,7 @@ managed_service_names(){
     sing-box|sb) managed_sd=sb; managed_rc=sing-box; managed_bin=sing-box ;;
     cloudflared|argo) managed_sd=argo; managed_rc=argo; managed_bin=cloudflared ;;
     caddy) managed_sd=agsbx-caddy; managed_rc=agsbx-caddy; managed_bin=caddy ;;
+    sudoku) managed_sd=agsbx-sudoku; managed_rc=agsbx-sudoku; managed_bin=sudoku ;;
     *) return 1 ;;
   esac
 }
@@ -247,6 +250,26 @@ wait_component_listeners(){
       fi
       sleep 1
     done
+    return 1
+  fi
+  if [ "$core" = sudoku ]; then
+    port=$(cat "$HOME/agsbx/port_sudoku" 2>/dev/null) || {
+      echo "错误：无法读取 Sudoku 监听端口状态文件 port_sudoku。"
+      return 1
+    }
+    valid_port "$port" || {
+      echo "错误：Sudoku 端口状态文件 port_sudoku 格式无效。"
+      return 1
+    }
+    for attempt in {1..5}; do
+      pids=$(agsbx_component_pids sudoku)
+      listeners=$(ss -H -lntup 2>/dev/null) || return 1
+      if [ -n "$pids" ] && component_owns_listener sudoku "$port" tcp "$pids" "$listeners"; then
+        return 0
+      fi
+      sleep 1
+    done
+    echo "错误：sudoku 未监听其已配置端口 $port/tcp。"
     return 1
   fi
   [ "$core" = xray ] && config=xr.json || config=sb.json
@@ -432,6 +455,8 @@ component_cron_line(){
         "$component" "$([ "$component" = xray ] && printf xr || printf sb)" "$component" ;;
     caddy)
       printf '%s' '@reboot sleep 10 && /bin/sh -c "rm -f $HOME/agsbx/caddy-admin.sock; nohup $HOME/agsbx/caddy run --config $HOME/agsbx/Caddyfile > $HOME/agsbx/caddy.log 2>&1 &"' ;;
+    sudoku)
+      printf '%s' '@reboot sleep 10 && /bin/sh -c "nohup $HOME/agsbx/sudoku -c $HOME/agsbx/sudoku.json > $HOME/agsbx/sudoku.log 2>&1 &"' ;;
     *) return 1 ;;
   esac
 }
@@ -449,7 +474,7 @@ filter_component_cron(){
   : > "$destination" || return 1
   while IFS= read -r line || [ -n "$line" ]; do
     managed=no
-    for component in xray sing-box caddy; do
+    for component in xray sing-box caddy sudoku; do
       case "$component:$mode" in caddy:rep|caddy:runtime-rep) continue ;; esac
       expected=$(component_cron_line "$component") || return 1
       if [ "$line" = "$expected" ] || [ "$line" = "$expected # AIRGOSBX_CORE" ]; then managed=yes; break; fi
@@ -1586,6 +1611,15 @@ verify_install_required_components(){
       failed=yes
     fi
   fi
+  if [ "$install_required_sudoku" = yes ]; then
+    if ! wait_agsbx_component sudoku; then
+      echo "错误：本轮要求的 Sudoku 进程未运行。"
+      failed=yes
+    elif ! wait_component_listeners sudoku; then
+      echo "错误：本轮要求的 Sudoku 监听检查未通过，请查看上方端口状态或日志。"
+      failed=yes
+    fi
+  fi
   if [ "$install_required_argo" = yes ] && ! wait_agsbx_component cloudflared; then
     echo "错误：本轮要求的 Cloudflared Argo 进程未运行。"
     failed=yes
@@ -1604,7 +1638,7 @@ verify_install_required_components(){
 # 管理类命令(start/stop/restart/reload/list/...)应以"是否已安装"放行，而非"是否正在运行"——
 # 否则 stop 停掉最后一个内核后 agsbx_running 变 false，随后的 start 会被前置守卫误判为"未安装"而拦截。
 agsbx_installed(){
-  [ -s "$HOME/agsbx/sing-box" ] || [ -s "$HOME/agsbx/xray" ] || [ -s "$HOME/agsbx/caddy" ] \
+  [ -s "$HOME/agsbx/sing-box" ] || [ -s "$HOME/agsbx/xray" ] || [ -s "$HOME/agsbx/caddy" ] || [ -s "$HOME/agsbx/sudoku" ] \
     || { [ -f "$HOME/agsbx/mita_managed" ] && command -v mita >/dev/null 2>&1; }
 }
 
@@ -1817,7 +1851,7 @@ vnote "B 自身域名的引导查询独立留在 A；这与访问网站的目标
 vnote "第三方 B 内部的 DNS、UDP 与访问限制由供应商决定；客户端订阅只描述 A 的入站，与二级出站无关。"
 
 vg "⑤ Cloudflare Argo 隧道（纯出站，VPS无需开放端口）"
-vrow "argo"     "指定哪个协议走隧道：vmpt / vwpt / xvargopt"
+vrow "argo"     "指定哪个协议走隧道：vmpt / vwpt / xvargopt / sudokupt"
 vrow "xvargopt" "VLESS Encryption＋XHTTP＋Vision（回环 HTTP，packet-up；自动绑定 Argo）"
 vrow "xvargoextra" "Argo XHTTP extra：y/n；始终关闭 SSE 响应头"
 vrow "xvargofm" "Argo 客户端 FM：none/fragment；禁止私有包头、sudoku"
@@ -1892,7 +1926,22 @@ vrow "mieruuser"  "可选预设：用户名（留空＝自动生成）"
 vrow "mierupass"  "可选预设：密码（留空＝自动生成）"
 vrow "mierutrans" "可选预设：tcp（默认）或 udp"
 
-vg "⑬ Xray 扩展参数（仅作用于本次启用的对应扩展）"
+vg "⑬ Sudoku（SUDOKU-ASCII 官方独立服务端·区别于 Xray FM）"
+vrow "sudokupt"    "独立 Sudoku 监听端口（设置即启用，留空＝随机高位 TCP 端口；UDP 走 UoT）"
+vrow "sudokukey"   "可选自定义密钥（最多 128 字符，不含冒号/@；留空自动 -keygen 生成 Ed25519 密钥对）"
+vrow "sudokuaead"  "AEAD 加密：chacha20-poly1305（默认）/ aes-128-gcm / none"
+vrow "sudokutable" "数独表外观：prefer_entropy（默认）/ prefer_ascii / up_ascii_down_entropy / up_entropy_down_ascii"
+vrow "sudokuct"    "自定义位表：留空＝内置表；auto＝自动生成 2 组；或逗号分隔 8 位模板（恰含 2x+2p+4v，仅 entropy 方向生效）"
+vrow "sudokupad"   "随机填充比例（%）：0-100 整数或范围，默认 5-15"
+vrow "sudokupure"  "Pure Downlink 纯数独下行：n（默认，约 1.33× 省流压缩）/ y（约 4× 纯数独；两端必须一致）"
+vrow "sudokumask"  "HTTP Mask 模式：legacy（默认，仅直连）/ ws（WebSocket，支持 CDN/Argo）/ off（关闭）"
+vrow "sudokupath"  "ws 模式一级路径前缀（1-64 位字母数字 _ -；留空自动生成随机前缀）"
+vrow "sudokumux"   "连接复用：off（默认）/ auto / on（on 时为 Shadowrocket 链接启用 mux=1）"
+vrow "sudokufb"    "防主动探测回落：留空或 silent＝静默丢弃；填 host:port（如 127.0.0.1:80）则启用 fallback"
+vnote "示例：sudokupt=（直连即用）；sudokupt= sudokumask=ws argo=sudokupt（Argo 隧道 443 HTTPS 接入）。"
+vnote "导出 Shadowrocket 原生 sudoku:// 链接（jh.txt）与 Mihomo YAML（clmi.yaml）；仅直连出站，不参与 warp/secp。"
+
+vg "⑭ Xray 扩展参数（仅作用于本次启用的对应扩展）"
 vrow "xpadding" "XHTTP 填充范围：1-4096 字节，默认 100-1000"
 vrow "xmuxcon"  "XMUX 并发数：0-1024，默认 0；不能与 xmuxmax 同时为正"
 vrow "xmuxmax"  "XMUX 连接数：0-128，默认 3"
@@ -1912,7 +1961,7 @@ vrow "xhyup"    "客户端上行 Mbps：0-100000；force-brutal 需明确正值"
 vrow "xhydown"  "客户端下行 Mbps：0-100000；force-brutal 需明确正值"
 vnote "FM 多项必须使用匹配的 Xray 客户端实现；完整参数随 URL 导出。"
 
-vg "⑭ Xray 按协议覆盖（未设置或空值＝沿用上方通用参数）"
+vg "⑮ Xray 按协议覆盖（未设置或空值＝沿用上方通用参数）"
 vnote "GUI 为每个协议独立传参；范围与同名通用参数一致。"
 vrow "vl_fmpass" "vlpt 专用 fmpass，仅作用于该协议"
 vrow "vl_fmascii" "vlpt 专用 fmascii，仅作用于该协议"
@@ -2001,20 +2050,22 @@ vrow "cmds"     "命令速查表（本表）" 10
 vrow "help"     "完整帮助（vars + cmds）" 10
 
 vg "③ 内核启停（用法：agsbx <动作> [内核]）"
-vnote "内核 = xray ｜ sb ｜ caddy ｜ mita ｜ all（省略即全部；已配置 Naive 时包含 Caddy，Mita 需单独指定）"
+vnote "内核 = xray ｜ sb ｜ caddy ｜ sudoku ｜ mita ｜ all（省略即全部；已配置时含 Caddy/Sudoku，Mita 需单独指定）"
 vrow "start"    "启动内核" 10
 vrow "stop"     "停止内核（释放其占用的端口）" 10
 vrow "restart"  "重启内核" 10
-vrow "reload"   "重载配置（Caddy/Mita 原生重载；Xray/Sing-box 经检查重启，会短暂断连）" 10
-vrow "res"      "重启 Xray/Sing-box/Argo，并在已配置 Naive 时重启 Caddy（不含 Mita）" 10
+vrow "reload"   "重载配置（Caddy/Mita 原生重载；Xray/Sing-box/Sudoku 经检查重启，会短暂断连）" 10
+vrow "res"      "重启 Xray/Sing-box/Sudoku/Argo，并在已配置 Naive 时重启 Caddy（不含 Mita）" 10
 vnote "同步重启订阅服务，沿用已保存的密码保护开关及密码；随后用 agsbx list 查看链接。"
 vnote "未完成的订阅发布会使用已保存文件、保护状态和证书继续校验；状态不完整会明确报错。"
 
 vg "④ 内核版本"
 vrow "upx"      "升级 Xray（upx [版本]，不带版本=最新）" 10
 vrow "ups"      "升级 Sing-box（ups [版本]）" 10
+vrow "upsu"     "升级 Sudoku（upsu [版本]）" 10
 vrow "downx"    "降级 Xray（downx <版本>，如 downx v26.2.6）" 10
 vrow "downs"    "降级 Sing-box（downs <版本>）" 10
+vrow "downsu"   "降级 Sudoku（downsu <版本>）" 10
 echo
 hr
 echo
@@ -2347,7 +2398,13 @@ validate_xray_options() {
     vmpt) [ "$vmp" = yes ] && [ "$vmfm" = none ] || { echo "错误：argo=vmpt 需要 vmpt，且不能启用 vmfm。"; return 1; } ;;
     vwpt) [ "$vwp" = yes ] && [ "$vwfm" = none ] || { echo "错误：argo=vwpt 需要 vwpt，且不能启用 vwfm。"; return 1; } ;;
     xvargopt) [ "$xvargo" = yes ] || { echo "错误：argo=xvargopt 需要设置 xvargopt。"; return 1; } ;;
-    *) echo "错误：argo 仅支持 vmpt、vwpt、xvargopt。"; return 1 ;;
+    sudokupt)
+      [ "$sudokup" = yes ] || { echo "错误：argo=sudokupt 需要设置 sudokupt。"; return 1; }
+      case "${sudokumask:-ws}" in
+        ws) ;;
+        *) echo "错误：argo=sudokupt 必须使用 sudokumask=ws（legacy/off 无法穿过 Cloudflare Argo 隧道）。"; return 1 ;;
+      esac ;;
+    *) echo "错误：argo 仅支持 vmpt、vwpt、xvargopt、sudokupt。"; return 1 ;;
   esac
   [ "$xvargo" != yes ] || [ "$argo" = xvargopt ] || { echo "错误：xvargopt 必须作为本次唯一的 Argo 绑定协议。"; return 1; }
   if [ -n "$argo" ]; then
@@ -2639,6 +2696,100 @@ validate_zerossl_eab_inputs(){
   fi
 }
 
+sudoku_valid_custom_table(){
+  local item="$1" x_cnt p_cnt v_cnt
+  [[ "$item" =~ ^[xpv]{8}$ ]] || return 1
+  x_cnt=$(printf '%s' "$item" | tr -cd 'x' | wc -c | tr -d ' ')
+  p_cnt=$(printf '%s' "$item" | tr -cd 'p' | wc -c | tr -d ' ')
+  v_cnt=$(printf '%s' "$item" | tr -cd 'v' | wc -c | tr -d ' ')
+  [ "$x_cnt" = 2 ] && [ "$p_cnt" = 2 ] && [ "$v_cnt" = 4 ]
+}
+
+sudoku_valid_fallback_addr(){
+  local addr="$1" host port
+  if [[ "$addr" == \[* ]]; then
+    [[ "$addr" =~ ^\[([0-9a-fA-F:]+)\]:([0-9]{1,5})$ ]] || return 1
+    host="${BASH_REMATCH[1]}"; port="${BASH_REMATCH[2]}"
+    valid_ipv6 "$host" && valid_port "$port"
+  else
+    [[ "$addr" =~ ^([^:/[:space:]]+):([0-9]{1,5})$ ]] || return 1
+    host="${BASH_REMATCH[1]}"; port="${BASH_REMATCH[2]}"
+    { valid_ipv4 "$host" || valid_domain "$host" || [ "$host" = localhost ]; } && valid_port "$port"
+  fi
+}
+
+validate_sudoku_options(){
+  [ "$sudokup" = yes ] || return 0
+  local raw item normalized_ct='' count=0 p_min p_max path_clean
+  if [ -n "$sudokukey" ]; then
+    valid_plain_text "$sudokukey" 128 || { echo "错误：sudokukey 不能超过 128 字符或包含控制字符。"; return 1; }
+    case "$sudokukey" in
+      *:*|*@*) echo "错误：自定义 sudokukey 不能包含冒号 : 或 @，避免影响 Shadowrocket 链接解析。"; return 1 ;;
+    esac
+  fi
+  case "$sudokuaead" in
+    chacha20-poly1305|aes-128-gcm|none) ;;
+    *) echo "错误：sudokuaead 仅支持 chacha20-poly1305、aes-128-gcm 或 none。"; return 1 ;;
+  esac
+  case "$sudokutable" in
+    prefer_entropy|prefer_ascii|up_ascii_down_entropy|up_entropy_down_ascii) ;;
+    *) echo "错误：sudokutable 仅支持 prefer_entropy、prefer_ascii、up_ascii_down_entropy 或 up_entropy_down_ascii。"; return 1 ;;
+  esac
+  if [ -n "$sudokuct" ]; then
+    raw=$(printf '%s' "$sudokuct" | tr -d '[:space:]' | tr 'A-Z' 'a-z')
+    if [ "$raw" = auto ]; then
+      sudokuct=auto
+    else
+      case "$raw" in ,*|*,|*,,*) echo "错误：sudokuct 存在空项，请使用逗号分隔 8 位模板。"; return 1 ;; esac
+      IFS=',' read -r -a sudoku_ct_items <<< "$raw"
+      for item in "${sudoku_ct_items[@]}"; do
+        count=$((count + 1))
+        [ "$count" -le 8 ] || { echo "错误：sudokuct 最多指定 8 组自定义位表。"; return 1; }
+        sudoku_valid_custom_table "$item" || { echo "错误：sudokuct 项「$item」无效；每项须为 8 位且恰含 2 个 x、2 个 p、4 个 v。"; return 1; }
+        normalized_ct="${normalized_ct:+$normalized_ct,}$item"
+      done
+      sudokuct="$normalized_ct"
+    fi
+  fi
+  if ! xray_range_valid "$sudokupad" 0 100; then
+    echo "错误：sudokupad 须为 0-100 内的整数或 min-max 范围（例如 5-15）。"; return 1
+  fi
+  p_min=$((10#${sudokupad%%-*})); p_max=$((10#${sudokupad##*-}))
+  sudokupad="${p_min}-${p_max}"
+  case "$sudokupure" in
+    y|Y|yes|YES|1|true|TRUE) sudokupure=y ;;
+    n|N|no|NO|0|false|FALSE) sudokupure=n ;;
+    *) echo "错误：sudokupure 仅支持 y/yes/1 或 n/no/0。"; return 1 ;;
+  esac
+  case "$sudokumask" in
+    legacy|ws|off) ;;
+    *) echo "错误：sudokumask 仅支持 legacy、ws 或 off。"; return 1 ;;
+  esac
+  if [ "$argo" = sudokupt ] && [ "$sudokumask" != ws ]; then
+    echo "错误：argo=sudokupt 必须使用 sudokumask=ws。"; return 1
+  fi
+  if [ -n "$sudokupath" ]; then
+    path_clean="${sudokupath#/}"
+    [[ "$path_clean" =~ ^[A-Za-z0-9_-]{1,64}$ ]] || {
+      echo "错误：sudokupath 仅支持 1-64 位字母、数字、下划线或短横线（可选前导 /）。"; return 1
+    }
+    sudokupath="$path_clean"
+  fi
+  case "$sudokumux" in
+    off|auto|on) ;;
+    *) echo "错误：sudokumux 仅支持 off、auto 或 on。"; return 1 ;;
+  esac
+  if [ -n "$sudokufb" ]; then
+    case "$(printf '%s' "$sudokufb" | tr 'A-Z' 'a-z')" in
+      silent|none) sudokufb='' ;;
+      *)
+        sudoku_valid_fallback_addr "$sudokufb" || {
+          echo "错误：sudokufb 须留空（silent）或填写有效的 host:port / [IPv6]:port。"; return 1
+        } ;;
+    esac
+  fi
+}
+
 deployment_port_specs(){
   printf '%s\n' \
     'vlp:port_vl_re:port_vl_re:tcp' 'xhp:port_xh:port_xh:tcp' 'vxp:port_vx:port_vx:tcp' \
@@ -2647,12 +2798,14 @@ deployment_port_specs(){
     'arp:port_ar:port_ar:tcp' 'ssp:port_ss:port_ss:both' 'sop:port_so:port_so:both' \
     'xvcdn:port_xvcdn:port_xvcdn:tcp' 'xvargo:port_xvargo:port_xvargo:tcp' \
     'xdns:port_xdns:port_xdns:udp' "mierup:port_mieru:port_mieru:$(printf '%s' "$mieru_protocol" | tr A-Z a-z)" \
+    'sudokup:port_sudoku:port_sudoku:tcp' \
     'sub:subpt:subport.log:tcp'
 }
 
 validate_deployment_inputs(){
   local flag variable file network value key has_link_protocol=no
   validate_zerossl_eab_inputs || return 1
+  validate_sudoku_options || return 1
   case "${acmeca:-auto}" in ''|auto|interactive|letsencrypt|zerossl|sslcom) ;; *) echo "错误：acmeca 仅支持 auto/interactive/letsencrypt/zerossl/sslcom。"; return 1 ;; esac
   while IFS=: read -r flag variable file network; do
     [ "${!flag}" = yes ] || continue
@@ -2678,7 +2831,7 @@ validate_deployment_inputs(){
   [ "$xicp" != yes ] || require_xicmp_capability || return 1
   [ "$xdrp" != yes ] || validate_xdrive_inputs || return 1
   if [ "$sub" = yes ]; then
-    for flag in xhp vlp vxp vwp xhyp xvcdn xvargo hyp tup anp arp vmp mierup; do
+    for flag in xhp vlp vxp vwp xhyp xvcdn xvargo hyp tup anp arp vmp mierup sudokup; do
       [ "${!flag}" != yes ] || has_link_protocol=yes
     done
     if [ -z "$naive" ] && [ "$has_link_protocol" = no ]; then
@@ -2711,6 +2864,7 @@ preflight_service_slots(){
   secondary_input_selects_naive && sb=yes
   [ "$xr" != yes ] || require_service_slot xray || return 1
   [ "$sb" != yes ] || require_service_slot sing-box || return 1
+  [ "$sudokup" != yes ] || require_service_slot sudoku || return 1
   [ -z "$argo" ] || require_service_slot cloudflared || return 1
   [ -z "$naive" ] || require_service_slot caddy || return 1
   managed_script_path >/dev/null || return 1
@@ -2764,6 +2918,16 @@ plan_deployment_ports(){
             else [ "$?" = 1 ] || return 1; fi
             value="$candidate"; break
           done ;;
+        port_sudoku)
+          if [ "$sudokumask" = ws ] && [ "$argo" != sudokupt ]; then
+            for candidate in 8080 8880 2052 2082 2086 2095 80; do
+              port_plan_conflicts "$candidate" "$network" && continue
+              port_requested_for_deployment "$candidate" "$network" && continue
+              if port_in_use "$candidate" "$network"; then continue
+              else [ "$?" = 1 ] || return 1; fi
+              value="$candidate"; break
+            done
+          fi ;;
       esac
     fi
     [ -n "$value" ] || value=$(get_free_port "$network") || return 1
@@ -2778,6 +2942,10 @@ plan_deployment_ports(){
     if [ -n "$cdnym" ]; then
       case "$variable" in
         port_vx|port_vw|port_vm_ws) case "$value" in 80|8080|8880|2052|2082|2086|2095) ;; *) echo "错误：CDN HTTP 端口不受 Cloudflare 支持：$value"; return 1 ;; esac ;;
+        port_sudoku)
+          if [ "$sudokumask" = ws ] && [ "$argo" != sudokupt ]; then
+            case "$value" in 80|8080|8880|2052|2082|2086|2095) ;; *) echo "错误：Sudoku (ws) 搭配 cdnym 需使用 Cloudflare 支持的 HTTP 端口（80/8080/8880/2052/2082/2086/2095）：$value"; return 1 ;; esac
+          fi ;;
         subpt) case "$value" in 443|2053|2083|2087|2096|8443) ;; *) echo "错误：CDN 订阅需显式使用支持的 HTTPS subpt。"; return 1 ;; esac ;;
       esac
     fi
@@ -3204,7 +3372,7 @@ case "$1" in
     ;;
 esac
 # 每次调用从公开协议参数推导内部标志，不继承父进程中的中间状态或展示名称。
-vlp='' vmp='' vwp='' vmag='' hyp='' xhyp='' tup='' xhp='' vxp='' anp='' ssp='' arp='' sop='' wap='' xicp='' xdrp='' xvcdn='' xvargo='' mierup=''
+vlp='' vmp='' vwp='' vmag='' hyp='' xhyp='' tup='' xhp='' vxp='' anp='' ssp='' arp='' sop='' wap='' xicp='' xdrp='' xvcdn='' xvargo='' mierup='' sudokup=''
 tls_cert_ready=no tls_cert_file='' tls_key_file='' tls_caddy_reuse_notice_shown=no
 rep_manage_certificate=no
 [ -z "${vlpt+x}" ] || vlp=yes
@@ -3238,9 +3406,10 @@ esac
 # vmag 是"存在可走 Argo 隧道的协议"总开关，决定第8段是否拉起 cloudflared。
 # 此前仅 vmpt/vwpt 置位，导致单独设 xvargopt+argo=xvargopt 时隧道被静默跳过；补齐 xvargo。
 [ -z "${xvargopt+x}" ] || { xvargo=yes; vmag=yes; }
+[ -z "${sudokupt+x}" ] || { sudokup=yes; vmag=yes; }
 case "$1" in
   ''|rep) validate_xray_options || exit 1 ;;
-  del|list|status|stats|top|update|res|cert|start|stop|restart|reload|upx|ups|downx|downs|__cert_renew|__cert_reload|__restore_hops) ;;
+  del|list|status|stats|top|update|res|cert|start|stop|restart|reload|upx|ups|upsu|downx|downs|downsu|__cert_renew|__cert_reload|__restore_hops) ;;
   *) echo "错误：未知命令 $1，请使用 agsbx help。"; exit 1 ;;
 esac
 # 布尔开关 sub 归一化：仅 sub=y/yes/1 视为显式启用，其余值或空/未设一律=关闭，统一规范（禁用 sub=on 之类写法）。
@@ -3290,10 +3459,10 @@ if [ -z "$1" ] && { [ -n "$subpass" ] || [ "$subauth_requested" = yes ]; }; then
   exit 1
 fi
 if [ "$1" = "rep" ]; then
-[ -n "$naive" ] || [ "$mierup" = yes ] || [ "$vwp" = yes ] || [ "$sop" = yes ] || [ "$vxp" = yes ] || [ "$ssp" = yes ] || [ "$vlp" = yes ] || [ "$vmp" = yes ] || [ "$hyp" = yes ] || [ "$tup" = yes ] || [ "$xhp" = yes ] || [ "$anp" = yes ] || [ "$arp" = yes ] || [ "$xhyp" = yes ] || [ "$xdns" = yes ] || [ "$xicp" = yes ] || [ "$xdrp" = yes ] || [ "$xvcdn" = yes ] || [ "$xvargo" = yes ] || { echo "提示：rep重置协议时，请在脚本前至少设置一个协议变量哦! 💣"; exit; }
+[ -n "$naive" ] || [ "$mierup" = yes ] || [ "$sudokup" = yes ] || [ "$vwp" = yes ] || [ "$sop" = yes ] || [ "$vxp" = yes ] || [ "$ssp" = yes ] || [ "$vlp" = yes ] || [ "$vmp" = yes ] || [ "$hyp" = yes ] || [ "$tup" = yes ] || [ "$xhp" = yes ] || [ "$anp" = yes ] || [ "$arp" = yes ] || [ "$xhyp" = yes ] || [ "$xdns" = yes ] || [ "$xicp" = yes ] || [ "$xdrp" = yes ] || [ "$xvcdn" = yes ] || [ "$xvargo" = yes ] || { echo "提示：rep重置协议时，请在脚本前至少设置一个协议变量哦! 💣"; exit; }
 fi
 else
-[ "$1" = "del" ] || [ "$1" = cert ] || [ "$1" = __cert_renew ] || [ -n "$naive" ] || [ "$mierup" = yes ] || [ "$vwp" = yes ] || [ "$sop" = yes ] || [ "$vxp" = yes ] || [ "$ssp" = yes ] || [ "$vlp" = yes ] || [ "$vmp" = yes ] || [ "$hyp" = yes ] || [ "$tup" = yes ] || [ "$xhp" = yes ] || [ "$anp" = yes ] || [ "$arp" = yes ] || [ "$xhyp" = yes ] || [ "$xdns" = yes ] || [ "$xicp" = yes ] || [ "$xdrp" = yes ] || [ "$xvcdn" = yes ] || [ "$xvargo" = yes ] || { echo "提示：未安装airgosbx脚本，请在脚本前至少设置一个协议变量哦！💣"; exit; }
+[ "$1" = "del" ] || [ "$1" = cert ] || [ "$1" = __cert_renew ] || [ -n "$naive" ] || [ "$mierup" = yes ] || [ "$sudokup" = yes ] || [ "$vwp" = yes ] || [ "$sop" = yes ] || [ "$vxp" = yes ] || [ "$ssp" = yes ] || [ "$vlp" = yes ] || [ "$vmp" = yes ] || [ "$hyp" = yes ] || [ "$tup" = yes ] || [ "$xhp" = yes ] || [ "$anp" = yes ] || [ "$arp" = yes ] || [ "$xhyp" = yes ] || [ "$xdns" = yes ] || [ "$xicp" = yes ] || [ "$xdrp" = yes ] || [ "$xvcdn" = yes ] || [ "$xvargo" = yes ] || { echo "提示：未安装airgosbx脚本，请在脚本前至少设置一个协议变量哦！💣"; exit; }
 fi
 uuid=${uuid:-''}
 obfs_pass=${obfs_pass:-''}
@@ -3315,6 +3484,19 @@ export xdnsres=${xdnsres:-'8.8.8.8:53'}
 export port_xvcdn=${xvcdnpt:-''}
 export port_xvargo=${xvargopt:-''}
 export port_mieru=${mierupt:-''}
+export port_sudoku=${sudokupt:-''}
+sudokukey=${sudokukey:-''}
+sudokuaead=${sudokuaead:-chacha20-poly1305}
+sudokutable=${sudokutable:-prefer_entropy}
+sudokuct=${sudokuct:-''}
+sudokupad=${sudokupad:-5-15}
+sudokupure=${sudokupure:-n}
+if [ -z "${sudokumask:-}" ]; then
+  [ "$argo" = sudokupt ] && sudokumask=ws || sudokumask=legacy
+fi
+sudokupath=${sudokupath:-''}
+sudokumux=${sudokumux:-off}
+sudokufb=${sudokufb:-''}
 export subpt=${subpt:-''}
 subid=${subid:-''}
 export ym_vl_re=${reym:-''}
@@ -3386,8 +3568,8 @@ kv_row "主脚本："   "bash <(curl -Ls $agsbxurl)  或  bash <(wget -qO- $agsb
 kv_row "查看信息：" "agsbx list（节点与订阅） ｜ agsbx status（资源/流量）" 12
 kv_row "重置维护：" "变量组 agsbx rep（重置） ｜ agsbx cert（证书维护）" 12
 kv_row "脚本管理：" "agsbx update（更新脚本） ｜ agsbx del（卸载）" 12
-kv_row "内核启停：" "agsbx start｜stop｜restart｜reload [xray｜sb｜caddy｜mita｜all]" 12
-kv_row "内核版本：" "agsbx upx/ups [版本]（升级） ｜ agsbx downx/downs <版本>（降级）" 12
+kv_row "内核启停：" "agsbx start｜stop｜restart｜reload [xray｜sb｜caddy｜sudoku｜mita｜all]" 12
+kv_row "内核版本：" "agsbx upx/ups/upsu [版本]（升级） ｜ agsbx downx/downs/downsu <版本>（降级）" 12
 kv_row "更多帮助：" "${C_YELLOW}agsbx cmds${C_RESET}（全部命令） ｜ ${C_YELLOW}agsbx vars${C_RESET}（全部变量） ｜ ${C_YELLOW}agsbx help${C_RESET}（完整帮助）" 12
 note_line "修改型操作需要系统 flock；证书维护任务与部署操作互斥。"
 note_line "rep 保留 Naive/Caddy 与全部证书，重建后请重新导入链接（SOCKS 凭据、传输路径与订阅令牌独立保存）。"
@@ -4231,9 +4413,13 @@ release_asset_digest(){
 
 activate_core_candidate(){
   local core="$1" candidate="$2" binary="$HOME/agsbx/$1" config target backup was_running=no
-  case "$core" in xray) config=xr.json; target=xray ;; sing-box) config=sb.json; target=sb ;; caddy) config=Caddyfile; target=caddy ;; *) return 1 ;; esac
+  case "$core" in xray) config=xr.json; target=xray ;; sing-box) config=sb.json; target=sb ;; caddy) config=Caddyfile; target=caddy ;; sudoku) config=sudoku.json; target=sudoku ;; *) return 1 ;; esac
   [ -f "$candidate" ] && [ ! -L "$candidate" ] && [ ! -L "$binary" ] || return 1
-  chmod 700 "$candidate" && "$candidate" version >/dev/null 2>&1 || return 1
+  if [ "$core" = sudoku ]; then
+    chmod 700 "$candidate" && "$candidate" -keygen >/dev/null 2>&1 || return 1
+  else
+    chmod 700 "$candidate" && "$candidate" version >/dev/null 2>&1 || return 1
+  fi
   if [ -s "$HOME/agsbx/$config" ]; then
     case "$core" in
       xray) validate_xray_special_version "$candidate" "$HOME/agsbx/$config" && "$candidate" run -test -c "$HOME/agsbx/$config" >/dev/null 2>&1 || return 1 ;;
@@ -4301,10 +4487,10 @@ refresh_runtime_cron(){
       }
       bridge_boot=yes
     fi
-    for component in xray sing-box caddy; do
+    for component in xray sing-box caddy sudoku; do
       [ "$component:$rep_mode" != caddy:yes ] || continue
       [ "$bridge_boot:$component" != yes:sing-box ] || continue
-      case "$component" in xray) cfg=xr.json ;; sing-box) cfg=sb.json ;; caddy) cfg=Caddyfile ;; esac
+      case "$component" in xray) cfg=xr.json ;; sing-box) cfg=sb.json ;; caddy) cfg=Caddyfile ;; sudoku) cfg=sudoku.json ;; esac
       [ -s "$HOME/agsbx/$cfg" ] || continue
       if [ "$bridge_boot:$component" = yes:xray ]; then entry=$(component_cron_line xray bridge "$bridge_script")
       else entry=$(component_cron_line "$component"); fi
@@ -4370,6 +4556,303 @@ upsingbox(){
   fi
   rm -rf -- "$stage"
   echo "Sing-box 内核已安装：$tag"
+}
+upsudoku(){
+  local version="${1:-latest}" metadata tag asset stage expected actual checksum_asset candidate
+  [ "$version" = latest ] || { case "$version" in v*) ;; *) version="v$version" ;; esac; }
+  metadata=$(release_json SUDOKU-ASCII/sudoku "$version") && tag=$(release_tag "$metadata") || {
+    echo "错误：无法获取 SUDOKU-ASCII/sudoku 发布信息。"; return 1
+  }
+  asset=$(printf '%s\n' "$metadata" | awk -v cpu="$cpu" '
+    /"name":[[:space:]]*"/ {
+      n=$0; sub(/^.*"name":[[:space:]]*"/, "", n); sub(/".*$/, "", n)
+      low=tolower(n)
+      if (low !~ /linux/) next
+      if (low ~ /(sha256|dgst|sig|asc|txt|sbom|checksum|android|darwin|windows|freebsd|desktop)/) next
+      if (cpu == "amd64" && low !~ /(amd64|x86_64)/) next
+      if (cpu == "arm64" && low !~ /(arm64|aarch64)/) next
+      score=1
+      if (low == "sudoku-linux-" cpu ".tar.gz") score=100
+      else if (low == "sudoku-linux-" cpu ".zip") score=95
+      else if (low == "sudoku-linux-" cpu) score=90
+      else if (low ~ /\.tar\.gz$|\.tgz$/) score=70
+      else if (low ~ /\.zip$/) score=60
+      if (score > best_score) { best_score=score; best=n }
+    }
+    END { if (best != "") print best }
+  ')
+  if [ -z "$asset" ]; then
+    echo "错误：在 SUDOKU-ASCII/sudoku $tag 发布中未找到匹配 linux/$cpu 的资产。"; return 1
+  fi
+  stage=$(mktemp -d "$HOME/agsbx/.stage-sudoku.XXXXXX") || return 1
+  expected=$(release_asset_digest "$metadata" "$asset" 2>/dev/null || true)
+  if [ -z "$expected" ]; then
+    checksum_asset=$(printf '%s\n' "$metadata" | awk -v target="$asset" '
+      /"name":[[:space:]]*"/ {
+        n=$0; sub(/^.*"name":[[:space:]]*"/, "", n); sub(/".*$/, "", n)
+        low=tolower(n)
+        if (n == target ".sha256" || n == target ".sha256.txt" || low ~ /^(sha256sums|checksums)(\.txt)?$/) {
+          print n; exit
+        }
+      }
+    ')
+    if [ -n "$checksum_asset" ] && fetch_file "https://github.com/SUDOKU-ASCII/sudoku/releases/download/$tag/$checksum_asset" "$stage/checksums.txt"; then
+      expected=$(awk -v file="$asset" '
+        $2 == file || $2 == "*" file || $2 == "./" file { print tolower($1); exit }
+        NF == 1 && $1 ~ /^[0-9a-fA-F]{64}$/ { print tolower($1); exit }
+      ' "$stage/checksums.txt")
+    fi
+  fi
+  if ! [[ "$expected" =~ ^[0-9a-f]{64}$ ]]; then
+    rm -rf -- "$stage"
+    echo "错误：GitHub 未提供 Sudoku 资产（$asset）的 SHA256，拒绝无校验下载。"; return 1
+  fi
+  echo "正在下载 Sudoku 官方内核：$tag（$asset）……"
+  if ! fetch_file "https://github.com/SUDOKU-ASCII/sudoku/releases/download/$tag/$asset" "$stage/archive" progress; then
+    rm -rf -- "$stage"; return 1
+  fi
+  actual=$(sha256sum "$stage/archive" | awk '{print $1}') || { rm -rf -- "$stage"; return 1; }
+  if [ "$actual" != "$expected" ]; then
+    rm -rf -- "$stage"; echo "错误：Sudoku SHA256 不匹配，未替换原内核。"; return 1
+  fi
+  echo "Sudoku SHA256 校验通过 ✓ ($actual)"
+  mkdir -p "$stage/extract" || { rm -rf -- "$stage"; return 1; }
+  case "$asset" in
+    *.tar.gz|*.tgz)
+      tar -xzf "$stage/archive" -C "$stage/extract" >/dev/null 2>&1 || {
+        rm -rf -- "$stage"; echo "错误：解压 Sudoku 压缩包失败。"; return 1
+      } ;;
+    *.zip)
+      unzip -o "$stage/archive" -d "$stage/extract" >/dev/null 2>&1 || {
+        rm -rf -- "$stage"; echo "错误：解压 Sudoku ZIP 包失败。"; return 1
+      } ;;
+    *)
+      cp -- "$stage/archive" "$stage/extract/sudoku" || { rm -rf -- "$stage"; return 1; } ;;
+  esac
+  candidate=$(find "$stage/extract" -type f \( -name 'sudoku' -o -name 'sudoku-tunnel' -o -name "sudoku-linux-$cpu*" \) ! -name '*.json' ! -name '*.md' ! -name '*.txt' 2>/dev/null | head -1)
+  if [ -z "$candidate" ]; then
+    candidate=$(find "$stage/extract" -type f -perm /111 ! -name '*.sh' 2>/dev/null | head -1)
+  fi
+  if [ -z "$candidate" ] || ! activate_core_candidate sudoku "$candidate"; then
+    rm -rf -- "$stage"; echo "错误：Sudoku 候选版本未通过可执行检查或未能启用。"; return 1
+  fi
+  atomic_text_file "$HOME/agsbx/sudoku_version" "${tag#v}" || { rm -rf -- "$stage"; return 1; }
+  rm -rf -- "$stage"
+  echo "Sudoku 官方内核已安装：$tag"
+}
+
+sudoku_generate_custom_tables(){
+  local hex t1='' t2='' attempt
+  for attempt in 1 2 3 4 5 6; do
+    hex=$(openssl rand -hex 16) || return 1
+    t1=$(awk -v h="$hex" 'BEGIN{
+      split("x,x,p,p,v,v,v,v", a, ",")
+      for (i=8; i>=2; i--) {
+        b = strtonum("0x" substr(h, (8-i)*2+1, 2))
+        j = (b % i) + 1
+        tmp = a[i]; a[i] = a[j]; a[j] = tmp
+      }
+      out = ""; for (i=1; i<=8; i++) out = out a[i]; print out
+    }' 2>/dev/null)
+    if [ -z "$t1" ]; then
+      t1=$(awk -v h="$hex" 'BEGIN{
+        hx="0123456789abcdef"
+        split("x,x,p,p,v,v,v,v", a, ",")
+        for (i=8; i>=2; i--) {
+          c1=index(hx, substr(h, (8-i)*2+1, 1))-1
+          c2=index(hx, substr(h, (8-i)*2+2, 1))-1
+          b = c1*16 + c2
+          j = (b % i) + 1
+          tmp = a[i]; a[i] = a[j]; a[j] = tmp
+        }
+        out = ""; for (i=1; i<=8; i++) out = out a[i]; print out
+      }')
+    fi
+    sudoku_valid_custom_table "$t1" || continue
+    if [ -z "$t2" ]; then
+      t2="$t1"
+    elif [ "$t1" != "$t2" ]; then
+      printf '%s,%s' "$t2" "$t1"
+      return 0
+    fi
+  done
+  printf '%s' 'xpxvvpvv,vxpvxvvp'
+}
+
+sudoku_render_custom_tables_json(){
+  local raw="$1" out='' item
+  [ -n "$raw" ] || return 0
+  IFS=',' read -r -a sudoku_ct_arr <<< "$raw"
+  for item in "${sudoku_ct_arr[@]}"; do
+    [ -n "$item" ] || continue
+    out="${out:+$out,}\"$(json_escape "$item")\""
+  done
+  printf '[%s]' "$out"
+}
+
+sudoku_shadowrocket_link(){
+  local addr="$1" port="$2" remark="$3" aead="$4" client_key="$5" table_type="$6" custom_tables="$7" pad_min="$8" pad_max="$9" pure_bool="${10}" mask_mode="${11}" host_hdr="${12}" path_root="${13}" tls_bool="${14}" mux_mode="${15}"
+  local auth_b64 obfs_fields='' ct_json hm_fields='' obfs_json link
+  auth_b64=$(printf '%s:%s@%s:%s' "$aead" "$client_key" "$addr" "$port" | safe_base64)
+  obfs_fields="\"table-type\":\"$(json_escape "$table_type")\""
+  if [ -n "$custom_tables" ] && [ "$table_type" != prefer_ascii ]; then
+    ct_json=$(sudoku_render_custom_tables_json "$custom_tables")
+    obfs_fields="${obfs_fields},\"custom-tables\":${ct_json}"
+  fi
+  obfs_fields="${obfs_fields},\"padding-min\":${pad_min},\"padding-max\":${pad_max},\"enable-pure-downlink\":${pure_bool}"
+  if [ "$mask_mode" = off ]; then
+    hm_fields='"disable":1'
+  elif [ "$mask_mode" = ws ]; then
+    hm_fields="\"disable\":0,\"mode\":\"ws\""
+    [ -z "$host_hdr" ] || hm_fields="${hm_fields},\"host\":\"$(json_escape "$host_hdr")\""
+    [ -z "$path_root" ] || hm_fields="${hm_fields},\"path-root\":\"/$(json_escape "${path_root#/}")\""
+    hm_fields="${hm_fields},\"tls\":${tls_bool}"
+  else
+    hm_fields='"disable":0,"mode":"legacy"'
+    [ -z "$host_hdr" ] || hm_fields="${hm_fields},\"host\":\"$(json_escape "$host_hdr")\""
+  fi
+  obfs_json="{${obfs_fields},\"httpmask\":{${hm_fields}}}"
+  link="sudoku://${auth_b64}?remarks=$(uri_percent_encode "$remark")&obfsParam=$(uri_percent_encode "$obfs_json")&obfs=httpmask&udp=1"
+  [ "$mux_mode" != on ] || link="${link}&mux=1"
+  printf '%s' "$link"
+}
+
+sudoku_clash_yaml_node(){
+  local node_name="$1" server_addr="$2" port="$3" aead="$4" client_key="$5" table_type="$6" custom_tables="$7" pad_min="$8" pad_max="$9" pure_bool="${10}" mask_mode="${11}" host_hdr="${12}" path_root="${13}" tls_bool="${14}" mux_mode="${15}"
+  local hm_disable='false' hm_mode="$mask_mode" item
+  if [ "$mask_mode" = off ]; then
+    hm_disable='true'
+    hm_mode='legacy'
+  fi
+  cat <<EOF
+- name: "$(json_escape "$node_name")"
+  type: sudoku
+  server: "$(json_escape "$server_addr")"
+  port: $port
+  key: "$(json_escape "$client_key")"
+  aead-method: "$(json_escape "$aead")"
+  padding-min: $pad_min
+  padding-max: $pad_max
+  table-type: "$(json_escape "$table_type")"
+EOF
+  if [ -n "$custom_tables" ] && [ "$table_type" != prefer_ascii ]; then
+    printf '  custom-tables:\n'
+    IFS=',' read -r -a sudoku_yaml_ct <<< "$custom_tables"
+    for item in "${sudoku_yaml_ct[@]}"; do
+      [ -n "$item" ] || continue
+      printf '    - "%s"\n' "$(json_escape "$item")"
+    done
+  fi
+  cat <<EOF
+  enable-pure-downlink: $pure_bool
+  httpmask:
+    disable: $hm_disable
+    mode: "$(json_escape "$hm_mode")"
+    tls: $tls_bool
+EOF
+  [ -z "$host_hdr" ] || printf '    host: "%s"\n' "$(json_escape "$host_hdr")"
+  [ "$mask_mode" != ws ] || [ -z "$path_root" ] || printf '    path-root: "%s"\n' "$(json_escape "${path_root#/}")"
+  [ "$mux_mode" = off ] || printf '    multiplex: "%s"\n' "$(json_escape "$mux_mode")"
+  printf '  udp: true\n'
+}
+
+installsudoku(){
+  local port keygen_out server_key client_key key_mode ct_effective='' ct_line='' pad_min pad_max pure_bool mask_disable mask_mode path_root='' path_line='' susp_action fb_addr config_json meta_content
+  section "配置 Sudoku 官方独立服务端"
+  if [ ! -x "$HOME/agsbx/sudoku" ]; then
+    upsudoku || return 1
+  fi
+  port=$(cat "$HOME/agsbx/port_sudoku" 2>/dev/null)
+  valid_port "$port" || { echo "错误：Sudoku 监听端口无效。"; return 1; }
+  port=$((10#$port))
+  if [ -n "$sudokukey" ]; then
+    server_key="$sudokukey"
+    client_key="$sudokukey"
+    key_mode=custom
+  else
+    keygen_out=$("$HOME/agsbx/sudoku" -keygen 2>&1) || { echo "错误：执行 sudoku -keygen 生成密钥对失败。"; return 1; }
+    server_key=$(printf '%s\n' "$keygen_out" | awk -F':' 'tolower($0) ~ /master[[:space:]]+public[[:space:]]+key/ { v=$NF; gsub(/[^0-9a-fA-F]/, "", v); print v; exit }')
+    client_key=$(printf '%s\n' "$keygen_out" | awk -F':' 'tolower($0) ~ /(available|split)[[:space:]]+private[[:space:]]+key/ { v=$NF; gsub(/[^0-9a-fA-F]/, "", v); print v; exit }')
+    if ! [[ "$server_key" =~ ^[0-9a-fA-F]{64,128}$ ]] || ! [[ "$client_key" =~ ^[0-9a-fA-F]{64,128}$ ]]; then
+      echo "错误：无法从 sudoku -keygen 输出解析 Master Public Key 或 Available Private Key，已中止配置。"
+      return 1
+    fi
+    key_mode=keygen
+  fi
+  atomic_text_file "$HOME/agsbx/sudoku_client_key" "$client_key" || return 1
+  if [ "$sudokutable" != prefer_ascii ]; then
+    if [ "$sudokuct" = auto ]; then
+      ct_effective=$(sudoku_generate_custom_tables) || return 1
+    elif [ -n "$sudokuct" ]; then
+      ct_effective="$sudokuct"
+    fi
+  fi
+  if [ -n "$ct_effective" ]; then
+    ct_line="  \"custom_tables\": $(sudoku_render_custom_tables_json "$ct_effective"),"$'\n'
+  fi
+  pad_min=$((10#${sudokupad%%-*}))
+  pad_max=$((10#${sudokupad##*-}))
+  [ "$sudokupure" = y ] && pure_bool=true || pure_bool=false
+  if [ "$sudokumask" = off ]; then
+    mask_disable=true
+    mask_mode=legacy
+    rm -f -- "$HOME/agsbx/sudoku_path_root"
+  elif [ "$sudokumask" = ws ]; then
+    mask_disable=false
+    mask_mode=ws
+    if [ -n "$sudokupath" ]; then
+      path_root="${sudokupath#/}"
+    else
+      path_root=$(openssl rand -hex 8) || return 1
+    fi
+    atomic_text_file "$HOME/agsbx/sudoku_path_root" "$path_root" || return 1
+    path_line=","$'\n'"    \"path_root\": \"$(json_escape "$path_root")\""
+  else
+    mask_disable=false
+    mask_mode=legacy
+    rm -f -- "$HOME/agsbx/sudoku_path_root"
+  fi
+  if [ -n "$sudokufb" ]; then
+    susp_action=fallback
+    fb_addr="$sudokufb"
+  else
+    susp_action=silent
+    fb_addr=''
+  fi
+  config_json=$(cat <<EOF
+{
+  "mode": "server",
+  "local_port": $port,
+  "fallback_address": "$(json_escape "$fb_addr")",
+  "suspicious_action": "$susp_action",
+  "key": "$(json_escape "$server_key")",
+  "aead": "$sudokuaead",
+  "padding_min": $pad_min,
+  "padding_max": $pad_max,
+  "ascii": "$sudokutable",
+${ct_line}  "enable_pure_downlink": $pure_bool,
+  "multiplex": "$sudokumux",
+  "httpmask": {
+    "disable": $mask_disable,
+    "mode": "$mask_mode"${path_line}
+  }
+}
+EOF
+)
+  atomic_text_file "$HOME/agsbx/sudoku.json" "$config_json" || return 1
+  meta_content=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s' \
+    "$sudokuaead" "$sudokutable" "$ct_effective" "$pad_min" "$pad_max" "$pure_bool" \
+    "$sudokumask" "$path_root" "$sudokumux" "$fb_addr" "$key_mode")
+  atomic_text_file "$HOME/agsbx/sudoku_meta" "$meta_content" || return 1
+  if [ -n "$name" ] && [ ! -s "$HOME/agsbx/name" ]; then
+    atomic_text_file "$HOME/agsbx/name" "${name}-" || return 1
+  fi
+  if [ -n "$cdnym" ] && [ "$sudokumask" = ws ] && [ "$argo" != sudokupt ]; then
+    atomic_text_file "$HOME/agsbx/cdnym" "$cdnym" || return 1
+  fi
+  start_agsbx_core sudoku || return 1
+  wait_component_listeners sudoku || return 1
+  echo "Sudoku 官方服务端已启动（端口：$port/tcp，HTTP Mask：$sudokumask，Pure Downlink：$pure_bool）。"
 }
 upcaddy(){
 # NaiveProxy 服务端＝带 forwardproxy@naive 分支的 Caddy。两种获取方式，按 CPU 架构与用户选择决定：
@@ -9736,6 +10219,10 @@ normalize_secondary_selectors(){
         [ "$mierup" = yes ] || { secondary_error "secp=mieru 需要同时启用 mieru=y。"; return 1; }
         secondary_add_protocol mieru
         ;;
+      sudoku|sudokupt)
+        secondary_error "Sudoku 官方服务端当前仅支持直连出站，不支持 secp 二级代理。"
+        return 1
+        ;;
       ca|all)
         secondary_error "不支持 secp=$normalized；NaiveProxy 二级出站请显式使用 secp=naive。"
         return 1
@@ -11426,18 +11913,26 @@ validate_generated_core_config(){
         return 1
       }
       ;;
+    sudoku)
+      binary="$HOME/agsbx/sudoku"
+      config="$HOME/agsbx/sudoku.json"
+      [ -x "$binary" ] && [ -s "$config" ] || { echo "错误：Sudoku 内核或配置文件不存在。"; return 1; }
+      ;;
     *) return 1 ;;
   esac
 }
 
 start_agsbx_core(){
-  local core="$1" binary config service init_name description unit_path init_path core_pid sd_bridge='' rc_bridge=''
+  local core="$1" binary config service init_name description exec_args unit_path init_path core_pid sd_bridge='' rc_bridge=''
   case "$core" in
     xray)
-      binary="$HOME/agsbx/xray"; config="$HOME/agsbx/xr.json"; service="xr"; init_name="xray"; description="xr service"
+      binary="$HOME/agsbx/xray"; config="$HOME/agsbx/xr.json"; service="xr"; init_name="xray"; description="xr service"; exec_args="run -c $config"
       ;;
     sing-box)
-      binary="$HOME/agsbx/sing-box"; config="$HOME/agsbx/sb.json"; service="sb"; init_name="sing-box"; description="sb service"
+      binary="$HOME/agsbx/sing-box"; config="$HOME/agsbx/sb.json"; service="sb"; init_name="sing-box"; description="sb service"; exec_args="run -c $config"
+      ;;
+    sudoku)
+      binary="$HOME/agsbx/sudoku"; config="$HOME/agsbx/sudoku.json"; service="agsbx-sudoku"; init_name="agsbx-sudoku"; description="Airgosbx Sudoku Server Service"; exec_args="-c $config"
       ;;
     *) return 1 ;;
   esac
@@ -11467,7 +11962,7 @@ UMask=0077
 LimitNOFILE=1048576
 TimeoutStartSec=0
 TimeoutStopSec=10s
-ExecStart=$binary run -c $config
+ExecStart=$binary $exec_args
 Restart=on-failure
 RestartSec=5s
 StandardOutput=journal
@@ -11489,7 +11984,7 @@ EOF
 #!/sbin/openrc-run
 description="$description"
 command="$binary"
-command_args="run -c $config"
+command_args="$exec_args"
 command_background=yes
 pidfile="/run/${init_name}.pid"
 depend() {
@@ -11505,7 +12000,11 @@ EOF
     rc-update add "$init_name" default >/dev/null 2>&1 || { echo "错误：无法启用 OpenRC $init_name 服务。"; return 1; }
     rc-service "$init_name" start 8>&- >/dev/null 2>&1 || { echo "错误：无法启动 OpenRC $init_name 服务。"; return 1; }
   else
-    nohup "$binary" run -c "$config" 8>&- > "$HOME/agsbx/${core}.log" 2>&1 &
+    if [ "$core" = sudoku ]; then
+      nohup "$binary" -c "$config" 8>&- > "$HOME/agsbx/${core}.log" 2>&1 &
+    else
+      nohup "$binary" run -c "$config" 8>&- > "$HOME/agsbx/${core}.log" 2>&1 &
+    fi
     core_pid=$!
     sleep 1
     kill -0 "$core_pid" >/dev/null 2>&1 || { echo "错误：$core 后台进程启动失败。"; return 1; }
@@ -11907,7 +12406,7 @@ argo_origin_from_state(){
   argoscheme=http; argoxtls=''; argo_origin_host=localhost
   case "$(cat "$HOME/agsbx/vlvm" 2>/dev/null)" in
     Vlessenc-xhttp-tls-vision-fm) argoscheme=https; argoxtls='--no-tls-verify ' ;;
-    Vlessenc-xhttp-vision) argo_origin_host=127.0.0.1 ;;
+    Vlessenc-xhttp-vision|Sudoku) argo_origin_host=127.0.0.1 ;;
   esac
 }
 
@@ -12154,6 +12653,7 @@ install_required_xray=no
 install_required_singbox=no
 install_required_caddy=no
 install_required_mita=no
+install_required_sudoku=no
 install_required_argo=no
 install_required_subscription=no
 if [ "$rep_mode" = yes ]; then
@@ -12162,6 +12662,7 @@ else
   [ -n "$naive" ] && install_required_caddy=yes
 fi
 [ "$mierup" = yes ] && install_required_mita=yes
+[ "$sudokup" = yes ] && install_required_sudoku=yes
 [ -n "$argo" ] && [ -n "$vmag" ] && install_required_argo=yes
 [ "$sub" = yes ] && install_required_subscription=yes
 if [ "$mierup" = yes ]; then
@@ -12257,6 +12758,7 @@ fi
 # B 节点凭据只保留在 xr.json/sb.json；状态卡仅落盘无密码的协议、地址与端口。
 persist_secondary_proxy_state || return 1
 if [ "$mierup" = yes ]; then installmita || return 1; fi
+if [ "$sudokup" = yes ]; then installsudoku || return 1; fi
 
 # 双内核 Hysteria 2 跳跃端口规则解耦挂载
 # Sing-box 驱动的 Hysteria 2：shyjpt -> port_hy2
@@ -12304,7 +12806,7 @@ fi
 echo "Cloudflared SHA256 校验通过 ✓ ($actual)"
 mv -f -- "$stage" "$HOME/agsbx/cloudflared" || { rm -f "$stage"; return 1; }
 fi
-if [ "$argo" = "vmpt" ]; then argoport=$(cat "$HOME/agsbx/port_vm_ws" 2>/dev/null); echo "Vmess" > "$HOME/agsbx/vlvm"; elif [ "$argo" = "vwpt" ]; then argoport=$(cat "$HOME/agsbx/port_vw" 2>/dev/null); echo "Vless" > "$HOME/agsbx/vlvm"; elif [ "$argo" = "xvargopt" ]; then argoport=$(cat "$HOME/agsbx/port_xvargo" 2>/dev/null); echo "Vlessenc-xhttp-vision" > "$HOME/agsbx/vlvm"; fi; echo "$argoport" > "$HOME/agsbx/argoport.log"
+if [ "$argo" = "vmpt" ]; then argoport=$(cat "$HOME/agsbx/port_vm_ws" 2>/dev/null); echo "Vmess" > "$HOME/agsbx/vlvm"; elif [ "$argo" = "vwpt" ]; then argoport=$(cat "$HOME/agsbx/port_vw" 2>/dev/null); echo "Vless" > "$HOME/agsbx/vlvm"; elif [ "$argo" = "xvargopt" ]; then argoport=$(cat "$HOME/agsbx/port_xvargo" 2>/dev/null); echo "Vlessenc-xhttp-vision" > "$HOME/agsbx/vlvm"; elif [ "$argo" = "sudokupt" ]; then argoport=$(cat "$HOME/agsbx/port_sudoku" 2>/dev/null); echo "Sudoku" > "$HOME/agsbx/vlvm"; fi; echo "$argoport" > "$HOME/agsbx/argoport.log"
 # 新 XHTTP 使用回环 HTTP；旧 HTTPS 部署的 res/回滚仍从原状态恢复。
 argo_origin_from_state
 if [ "$argo_fixed" = yes ]; then
@@ -12344,6 +12846,7 @@ kill -0 "$argo_pid" >/dev/null 2>&1 || { echo "错误：Cloudflared Argo 后台�
 fi
 echo "${ARGO_DOMAIN}" > "$HOME/agsbx/sbargoym.log"
 [ "$argo" = "xvargopt" ] && echo "固定隧道回源需配置为 http://127.0.0.1:${argoport}（HTTP，无需 noTLSVerify 或 HTTP/2 回源）。"
+[ "$argo" = "sudokupt" ] && echo "固定隧道回源需配置为 http://127.0.0.1:${argoport}（HTTP/WS 回源，无需 noTLSVerify）。"
 else
 argoname='临时'
 nohup "$HOME/agsbx/cloudflared" tunnel --url "${argoscheme}://${argo_origin_host}:${argoport}" ${argoxtls}--edge-ip-version auto --no-autoupdate --protocol http2 8>&- > "$HOME/agsbx/argo.log" 2>&1 &
@@ -12412,6 +12915,7 @@ kstat(){
       sb)   ver=$("$bin" version 2>/dev/null | awk '/version/{print $NF}') ;;
       argo) ver=$("$bin" version 2>/dev/null | awk '{print $3}') ;;
       caddy) ver=$("$bin" version 2>/dev/null | awk '{print $1}' | sed 's/^v//') ;;
+      sudoku) ver=$(cat "$HOME/agsbx/sudoku_version" 2>/dev/null | sed 's/^v//') ;;
     esac
     kv_row "${name}：" "${C_GREEN}运行中${C_RESET}${ver:+（v${ver}）}" 18
     return
@@ -12434,6 +12938,7 @@ kstat(){
 kstat "Sing-box"    "$HOME/agsbx/sing-box"    "$HOME/agsbx/sb.json"      'agsbx/sing-box'    sb   "$HOME/agsbx/sing-box.log"
 kstat "Xray"        "$HOME/agsbx/xray"        "$HOME/agsbx/xr.json"      'agsbx/xray'        xray "$HOME/agsbx/xray.log"
 kstat "Caddy"       "$HOME/agsbx/caddy"       "$HOME/agsbx/Caddyfile"    'agsbx/caddy'       caddy "$HOME/agsbx/caddy.log"
+kstat "Sudoku"      "$HOME/agsbx/sudoku"      "$HOME/agsbx/sudoku.json"  'agsbx/sudoku'      sudoku "$HOME/agsbx/sudoku.log"
 kstat "Cloudflared" "$HOME/agsbx/cloudflared" "$HOME/agsbx/argoport.log" 'agsbx/cloudflared' argo "$HOME/agsbx/argo.log"
 if [ -f "$HOME/agsbx/mita_managed" ]; then
   if [ ! -s "$HOME/agsbx/mita.json" ]; then
@@ -12627,7 +13132,7 @@ fi
 render_cert_hash=$(certificate_fingerprint 2>/dev/null)
 local direct_xh_options='' direct_xh_title='' direct_vl_options='' direct_vl_title='' direct_vl_export_yaml=no
 # 同一进程重复展示时，不能复用上次定义的可选协议订阅函数。
-unset -f clvlpt clvlpt1 clvmpt clvmpt1 clxhypt clxhypt1 clmierupt clmierupt1
+unset -f clvlpt clvlpt1 clvmpt clvmpt1 clvmcdnpt clvmcdnpt1 clhypt clhypt1 clxhypt clxhypt1 cltupt cltupt1 clvmargopt clvmargopt1 clmierupt clmierupt1 clsudokupt clsudokupt1 clsudokucdnpt clsudokucdnpt1 clsudokuargopt clsudokuargopt1
 ipbest(){
 # 优先复用 v4v6() 已探测到的地址，两者皆空时才重新发起外网探测
 first_family="$ip_policy_preferred_family"
@@ -13224,7 +13729,86 @@ kv_row "Traffic Pattern：" "$mieru_traffic_display" 19
 echo "  分享链接："
 echo "$mieru_link"
 fi
+# Sudoku 同时导出 Shadowrocket 原生 sudoku:// 链接与 Mihomo YAML；仅直连出站，支持直连 / CDN / Argo。
+local sd_ready=no sd_port='' sd_key='' sd_aead='' sd_table='' sd_ct='' sd_pad_min='' sd_pad_max='' sd_pure='' sd_mask='' sd_path='' sd_mux='' sd_fb='' sd_key_mode=''
+if [ -s "$HOME/agsbx/sudoku.json" ] && [ -s "$HOME/agsbx/sudoku_client_key" ] && [ -s "$HOME/agsbx/port_sudoku" ] && [ -s "$HOME/agsbx/sudoku_meta" ]; then
+  sd_port=$(cat "$HOME/agsbx/port_sudoku" 2>/dev/null)
+  sd_key=$(cat "$HOME/agsbx/sudoku_client_key" 2>/dev/null)
+  sd_aead=$(sed -n '1p' "$HOME/agsbx/sudoku_meta" 2>/dev/null)
+  sd_table=$(sed -n '2p' "$HOME/agsbx/sudoku_meta" 2>/dev/null)
+  sd_ct=$(sed -n '3p' "$HOME/agsbx/sudoku_meta" 2>/dev/null)
+  sd_pad_min=$(sed -n '4p' "$HOME/agsbx/sudoku_meta" 2>/dev/null)
+  sd_pad_max=$(sed -n '5p' "$HOME/agsbx/sudoku_meta" 2>/dev/null)
+  sd_pure=$(sed -n '6p' "$HOME/agsbx/sudoku_meta" 2>/dev/null)
+  sd_mask=$(sed -n '7p' "$HOME/agsbx/sudoku_meta" 2>/dev/null)
+  sd_path=$(sed -n '8p' "$HOME/agsbx/sudoku_meta" 2>/dev/null)
+  sd_mux=$(sed -n '9p' "$HOME/agsbx/sudoku_meta" 2>/dev/null)
+  sd_fb=$(sed -n '10p' "$HOME/agsbx/sudoku_meta" 2>/dev/null)
+  sd_key_mode=$(sed -n '11p' "$HOME/agsbx/sudoku_meta" 2>/dev/null)
+  if valid_port "$sd_port" && [ -n "$sd_key" ] && [ -n "$sd_aead" ] && [ -n "$sd_table" ] && [ -n "$sd_pad_min" ] && [ -n "$sd_pad_max" ]; then
+    sd_ready=yes
+  elif [ "$cip_mode" = publish ]; then
+    echo "错误：Sudoku 状态文件不完整或损坏，拒绝发布订阅；请用完整参数执行 agsbx rep。"
+    return 1
+  fi
+fi
+if [ "$sd_ready" = yes ]; then
+proto_gap
+local sd_direct_title="${sxname}sudoku-${hostname}"
+local sd_link sd_cdn_link sd_mask_display sd_path_display sd_ct_display sd_pure_display sd_fb_display
+sd_link=$(sudoku_shadowrocket_link "$server_ip" "$sd_port" "$sd_direct_title" "$sd_aead" "$sd_key" "$sd_table" "$sd_ct" "$sd_pad_min" "$sd_pad_max" "$sd_pure" "$sd_mask" "" "$sd_path" "false" "$sd_mux")
+append_node_link "$sd_link" || return 1
+if [ "$sub" = yes ]; then
+clsudokupt(){
+  sudoku_clash_yaml_node "${sxname}sudoku-$hostname" "$server_host" "$sd_port" "$sd_aead" "$sd_key" "$sd_table" "$sd_ct" "$sd_pad_min" "$sd_pad_max" "$sd_pure" "$sd_mask" "" "$sd_path" "false" "$sd_mux"
+}
+clsudokupt1(){
+  printf -- '- "%s"\n' "$(json_escape "${sxname}sudoku-$hostname")"
+}
+fi
+case "$sd_mask" in
+  off) sd_mask_display='关闭（纯裸流）' ;;
+  ws) sd_mask_display='开启（ws，直连无 TLS）' ;;
+  *) sd_mask_display='开启（legacy，仅直连）' ;;
+esac
+[ -n "$sd_path" ] && sd_path_display="/$sd_path" || sd_path_display='（未使用）'
+[ -n "$sd_ct" ] && [ "$sd_table" != prefer_ascii ] && sd_ct_display="$sd_ct" || sd_ct_display='（内置默认）'
+[ "$sd_pure" = true ] && sd_pure_display='开启（约 4× 纯数独下行）' || sd_pure_display='关闭（约 1.33× 省流压缩下行）'
+[ -n "$sd_fb" ] && sd_fb_display="fallback → $sd_fb" || sd_fb_display='silent（静默丢弃探测）'
+node_title "💣【 Sudoku 】（SUDOKU-ASCII 官方独立服务端）" "$(protocol_outbound_badge sudokupt sudoku)"
+kv_row "地址 / 端口：" "$server_host : $sd_port（TCP，UDP 经 UoT）" 19
+kv_row "Password：" "$sd_key" 19
+kv_row "Method：" "$sd_aead" 19
+kv_row "Table Type：" "$sd_table" 19
+kv_row "Custom Tables：" "$sd_ct_display" 19
+kv_row "Padding：" "${sd_pad_min}% ～ ${sd_pad_max}%" 19
+kv_row "Pure Downlink：" "$sd_pure_display" 19
+kv_row "HTTP Mask：" "$sd_mask_display" 19
+[ "$sd_mask" != ws ] || kv_row "Path Root：" "$sd_path_display" 19
+kv_row "Muxing / UDP：" "Mux=${sd_mux} ／ UDP Relay=开启（UoT）" 19
+kv_row "服务端防探测：" "$sd_fb_display" 19
+echo "  Shadowrocket 分享链接（同步写入 jh.txt / clmi.yaml）："
+echo "$sd_link"
+[ "$sd_key_mode" != keygen ] || note_line "密钥由官方 -keygen 自动生成：服务端仅存 Master Public Key，上方 Password 为派生客户端私钥。"
+if [ -f "$HOME/agsbx/cdnym" ] && [ "$sd_mask" = ws ] && [ "$(cat "$HOME/agsbx/vlvm" 2>/dev/null)" != Sudoku ]; then
+  echo
+  node_title "💣【 Sudoku-ws-cdn 】" "$(protocol_outbound_badge sudokupt sudoku)"
+  sd_cdn_link=$(sudoku_shadowrocket_link "icook.hk" "$sd_port" "${sxname}sudoku-ws-cdn-$hostname" "$sd_aead" "$sd_key" "$sd_table" "$sd_ct" "$sd_pad_min" "$sd_pad_max" "$sd_pure" "ws" "$xvvmcdnym" "$sd_path" "false" "$sd_mux")
+  append_node_link "$sd_cdn_link" || return 1
+  echo "$sd_cdn_link"
+  note_line "默认地址 icook.hk 可自行更换优选 IP 域名；Host=$xvvmcdnym，Path Root=/$sd_path；若 Cloudflare 开启 443 回源请按需开启 TLS 并改端口为 443。"
+  if [ "$sub" = yes ]; then
+  clsudokucdnpt(){
+    sudoku_clash_yaml_node "${sxname}sudoku-ws-cdn-$hostname" "icook.hk" "$sd_port" "$sd_aead" "$sd_key" "$sd_table" "$sd_ct" "$sd_pad_min" "$sd_pad_max" "$sd_pure" "ws" "$xvvmcdnym" "$sd_path" "false" "$sd_mux"
+  }
+  clsudokucdnpt1(){
+    printf -- '- "%s"\n' "$(json_escape "${sxname}sudoku-ws-cdn-$hostname")"
+  }
+  fi
+fi
+fi
 # ─── Cloudflare Argo 隧道节点 ───
+local vmatls_link1='' vwatls_link1='' sdatls_link1='' vma_link7='' vwa_link2='' sda_link7=''
 argodomain=$(cat "$HOME/agsbx/sbargoym.log" 2>/dev/null)
 if [ -z "$argodomain" ]; then
   argodomain=$(grep -oE '[a-zA-Z0-9.-]+\.trycloudflare\.com' "$HOME/agsbx/argo.log" 2>/dev/null | head -n1)
@@ -13306,6 +13890,43 @@ append_node_link "$vwa_link2" || return 1
 elif [ "$vlvm" = "Vlessenc-xhttp-tls-vision-fm" ] || [ "$vlvm" = "Vlessenc-xhttp-vision" ]; then
 vwa_xvargo_link="vless://$(uri_percent_encode "$uuid")@$argodomain:443?encryption=$(uri_percent_encode "$enkey")&flow=xtls-rprx-vision&security=tls&alpn=h2&sni=$(uri_percent_encode "$argodomain")&host=$(uri_percent_encode "$argodomain")&type=xhttp&path=$(uri_percent_encode "$(transport_path xva)")&mode=$profile_xva_mode${profile_xva_options}#$(uri_percent_encode "${sxname}vlessenc-${profile_xva_transport}-vision-argo${profile_xva_suffix}-$hostname")"
 append_node_link "$vwa_xvargo_link" || return 1
+elif [ "$vlvm" = "Sudoku" ] && [ "$sd_ready" = yes ]; then
+  sdatls_link1=$(sudoku_shadowrocket_link "icook.hk" "443" "${sxname}sudoku-ws-tls-argo-$hostname-443" "$sd_aead" "$sd_key" "$sd_table" "$sd_ct" "$sd_pad_min" "$sd_pad_max" "$sd_pure" "ws" "$argodomain" "$sd_path" "true" "$sd_mux")
+  append_node_link "$sdatls_link1" || return 1
+  sdatls_link2=$(sudoku_shadowrocket_link "icook.hk" "8443" "${sxname}sudoku-ws-tls-argo-$hostname-8443" "$sd_aead" "$sd_key" "$sd_table" "$sd_ct" "$sd_pad_min" "$sd_pad_max" "$sd_pure" "ws" "$argodomain" "$sd_path" "true" "$sd_mux")
+  append_node_link "$sdatls_link2" || return 1
+  sdatls_link3=$(sudoku_shadowrocket_link "icook.hk" "2053" "${sxname}sudoku-ws-tls-argo-$hostname-2053" "$sd_aead" "$sd_key" "$sd_table" "$sd_ct" "$sd_pad_min" "$sd_pad_max" "$sd_pure" "ws" "$argodomain" "$sd_path" "true" "$sd_mux")
+  append_node_link "$sdatls_link3" || return 1
+  sdatls_link4=$(sudoku_shadowrocket_link "icook.hk" "2083" "${sxname}sudoku-ws-tls-argo-$hostname-2083" "$sd_aead" "$sd_key" "$sd_table" "$sd_ct" "$sd_pad_min" "$sd_pad_max" "$sd_pure" "ws" "$argodomain" "$sd_path" "true" "$sd_mux")
+  append_node_link "$sdatls_link4" || return 1
+  sdatls_link5=$(sudoku_shadowrocket_link "icook.hk" "2087" "${sxname}sudoku-ws-tls-argo-$hostname-2087" "$sd_aead" "$sd_key" "$sd_table" "$sd_ct" "$sd_pad_min" "$sd_pad_max" "$sd_pure" "ws" "$argodomain" "$sd_path" "true" "$sd_mux")
+  append_node_link "$sdatls_link5" || return 1
+  sdatls_link6=$(sudoku_shadowrocket_link "[2606:4700::0]" "2096" "${sxname}sudoku-ws-tls-argo-$hostname-2096" "$sd_aead" "$sd_key" "$sd_table" "$sd_ct" "$sd_pad_min" "$sd_pad_max" "$sd_pure" "ws" "$argodomain" "$sd_path" "true" "$sd_mux")
+  append_node_link "$sdatls_link6" || return 1
+  sda_link7=$(sudoku_shadowrocket_link "icook.hk" "80" "${sxname}sudoku-ws-argo-$hostname-80" "$sd_aead" "$sd_key" "$sd_table" "$sd_ct" "$sd_pad_min" "$sd_pad_max" "$sd_pure" "ws" "$argodomain" "$sd_path" "false" "$sd_mux")
+  append_node_link "$sda_link7" || return 1
+  sda_link8=$(sudoku_shadowrocket_link "icook.hk" "8080" "${sxname}sudoku-ws-argo-$hostname-8080" "$sd_aead" "$sd_key" "$sd_table" "$sd_ct" "$sd_pad_min" "$sd_pad_max" "$sd_pure" "ws" "$argodomain" "$sd_path" "false" "$sd_mux")
+  append_node_link "$sda_link8" || return 1
+  sda_link9=$(sudoku_shadowrocket_link "icook.hk" "8880" "${sxname}sudoku-ws-argo-$hostname-8880" "$sd_aead" "$sd_key" "$sd_table" "$sd_ct" "$sd_pad_min" "$sd_pad_max" "$sd_pure" "ws" "$argodomain" "$sd_path" "false" "$sd_mux")
+  append_node_link "$sda_link9" || return 1
+  sda_link10=$(sudoku_shadowrocket_link "icook.hk" "2052" "${sxname}sudoku-ws-argo-$hostname-2052" "$sd_aead" "$sd_key" "$sd_table" "$sd_ct" "$sd_pad_min" "$sd_pad_max" "$sd_pure" "ws" "$argodomain" "$sd_path" "false" "$sd_mux")
+  append_node_link "$sda_link10" || return 1
+  sda_link11=$(sudoku_shadowrocket_link "icook.hk" "2082" "${sxname}sudoku-ws-argo-$hostname-2082" "$sd_aead" "$sd_key" "$sd_table" "$sd_ct" "$sd_pad_min" "$sd_pad_max" "$sd_pure" "ws" "$argodomain" "$sd_path" "false" "$sd_mux")
+  append_node_link "$sda_link11" || return 1
+  sda_link12=$(sudoku_shadowrocket_link "icook.hk" "2086" "${sxname}sudoku-ws-argo-$hostname-2086" "$sd_aead" "$sd_key" "$sd_table" "$sd_ct" "$sd_pad_min" "$sd_pad_max" "$sd_pure" "ws" "$argodomain" "$sd_path" "false" "$sd_mux")
+  append_node_link "$sda_link12" || return 1
+  sda_link13=$(sudoku_shadowrocket_link "[2400:cb00:2049::0]" "2095" "${sxname}sudoku-ws-argo-$hostname-2095" "$sd_aead" "$sd_key" "$sd_table" "$sd_ct" "$sd_pad_min" "$sd_pad_max" "$sd_pure" "ws" "$argodomain" "$sd_path" "false" "$sd_mux")
+  append_node_link "$sda_link13" || return 1
+  if [ "$sub" = yes ]; then
+  clsudokuargopt(){
+    sudoku_clash_yaml_node "${sxname}sudoku-ws-tls-argo-$hostname-443" "icook.hk" "443" "$sd_aead" "$sd_key" "$sd_table" "$sd_ct" "$sd_pad_min" "$sd_pad_max" "$sd_pure" "ws" "$argodomain" "$sd_path" "true" "$sd_mux"
+    sudoku_clash_yaml_node "${sxname}sudoku-ws-argo-$hostname-80" "icook.hk" "80" "$sd_aead" "$sd_key" "$sd_table" "$sd_ct" "$sd_pad_min" "$sd_pad_max" "$sd_pure" "ws" "$argodomain" "$sd_path" "false" "$sd_mux"
+  }
+  clsudokuargopt1(){
+    printf -- '- "%s"\n' "$(json_escape "${sxname}sudoku-ws-tls-argo-$hostname-443")"
+    printf -- '- "%s"\n' "$(json_escape "${sxname}sudoku-ws-argo-$hostname-80")"
+  }
+  fi
 fi
 if [ -s "$argo_token_file" ]; then
 nametn="已安全保存（不显示）"
@@ -13327,6 +13948,8 @@ echo "$vwa_xvargo_link"
 else
 if [ "$vlvm" = "Vless" ]; then
   argo_badge=$(protocol_outbound_badge vwpt xray)
+elif [ "$vlvm" = "Sudoku" ]; then
+  argo_badge=$(protocol_outbound_badge sudokupt sudoku)
 else
   grep -q vmess-xr "$HOME/agsbx/xr.json" 2>/dev/null && argo_vm_core='xray'
   argo_badge=$(protocol_outbound_badge vmpt "$argo_vm_core")
@@ -13336,10 +13959,10 @@ kv_row "Argo 域名：" "$argodomain" 14
 [ -z "$nametn" ] || kv_row "固定 Token：" "$nametn" 14
 echo
 node_title "💣【 443 端口 ${vlvm}-ws-tls-argo 】（优选 IP 与 443 系端口可自行替换）" "$argo_badge"
-echo "${vmatls_link1}${vwatls_link1}"
+echo "${vmatls_link1}${vwatls_link1}${sdatls_link1}"
 echo
 node_title "💣【 80 端口 ${vlvm}-ws-argo 】（优选 IP 与 80 系端口可自行替换）" "$argo_badge"
-echo "${vma_link7}${vwa_link2}"
+echo "${vma_link7}${vwa_link2}${sda_link7}"
 fi
 printed_protocol=yes
 fi
@@ -13460,7 +14083,8 @@ local clash_renderers clash_node clash_name clash_names=''
 clxy=''
 for clash_renderers in clvlpt:clvlpt1 clvmpt:clvmpt1 clvmcdnpt:clvmcdnpt1 \
   clhypt:clhypt1 clxhypt:clxhypt1 cltupt:cltupt1 \
-  clvmargopt:clvmargopt1 clmierupt:clmierupt1; do
+  clvmargopt:clvmargopt1 clmierupt:clmierupt1 \
+  clsudokupt:clsudokupt1 clsudokucdnpt:clsudokucdnpt1 clsudokuargopt:clsudokuargopt1; do
   clash_node=$(get_func "${clash_renderers%%:*}") && clash_name=$(get_func "${clash_renderers#*:}") || continue
   clxy="${clxy}${clash_node}"$'\n'
   clash_names="${clash_names}${clash_name}"$'\n'
@@ -13621,7 +14245,7 @@ else
 fi
 kv_row "密码保护：" "关闭（可直接使用以上 HTTPS 链接订阅，无需填写用户名或密码）" 14
 fi
-note_line "clmi.yaml 仅包含可完整导出的 Mihomo 节点（含 Mieru，不含 Naive）；jhsub.txt 包含 Mieru 与 Naive 链接（Naive 另附 Shadowrocket http2/http3 格式）。"
+note_line "clmi.yaml 仅包含可完整导出的 Mihomo 节点（含 Mieru 与 Sudoku，不含 Naive）；jhsub.txt 包含 Mieru、Sudoku（Shadowrocket 格式）与 Naive 链接。"
 note_line "订阅地址使用共享 CA 证书覆盖的域名或 IP；域名应解析到订阅服务，客户端保持证书验证开启。"
 fi
 if [ -s "$HOME/agsbx/jh.txt" ]; then
@@ -13642,11 +14266,11 @@ if [ "$rep_mode" = yes ]; then
     fi
     [ -f "$permission_path" ] && chmod 600 "$permission_path" 2>/dev/null
   done
-  chmod 700 "$HOME/agsbx/xray" "$HOME/agsbx/sing-box" "$HOME/agsbx/cloudflared" 2>/dev/null
+  chmod 700 "$HOME/agsbx/xray" "$HOME/agsbx/sing-box" "$HOME/agsbx/cloudflared" "$HOME/agsbx/sudoku" 2>/dev/null
 else
   find "$HOME/agsbx" -type d -exec chmod 700 {} + 2>/dev/null
   find "$HOME/agsbx" -type f -exec chmod 600 {} + 2>/dev/null
-  chmod 700 "$HOME/agsbx/xray" "$HOME/agsbx/sing-box" "$HOME/agsbx/cloudflared" "$HOME/agsbx/caddy" 2>/dev/null
+  chmod 700 "$HOME/agsbx/xray" "$HOME/agsbx/sing-box" "$HOME/agsbx/cloudflared" "$HOME/agsbx/caddy" "$HOME/agsbx/sudoku" 2>/dev/null
 fi
 [ ! -f "$HOME/agsbx/acme.sh" ] || chmod 700 "$HOME/agsbx/acme.sh" || return 1
 fi
@@ -13796,6 +14420,7 @@ rep_service_is_enabled(){
   case "$service" in
     xray) systemd_name=xr; openrc_name=xray ;;
     sing-box) systemd_name=sb; openrc_name=sing-box ;;
+    sudoku) systemd_name=agsbx-sudoku; openrc_name=agsbx-sudoku ;;
     argo) systemd_name=argo; openrc_name=argo ;;
     mita) systemd_name=mita; openrc_name=mita ;;
     *) return 1 ;;
@@ -13851,17 +14476,17 @@ rep_begin_transaction(){
   if [ -e "$HOME/websbx" ] && ! cp -a -- "$HOME/websbx" "$rep_backup_dir/websbx"; then
     rep_remove_backup >/dev/null 2>&1 || true; return 1
   fi
-  for unit in xr.service sb.service argo.service; do
+  for unit in xr.service sb.service agsbx-sudoku.service argo.service; do
     path="/etc/systemd/system/$unit"
-    case "$unit" in xr.service) component=xray ;; sb.service) component=sing-box ;; argo.service) component=cloudflared ;; esac
+    case "$unit" in xr.service) component=xray ;; sb.service) component=sing-box ;; agsbx-sudoku.service) component=sudoku ;; argo.service) component=cloudflared ;; esac
     service_file_owned "$path" "$component" systemd || continue
     if [ -e "$path" ] && ! cp -a -- "$path" "$rep_backup_dir/systemd/"; then
       rep_remove_backup >/dev/null 2>&1 || true; return 1
     fi
   done
-  for unit in xray sing-box argo; do
+  for unit in xray sing-box agsbx-sudoku argo; do
     path="/etc/init.d/$unit"
-    component="$unit"; [ "$component" != argo ] || component=cloudflared
+    case "$unit" in argo) component=cloudflared ;; agsbx-sudoku) component=sudoku ;; *) component="$unit" ;; esac
     service_file_owned "$path" "$component" openrc || continue
     if [ -e "$path" ] && ! cp -a -- "$path" "$rep_backup_dir/openrc/"; then
       rep_remove_backup >/dev/null 2>&1 || true; return 1
@@ -13901,6 +14526,7 @@ rep_begin_transaction(){
 
   rep_old_xray_running=no; agsbx_component_running xray && rep_old_xray_running=yes
   rep_old_singbox_running=no; agsbx_component_running sing-box && rep_old_singbox_running=yes
+  rep_old_sudoku_running=no; agsbx_component_running sudoku && rep_old_sudoku_running=yes
   rep_old_argo_running=no; agsbx_component_running cloudflared && rep_old_argo_running=yes
   rep_old_mita_daemon_running=no
   [ -f "$HOME/agsbx/mita_managed" ] && systemctl is-active --quiet mita && rep_old_mita_daemon_running=yes
@@ -13911,6 +14537,7 @@ rep_begin_transaction(){
   rep_old_subscription_running=no; subscription_http_managed_is_running && rep_old_subscription_running=yes
   rep_old_xray_enabled=no; rep_service_is_enabled xray && rep_old_xray_enabled=yes
   rep_old_singbox_enabled=no; rep_service_is_enabled sing-box && rep_old_singbox_enabled=yes
+  rep_old_sudoku_enabled=no; rep_service_is_enabled sudoku && rep_old_sudoku_enabled=yes
   rep_old_argo_enabled=no; rep_service_is_enabled argo && rep_old_argo_enabled=yes
   rep_old_mita_enabled=no; rep_service_is_enabled mita && rep_old_mita_enabled=yes
 
@@ -13946,7 +14573,7 @@ rep_restore_snapshot_files(){
   fi
 
   for backend in systemd openrc; do
-    for component in xray sing-box cloudflared; do
+    for component in xray sing-box sudoku cloudflared; do
       managed_service_names "$component" || return 1
       if [ "$backend" = systemd ]; then unit="$managed_sd.service"; path="/etc/systemd/system/$unit"
       else unit="$managed_rc"; path="/etc/init.d/$unit"; fi
@@ -14074,6 +14701,10 @@ rep_restore_runtime(){
     if pidof systemd >/dev/null 2>&1; then systemctl enable sb >/dev/null 2>&1 || failed=yes
     elif command -v rc-update >/dev/null 2>&1; then rc-update add sing-box default >/dev/null 2>&1 || failed=yes; fi
   fi
+  if [ "$rep_old_sudoku_enabled" = yes ]; then
+    if pidof systemd >/dev/null 2>&1; then systemctl enable agsbx-sudoku >/dev/null 2>&1 || failed=yes
+    elif command -v rc-update >/dev/null 2>&1; then rc-update add agsbx-sudoku default >/dev/null 2>&1 || failed=yes; fi
+  fi
   if [ "$rep_old_argo_enabled" = yes ]; then
     if pidof systemd >/dev/null 2>&1; then systemctl enable argo >/dev/null 2>&1 || failed=yes
     elif command -v rc-update >/dev/null 2>&1; then rc-update add argo default >/dev/null 2>&1 || failed=yes; fi
@@ -14087,6 +14718,9 @@ rep_restore_runtime(){
   fi
   if [ "$rep_old_xray_running" = yes ]; then
     validate_generated_core_config xray && kctl start xray || failed=yes
+  fi
+  if [ "$rep_old_sudoku_running" = yes ]; then
+    validate_generated_core_config sudoku && kctl start sudoku || failed=yes
   fi
   if [ "$rep_old_argo_running" = yes ]; then
     if [ "$rep_argo_persistence_ready" = yes ]; then rep_restore_argo_runtime || failed=yes
@@ -14188,7 +14822,7 @@ rep_commit_transaction(){
 cleandel(){
 local cleanup_mode="${1:-del}" cron_tmp filtered_tmp component path
 case "$cleanup_mode" in del|rep) ;; *) echo "错误：未知清理模式 $cleanup_mode。"; return 1 ;; esac
-for component in xray sing-box cloudflared; do
+for component in xray sing-box sudoku cloudflared; do
   stop_managed_service "$component" yes || return 1
 done
 if [ "$cleanup_mode" = del ]; then
@@ -14240,9 +14874,9 @@ fi
 [ "$cleanup_mode" = del ] && rm -f "$HOME/agsbx/caddy-admin.sock"
 if [ "$cleanup_mode" = rep ]; then
   sleep 1
-  if agsbx_component_running xray || agsbx_component_running sing-box || agsbx_component_running cloudflared \
+  if agsbx_component_running xray || agsbx_component_running sing-box || agsbx_component_running sudoku || agsbx_component_running cloudflared \
     || subscription_http_is_running; then
-    echo "错误：rep 清理后仍有旧的 Xray、Sing-box、Argo 或订阅进程运行。"
+    echo "错误：rep 清理后仍有旧的 Xray、Sing-box、Sudoku、Argo 或订阅进程运行。"
     return 1
   fi
   if [ -f "$HOME/agsbx/mita_managed" ] && command -v mita >/dev/null 2>&1 \
@@ -14271,7 +14905,8 @@ kctl(){
     xray|x)      name="Xray";     bin="$HOME/agsbx/xray";     cfg="$HOME/agsbx/xr.json"; pat='agsbx/xray';     sd="xr"; rc="xray";     log="$HOME/agsbx/xray.log" ;;
     sb|sing-box) name="Sing-box"; bin="$HOME/agsbx/sing-box"; cfg="$HOME/agsbx/sb.json"; pat='agsbx/sing-box'; sd="sb"; rc="sing-box"; log="$HOME/agsbx/sing-box.log" ;;
     caddy)       name="Caddy";     bin="$HOME/agsbx/caddy";     cfg="$HOME/agsbx/Caddyfile"; pat='agsbx/caddy';    sd="agsbx-caddy"; rc="agsbx-caddy"; log="$HOME/agsbx/caddy.log" ;;
-    *)           echo "未知内核：$kernel（可选 xray｜sb｜caddy｜all）"; return 1 ;;
+    sudoku)      name="Sudoku";    bin="$HOME/agsbx/sudoku";    cfg="$HOME/agsbx/sudoku.json"; pat='agsbx/sudoku';  sd="agsbx-sudoku"; rc="agsbx-sudoku"; log="$HOME/agsbx/sudoku.log" ;;
+    *)           echo "未知内核：$kernel（可选 xray｜sb｜caddy｜sudoku｜all）"; return 1 ;;
   esac
   if [ ! -s "$bin" ]; then echo "${name}：内核未下载，无法执行 ${action}。"; return 1; fi
   require_service_slot "${bin##*/}" || return 1
@@ -14279,7 +14914,7 @@ kctl(){
   if [ "$action" != stop ]; then
     command -v ss >/dev/null 2>&1 || { echo "错误：缺少 ss，无法确认监听状态；未启动或重启内核。"; return 1; }
     [ -s "$cfg" ] || { echo "${name}：尚未配置。"; return 1; }
-    case "$kernel" in xray|x) validate_generated_core_config xray || return 1 ;; sb|sing-box) validate_generated_core_config sing-box || return 1 ;; esac
+    case "$kernel" in xray|x) validate_generated_core_config xray || return 1 ;; sb|sing-box) validate_generated_core_config sing-box || return 1 ;; sudoku) validate_generated_core_config sudoku || return 1 ;; esac
     case "$kernel" in xray|x) secondary_ensure_bridge xray || return 1 ;; esac
   fi
   # Sing-box 的 SIGHUP 没有完成确认；旧实例退出后新监听仍可能失败，不能以发信号成功代替重载成功。
@@ -14289,6 +14924,11 @@ kctl(){
       sb|sing-box)
         agsbx_component_running sing-box || { echo "Sing-box：进程未运行，请使用 start。"; return 1; }
         echo "Sing-box reload 改为经检查的重启，完成后验证进程与监听；连接会短暂中断。"
+        action=restart
+        ;;
+      sudoku)
+        agsbx_component_running sudoku || { echo "Sudoku：进程未运行，请使用 start。"; return 1; }
+        echo "Sudoku 不支持配置热重载，改为经检查的重启，完成后验证进程与监听；连接会短暂中断。"
         action=restart
         ;;
     esac
@@ -14322,7 +14962,11 @@ kctl(){
         else
           stop_component_processes "${bin##*/}" || return 1
           [ "$kernel" = caddy ] && rm -f "$HOME/agsbx/caddy-admin.sock"
-          nohup "$bin" run "$runflag" "$cfg" 8>&- > "$log" 2>&1 &
+          if [ "$kernel" = sudoku ]; then
+            nohup "$bin" -c "$cfg" 8>&- > "$log" 2>&1 &
+          else
+            nohup "$bin" run "$runflag" "$cfg" 8>&- > "$log" 2>&1 &
+          fi
         fi
       fi
       sleep 1
@@ -14464,6 +15108,7 @@ local any=0 kv k label bin cfg pid s b0 st b1 cpu rss up conn
 for kv in "xray:Xray:$HOME/agsbx/xray:$HOME/agsbx/xr.json" \
   "sing-box:Sing-box:$HOME/agsbx/sing-box:$HOME/agsbx/sb.json" \
   "caddy:Caddy:$HOME/agsbx/caddy:$HOME/agsbx/Caddyfile" \
+  "sudoku:Sudoku:$HOME/agsbx/sudoku:$HOME/agsbx/sudoku.json" \
   "cloudflared:Cloudflared:$HOME/agsbx/cloudflared:$HOME/agsbx/argoport.log" \
   "mita:Mita:$HOME/agsbx/mita_managed:$HOME/agsbx/mita.json"; do
   IFS=: read -r k label bin cfg <<< "$kv"
@@ -14633,7 +15278,7 @@ cleandel rep || exit 1
 cleanup_mieru_ufw || exit 1
 reset_mita_config || exit 1
 secondary_clear_numbered_state || { echo "错误：rep 无法清理旧的编号二级代理状态。"; exit 1; }
-rm -rf "$HOME/agsbx"/{sb.json,xr.json,sbargoym.log,sbargotoken.log,argo.log,argoport.log,cdnym,name,secondary_secp,secondary_meta,secondary_backends,secondary_bridge_port,secondary_bridge_pass,direct_xh_profile,direct_vl_profile,xray_xh_profile,xray_vl_profile,xray_vx_profile,xray_vw_profile,xray_vm_profile,xray_hy_profile,xray_xvd_profile,xray_xva_profile,mita.json,mieru_user,mieru_pass,port_mieru,mieru_protocol,mieru_traffic_seed,mieru_traffic_pattern,mieru_ufw_rule,shyjpt,xhyjpt,socks_user,socks_pass,transport_vm,transport_vw,transport_vx,transport_xh,transport_xvd,transport_xva} \
+rm -rf "$HOME/agsbx"/{sb.json,xr.json,sudoku.json,sudoku_client_key,sudoku_meta,sudoku_path_root,port_sudoku,sbargoym.log,sbargotoken.log,argo.log,argoport.log,cdnym,name,secondary_secp,secondary_meta,secondary_backends,secondary_bridge_port,secondary_bridge_pass,direct_xh_profile,direct_vl_profile,xray_xh_profile,xray_vl_profile,xray_vx_profile,xray_vw_profile,xray_vm_profile,xray_hy_profile,xray_xvd_profile,xray_xva_profile,mita.json,mieru_user,mieru_pass,port_mieru,mieru_protocol,mieru_traffic_seed,mieru_traffic_pattern,mieru_ufw_rule,shyjpt,xhyjpt,socks_user,socks_pass,transport_vm,transport_vw,transport_vx,transport_xh,transport_xvd,transport_xva} \
   || { echo "错误：rep 无法清理旧的可变协议状态。"; exit 1; }
 rm -f -- "$HOME/agsbx/xdns-client.json" "$HOME/agsbx/xicmp-client.json" "$HOME/agsbx/xdns_domain" "$HOME/agsbx/xdns_resolver" \
   "$HOME/agsbx/xdrive-client.json" \
@@ -14670,6 +15315,18 @@ fi
 upsingbox "$reqver" || exit 1
 cip
 exit $?
+elif [ "$1" = "upsu" ] || [ "$1" = "downsu" ]; then
+reqver="$2"
+if [ "$1" = "downsu" ] && [ -z "$reqver" ]; then echo "用法：agsbx downsu <版本号>，例如 agsbx downsu v0.5.0（升级到最新请用 agsbx upsu）"; exit 1; fi
+curver=$(cat "$HOME/agsbx/sudoku_version" 2>/dev/null | sed 's/^v//')
+if [ -n "$reqver" ] && [ -n "$curver" ]; then
+  rel=$(vercmp "$reqver" "$curver")
+  if [ "$1" = "upsu" ] && [ "$rel" = "lt" ]; then echo "错误：目标版本 ${reqver#v} 低于当前已记录的 v${curver}，这是降级。请改用：agsbx downsu ${reqver}"; exit 1; fi
+  if [ "$1" = "downsu" ] && [ "$rel" = "gt" ]; then echo "错误：目标版本 ${reqver#v} 高于当前已记录的 v${curver}，这是升级。请改用：agsbx upsu ${reqver}"; exit 1; fi
+fi
+upsudoku "$reqver" || exit 1
+cip
+exit $?
 elif [ "$1" = "status" ] || [ "$1" = "stats" ] || [ "$1" = "top" ]; then
 showstats
 exit
@@ -14677,8 +15334,8 @@ elif [ "$1" = "res" ]; then
 res_failed=0
 migrate_argo_persistent_startup || res_failed=1
 migrate_subscription_persistent_startup || res_failed=1
-for component in sing-box xray caddy; do
-  case "$component" in xray) cfg=xr.json; target=xray ;; sing-box) cfg=sb.json; target=sb ;; caddy) cfg=Caddyfile; target=caddy ;; esac
+for component in sing-box xray sudoku caddy; do
+  case "$component" in xray) cfg=xr.json; target=xray ;; sing-box) cfg=sb.json; target=sb ;; sudoku) cfg=sudoku.json; target=sudoku ;; caddy) cfg=Caddyfile; target=caddy ;; esac
   [ ! -s "$HOME/agsbx/$cfg" ] || kctl restart "$target" || res_failed=1
 done
 # HTTPS 订阅验证依赖上面的 TLS 内核就绪；订阅收尾只校验已有证书，不调用证书申请函数。
@@ -14705,9 +15362,9 @@ action="$1"; target="${2:-all}"
 case "$target" in
   all)
     lifecycle_failed=0
-    if [ "$action" = stop ]; then lifecycle_order="caddy xray sb"; else lifecycle_order="sb xray caddy"; fi
+    if [ "$action" = stop ]; then lifecycle_order="caddy sudoku xray sb"; else lifecycle_order="sb xray sudoku caddy"; fi
     for target in $lifecycle_order; do
-      case "$target" in xray) cfg=xr.json ;; sb) cfg=sb.json ;; caddy) cfg=Caddyfile ;; esac
+      case "$target" in xray) cfg=xr.json ;; sb) cfg=sb.json ;; sudoku) cfg=sudoku.json ;; caddy) cfg=Caddyfile ;; esac
       [ -s "$HOME/agsbx/$cfg" ] || continue
       kctl "$action" "$target" || lifecycle_failed=1
     done
@@ -14716,8 +15373,9 @@ case "$target" in
   xray|x)      kctl "$action" xray ;;
   sb|sing-box) kctl "$action" sb ;;
   caddy)       kctl "$action" caddy ;;
+  sudoku)      kctl "$action" sudoku ;;
   mita|mieru)  mitactl "$action" ;;
-  *)           echo "未知内核：$target（可选 xray｜sb｜caddy｜mita｜all，省略=all）"; exit 1 ;;
+  *)           echo "未知内核：$target（可选 xray｜sb｜caddy｜sudoku｜mita｜all，省略=all）"; exit 1 ;;
 esac
 exit
 fi
