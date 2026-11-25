@@ -8,7 +8,7 @@
     参数、默认值、协议归属、开关与互斥、校验、命令生成与还原及功能说明必须保持一致。
     修改 showvars、协议归属、secp、warp、rep 或 URL 生成规则时，
     同时核对 PROTOCOLS、XRAY_PROFILES、FIELDS、collect、savedCommandPlan 和 validate。
-    GUI 版本：v1.4 (20261124)。XHTTP_DEFAULTS_VERSION 与 BUILD.presetVersion 仅在默认参数变化时更新。
+    GUI 版本：v1.5 (20261125)。XHTTP_DEFAULTS_VERSION 与 BUILD.presetVersion 仅在默认参数变化时更新。
     发布前须核对配套脚本是否已同步到 GitHub main；存在未发布接口变更时 remoteAligned 保持 false。
     无外部资源、请求、遥测或自动持久化。
     页面只生成文本，不执行命令。选择“对照脚本”时只读取用户明确选择的文件。
@@ -1355,7 +1355,7 @@
   <header class="masthead">
     <div class="brand"><div class="brand-mark" aria-hidden="true"><svg class="brand-mark-gpt" viewBox="0 0 32 32" focusable="false"><g fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M14 12.54H20.2A3.81 3.81 0 1 0 20.2 4.92H11.8"/><path d="M14 12.54H20.2A3.81 3.81 0 1 0 20.2 4.92H11.8" transform="rotate(60 16 16)"/><path d="M14 12.54H20.2A3.81 3.81 0 1 0 20.2 4.92H11.8" transform="rotate(120 16 16)"/><path d="M14 12.54H20.2A3.81 3.81 0 1 0 20.2 4.92H11.8" transform="rotate(180 16 16)"/><path d="M14 12.54H20.2A3.81 3.81 0 1 0 20.2 4.92H11.8" transform="rotate(240 16 16)"/><path d="M14 12.54H20.2A3.81 3.81 0 1 0 20.2 4.92H11.8" transform="rotate(300 16 16)"/></g></svg><svg class="brand-mark-claude" viewBox="0 0 32 32" focusable="false"><path d="M16 3.5v9M16 19.5v9M3.5 16h9M19.5 16h9M7.2 7.2l6.1 6.1M18.7 18.7l6.1 6.1M24.8 7.2l-6.1 6.1M13.3 18.7l-6.1 6.1" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></svg><svg class="brand-mark-gemini" viewBox="0 0 32 32" focusable="false"><defs><clipPath id="gemini-star-clip"><path d="M16 2C16 10 22 16 30 16C22 16 16 22 16 30C16 22 10 16 2 16C10 16 16 10 16 2Z"/></clipPath><radialGradient id="g-spark-red" cx="15" cy="3" r="16" gradientUnits="userSpaceOnUse"><stop offset="0%" stop-color="#ea4335"/><stop offset="40%" stop-color="#ea4335"/><stop offset="100%" stop-color="#ea4335" stop-opacity="0"/></radialGradient><radialGradient id="g-spark-yellow" cx="3" cy="17" r="16" gradientUnits="userSpaceOnUse"><stop offset="0%" stop-color="#fbbc04"/><stop offset="42%" stop-color="#fbbc04"/><stop offset="100%" stop-color="#fbbc04" stop-opacity="0"/></radialGradient><radialGradient id="g-spark-green" cx="17" cy="29" r="16" gradientUnits="userSpaceOnUse"><stop offset="0%" stop-color="#34a853"/><stop offset="42%" stop-color="#34a853"/><stop offset="100%" stop-color="#34a853" stop-opacity="0"/></radialGradient><radialGradient id="g-spark-blue" cx="29" cy="15" r="16" gradientUnits="userSpaceOnUse"><stop offset="0%" stop-color="#4285f4"/><stop offset="44%" stop-color="#4285f4"/><stop offset="100%" stop-color="#4285f4" stop-opacity="0"/></radialGradient></defs><g class="gemini-star-fill" clip-path="url(#gemini-star-clip)"><rect width="32" height="32" fill="#4285f4"/><rect width="32" height="32" fill="url(#g-spark-red)"/><rect width="32" height="32" fill="url(#g-spark-yellow)"/><rect width="32" height="32" fill="url(#g-spark-green)"/><rect width="32" height="32" fill="url(#g-spark-blue)"/></g><path class="gemini-star-hc" fill="none" d="M16 2C16 10 22 16 30 16C22 16 16 22 16 30C16 22 10 16 2 16C10 16 16 10 16 2Z"/></svg></div><div><div class="eyebrow">AIRGOSBX / WORKBENCH</div><h1>配置工作台</h1><p class="meta">配置连接，生成 VPS 命令。</p></div></div>
     <div class="tools">
-      <span id="build-version" class="meta">v1.4 (20261124) · 离线单文件</span>
+      <span id="build-version" class="meta">v1.5 (20261125) · 离线单文件</span>
       <div class="ui-preferences">
         <label class="ui-preference" for="ui-style"><span>风格</span><select id="ui-style" autocomplete="off"><option value="claude" data-ui-raw>Claude</option><option value="gpt" data-ui-raw>GPT</option><option value="gemini" data-ui-raw>Gemini</option></select></label>
         <label class="ui-preference" for="ui-language"><span>语言</span><select id="ui-language" autocomplete="off"><option value="zh" data-ui-raw>简体中文</option><option value="en" data-ui-raw>English</option></select></label>
@@ -1377,7 +1377,7 @@
       <div class="flow-arrow" aria-hidden="true"></div>
       <div class="flow-cell"><h3 class="flow-label"><span class="flow-index">03</span> 出站</h3><p class="flow-subtitle">VPS 访问目标</p><div class="chips"><span id="flow-out-direct" class="chip">直接访问目标</span><span id="flow-warp" class="chip">Cloudflare WARP</span><span id="flow-secondary" class="chip">B 服务器</span></div><p id="egress-detail" class="flow-detail"></p></div>
     </div>
-    <p class="flow-caption">Cloudflared 建立隧道，Caddy 承载 Naive，Mita 承载 Mieru，Sudoku 承载官方独立协议。入口与出站可独立配置。</p>
+    <p class="flow-caption">Cloudflared 建立隧道，Caddy 承载 Naive，Mita 承载 Mieru，Sudoku 承载官方独立协议，TrustTunnel 承载 AdGuard 官方独立服务端。入口与出站可独立配置。</p>
   </section>
 
   <form id="builder" autocomplete="off" novalidate>
@@ -1423,8 +1423,8 @@
         <summary class="reference-heading"><h2><span>维护对照</span><span class="reference-toggle" aria-hidden="true"><span class="reference-open">展开</span><span class="reference-close">收起</span><span class="tree-chevron"></span></span></h2></summary>
         <div class="reference-body">
           <p class="section-description">脚本与 GUI 的维护对照</p><p class="intro">页面以当前工作区脚本为依据；HTML 不会自动读取磁盘或远端代码。</p>
-          <div class="table-wrap"><table class="help-table"><thead><tr><th>功能位置</th><th>脚本入口</th><th>GUI 同步点</th></tr></thead><tbody><tr><td>协议及所属核心</td><td><code>showvars / ins</code></td><td>协议清单、能力标记、核心推导</td></tr><tr><td>Xray 扩展</td><td><code>各入口的 extra / mode / fm 变量</code></td><td>按协议默认方案、FM 组合与独立调参</td></tr><tr><td>Sudoku 独立协议</td><td><code>sudokupt / sudokukey / sudokuaead / sudokutable / sudokuct / sudokupad / sudokupure / sudokumask / sudokupath / sudokumux / sudokufb</code></td><td>独立核心分组、高级参数折叠、离线位表生成、ws 与 CDN/Argo 联动、命令往返</td></tr><tr><td>XDRIVE 云存储</td><td><code>xdrive / xdriveservice / xdrivefolder / xdriveauthfile / xdriveclientfolder</code></td><td>后端与路径校验、条件字段、专用 JSON、命令往返</td></tr><tr><td>CDN / Argo</td><td><code>cdnym / argo / agn / agk</code></td><td>接入条件、端口、隧道绑定</td></tr><tr><td>出站</td><td><code>warp / secpN / securlN / secuotN</code></td><td>B1–B16 的目标、独立范围及 WARP 出站互斥；兼容旧版单 B</td></tr><tr><td>订阅</td><td><code>sub / subauth / subpt / subid / subpass / res</code></td><td>独立密码保护开关、路径 Token、手填或 VPS 独立随机密码、已有保护模式恢复</td></tr><tr><td>命令生成与还原</td><td><code>环境变量与管理命令</code></td><td>字段映射、引用转义、旧版通用参数继承</td></tr><tr><td>生命周期</td><td><code>rep / del / upx / ups / upsu …</code></td><td>操作清单、参数过滤、影响说明</td></tr></tbody></table></div>
-          <p class="note">覆盖范围：常用部署、证书、订阅、出站和管理入口。XDNS / XICMP 使用 Xray ≥26.7.28 的专用配置；XDRIVE 要求两端核心包含 2026-09-19 合并的官方实现，v26.9.9 不支持。这三类入口使用完整客户端 JSON，不加入通用订阅。XDRIVE 不监听公网端口，Google Drive 模式的 JSON 含云盘凭据，脚本仅提示路径。目录中标为不可配置的核心字段未接入脚本，内部证书续期和跳跃规则恢复命令由脚本管理。端口占用、服务归属、证书和真实连通性须在 VPS 检查。</p><p class="note">对照功能只提取你选择的脚本中的变量声明与帮助条目，不执行、不上传。它能提示变量清单差异，不能代替调用逻辑审查。</p><div class="tools" style="margin-top:14px"><label class="file-label">选择 airgosbx.sh 对照<input id="source-file" class="visually-hidden" type="file" accept=".sh,text/plain"></label><button id="clear-compare" type="button" class="text-button">清除对照</button></div><p id="sync-result" class="sync-result" role="status">GUI 版本：v1.4 (20261124)；XHTTP 默认参数版本：V26.09.08.1。尚未读取其他文件。</p>
+          <div class="table-wrap"><table class="help-table"><thead><tr><th>功能位置</th><th>脚本入口</th><th>GUI 同步点</th></tr></thead><tbody><tr><td>协议及所属核心</td><td><code>showvars / ins</code></td><td>协议清单、能力标记、核心推导</td></tr><tr><td>Xray 扩展</td><td><code>各入口的 extra / mode / fm 变量</code></td><td>按协议默认方案、FM 组合与独立调参</td></tr><tr><td>Sudoku 独立协议</td><td><code>sudokupt / sudokukey / sudokuaead / sudokutable / sudokuct / sudokupad / sudokupure / sudokumask / sudokupath / sudokumux / sudokufb</code></td><td>独立核心分组、高级参数折叠、离线位表生成、ws 与 CDN/Argo 联动、命令往返</td></tr><tr><td>TrustTunnel 独立协议</td><td><code>ttpt / ttuser / ttpass / tttrans / ttup / ttauthfail / ttcrmode / ttcrval / ttcidr / ttfb / ttfbpath / ttcatchall / ttantidpi / ttprivate / ttipv6 / ttembedcert / ttcc</code></td><td>独立核心分组、H2/H3 传输栈联动、防探测状态码、client_random 与反代回落、自签 DER 开关、命令往返</td></tr><tr><td>XDRIVE 云存储</td><td><code>xdrive / xdriveservice / xdrivefolder / xdriveauthfile / xdriveclientfolder</code></td><td>后端与路径校验、条件字段、专用 JSON、命令往返</td></tr><tr><td>CDN / Argo</td><td><code>cdnym / argo / agn / agk</code></td><td>接入条件、端口、隧道绑定</td></tr><tr><td>出站</td><td><code>warp / secpN / securlN / secuotN</code></td><td>B1–B16 的目标、独立范围及 WARP 出站互斥；兼容旧版单 B</td></tr><tr><td>订阅</td><td><code>sub / subauth / subpt / subid / subpass / res</code></td><td>独立密码保护开关、路径 Token、手填或 VPS 独立随机密码、已有保护模式恢复</td></tr><tr><td>命令生成与还原</td><td><code>环境变量与管理命令</code></td><td>字段映射、引用转义、旧版通用参数继承</td></tr><tr><td>生命周期</td><td><code>rep / del / upx / ups / upsu / uptt …</code></td><td>操作清单、参数过滤、影响说明</td></tr></tbody></table></div>
+          <p class="note">覆盖范围：常用部署、证书、订阅、出站和管理入口。XDNS / XICMP 使用 Xray ≥26.7.28 的专用配置；XDRIVE 要求两端核心包含 2026-09-19 合并的官方实现，v26.9.9 不支持。这三类入口使用完整客户端 JSON，不加入通用订阅。XDRIVE 不监听公网端口，Google Drive 模式的 JSON 含云盘凭据，脚本仅提示路径。目录中标为不可配置的核心字段未接入脚本，内部证书续期和跳跃规则恢复命令由脚本管理。端口占用、服务归属、证书和真实连通性须在 VPS 检查。</p><p class="note">对照功能只提取你选择的脚本中的变量声明与帮助条目，不执行、不上传。它能提示变量清单差异，不能代替调用逻辑审查。</p><div class="tools" style="margin-top:14px"><label class="file-label">选择 airgosbx.sh 对照<input id="source-file" class="visually-hidden" type="file" accept=".sh,text/plain"></label><button id="clear-compare" type="button" class="text-button">清除对照</button></div><p id="sync-result" class="sync-result" role="status">GUI 版本：v1.5 (20261125)；XHTTP 默认参数版本：V26.09.08.1。尚未读取其他文件。</p>
         </div>
       </details>
     </main>
@@ -1464,13 +1464,13 @@
 <script>
 /* 配置清单集中在这里，避免表单、架构图与命令生成各自维护一套名称。 */
 'use strict';
-const BUILD = {version:'v1.4 (20261124)',presetVersion:'V26.09.08.1',remoteAligned:true, source:'https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/main/airgosbx.sh', schema:'通用字段基线：Xray v26.3.27；XDNS/XICMP：v26.7.28；XDRIVE：须包含 2026-09-19 合并的官方实现，v26.9.9 不支持'};
+const BUILD = {version:'v1.5 (20261125)',presetVersion:'V26.09.08.1',remoteAligned:true, source:'https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/main/airgosbx.sh', schema:'通用字段基线：Xray v26.3.27；XDNS/XICMP：v26.7.28；XDRIVE：须包含 2026-09-19 合并的官方实现，v26.9.9 不支持'};
 const OPERATIONS = [
   ['cert','维护已有证书（cert）'],
-  ['install','安装 / 创建节点'],['rep','重建协议配置（rep）'],['restore-ip','恢复原 IP 策略'],['list','显示节点（list）'],['status','资源与流量（status）'],['update','更新脚本（update）'],['res','重启代理与隧道（res）'],['start','启动核心（start）'],['stop','停止核心（stop）'],['restart','重启核心（restart）'],['reload','重载配置（reload）'],['upx','升级 Xray（upx）'],['ups','升级 Sing-box（ups）'],['upsu','升级 Sudoku（upsu）'],['downx','降级 Xray（downx）'],['downs','降级 Sing-box（downs）'],['downsu','降级 Sudoku（downsu）'],['del','卸载（del）'],['vars','查看变量（vars）'],['cmds','查看命令（cmds）'],['help','完整帮助（help）']
+  ['install','安装 / 创建节点'],['rep','重建协议配置（rep）'],['restore-ip','恢复原 IP 策略'],['list','显示节点（list）'],['status','资源与流量（status）'],['update','更新脚本（update）'],['res','重启代理与隧道（res）'],['start','启动核心（start）'],['stop','停止核心（stop）'],['restart','重启核心（restart）'],['reload','重载配置（reload）'],['upx','升级 Xray（upx）'],['ups','升级 Sing-box（ups）'],['upsu','升级 Sudoku（upsu）'],['uptt','升级 TrustTunnel（uptt）'],['downx','降级 Xray（downx）'],['downs','降级 Sing-box（downs）'],['downsu','降级 Sudoku（downsu）'],['downtt','降级 TrustTunnel（downtt）'],['del','卸载（del）'],['vars','查看变量（vars）'],['cmds','查看命令（cmds）'],['help','完整帮助（help）']
 ];
 const CORE_INFO = [
-  ['xray','Xray-core','VLESS、XHTTP、REALITY 与兼容协议'],['singbox','Sing-box','Hysteria2、TUIC、AnyTLS 等'],['caddy','Caddy','NaiveProxy 与证书托管'],['sudoku','Sudoku','SUDOKU-ASCII 官方独立服务端（区别于 Xray FM）'],['mita','Mita','Mieru 独立系统服务'],['auto','Auto','VMess / SOCKS 由启用的固定核心决定']
+  ['xray','Xray-core','VLESS、XHTTP、REALITY 与兼容协议'],['singbox','Sing-box','Hysteria2、TUIC、AnyTLS 等'],['caddy','Caddy','NaiveProxy 与证书托管'],['sudoku','Sudoku','SUDOKU-ASCII 官方独立服务端（区别于 Xray FM）'],['trusttunnel','TrustTunnel','AdGuard 官方独立服务端（HTTP/2 & HTTP/3）'],['mita','Mita','Mieru 独立系统服务'],['auto','Auto','VMess / SOCKS 由启用的固定核心决定']
 ];
 const PROTOCOLS = [
   {id:'vlpt',name:'vless + tcp/raw + Reality + vision',core:'xray',access:['direct'],sockets:['tcp'],description:'基础直连；默认无 FinalMask。',fields:['vlfm']},
@@ -1492,6 +1492,7 @@ const PROTOCOLS = [
   {id:'sopt',name:'socks5',core:'auto',access:['direct'],sockets:['tcp','udp'],description:'SOCKS5 入口，本身不加密，可直接访问目标或选入 secp 经 B 出站。仅终端输出完整 URL，不加入订阅或私有掩码。'},
   {id:'naive',name:'NaiveProxy (HTTPS;HTTP2;HTTP3)',core:'caddy',access:['direct'],sockets:['tcp','udp'],fixed:443,description:'Caddy 独立服务，需真实域名；secp 使用 Sing-box 转交。聚合订阅含 Shadowrocket 的 http2/http3 链接，也可通过网页查看入口复制；不写入 Mihomo YAML。',fields:['naive','naiveuser','naivepass','naivebuild','naivesite']},
   {id:'sudokupt',name:'Sudoku (+CDN) (+Argo)',core:'sudoku',access:['direct','cdn','argo'],sockets:['tcp'],description:'SUDOKU-ASCII 官方独立服务端（区别于 Xray FinalMask）；仅直连出站，不支持 WARP 与二级代理。UDP 经 UoT 承载，ws 模式支持 CDN 与 Argo；导出 Shadowrocket 原生 sudoku:// 与 Mihomo YAML。',fields:['sudokumask','sudokupure','sudokuaead','sudokutable','sudokuct','sudokupad','sudokupath','sudokumux','sudokufb','sudokukey']},
+  {id:'ttpt',name:'TrustTunnel (HTTP/2;HTTP/3)',core:'trusttunnel',access:['direct'],sockets:['tcp','udp'],description:'AdGuard 官方开源 TrustTunnel 独立服务端；仅直连出站，不支持 WARP 与二级代理。复用共享 TLS 证书（证书续期 SIGHUP 热重载），默认隐藏 407 代理特征；导出官方 tt:// 深链（兼容 Shadowrocket 与官方客户端）与 Mihomo YAML。',fields:['tttrans','ttup','ttuser','ttpass','ttauthfail','ttcrmode','ttcrval','ttcidr','ttfb','ttfbpath','ttcatchall','ttantidpi','ttprivate','ttipv6','ttembedcert','ttcc']},
   {id:'mieru',name:'Mieru',core:'mita',access:['direct'],sockets:['tcp'],portKey:'mierupt',description:'独立 Mita 服务，仅适用脚本支持的 systemd + deb/rpm 平台。二级出站需单独选中，最低 Mita 3.37.0，由 VPS 校验版本与能力。导出 Mihomo YAML 与原生链接，均保留 Traffic Pattern。',fields:['mierutrans','mieruuser','mierupass']}
 ];
 const WARP_RULES = [
@@ -1692,7 +1693,7 @@ const FIELDS = {
   scriptSource:{label:'执行入口',options:[['repo','GitHub main 分支'],['local','VPS 本地 airgosbx.sh'],['custom','指定版本或 URL'],['shortcut','已安装的 agsbx 命令']],value:BUILD.remoteAligned?'repo':'local'},
   scriptPath:{label:'VPS 上的脚本路径',value:'./airgosbx.sh',help:'这是 VPS 上的路径，不是 Mac 路径；请先把对应脚本放到 VPS。'},
   scriptURL:{label:'提交哈希 / Tag / 脚本 URL',placeholder:'例如 462bdac、v1.3.1 或完整 https://...',help:'支持 Git 提交哈希、Tag 版本号或完整 HTTPS URL；页面本身不访问该地址。'},
-  target:{label:'目标核心',options:[['all','全部（不含 Mita）'],['xray','Xray'],['sb','Sing-box'],['caddy','Caddy'],['sudoku','Sudoku'],['mita','Mita / Mieru']],value:'all'},
+  target:{label:'目标核心',options:[['all','全部（不含 Mita）'],['xray','Xray'],['sb','Sing-box'],['caddy','Caddy'],['sudoku','Sudoku'],['tt','TrustTunnel'],['mita','Mita / Mieru']],value:'all'},
   version:{label:'目标版本',placeholder:'留空取最新；降级时必填',help:'填写形如 v26.3.27 或 1.12.0 的版本号。'},
   ippz:{label:'节点地址优先使用',options:[['','自动'],['4','IPv4'],['6','IPv6']],help:'只影响节点输出地址，不等同于系统 IP 栈策略。'},
   cdnEnabled:{label:'Cloudflare CDN 回源',type:'checkbox'},
@@ -1761,6 +1762,22 @@ const FIELDS = {
   sudokumux:{label:'连接复用（Muxing）',options:[['off','off · 关闭（默认）'],['auto','auto · 仅复用 HTTPMask 连接'],['on','on · 开启多路复用（Shadowrocket 启用 mux=1）']],value:'off',help:'高并发短连接可按需开启 on；常规使用保持 off 更稳妥。'},
   sudokufb:{label:'防主动探测回落',side:'server',placeholder:'留空＝silent 静默丢弃；可填 127.0.0.1:80',help:'留空或填 silent 时静默丢弃非法探测；填写 host:port 或 [IPv6]:port 时启用 fallback 转发至伪装站。'},
   sudokukey:{label:'自定义共享密钥',type:'password',maxLength:128,placeholder:'留空由 VPS 自动 -keygen 生成 Ed25519 密钥对',help:'最多 128 字符，不含冒号 : 或 @。留空时 VPS 仅保存 Master Public Key，并导出派生客户端私钥，更安全。'},
+  tttrans:{label:'服务端监听协议栈',side:'server',options:[['all','all · HTTP/1.1 + HTTP/2 (TCP) & HTTP/3 (UDP) 同端口（默认）'],['tcp','tcp · 仅 HTTP/1.1 + HTTP/2（纯 TCP，不开放 UDP）'],['h2','h2 · 仅 HTTP/2（纯 TCP）'],['quic','quic · 仅 HTTP/3 / QUIC（纯 UDP）']],value:'all',help:'控制 vpn.toml 的 [listen_protocols]；默认 all 同时兼容 TCP H1/H2 与 UDP H3。'},
+  ttup:{label:'导出客户端传输偏好',side:'client',options:[['both','both · 同时导出 HTTP/2 与 HTTP/3 节点（默认）'],['http2','http2 · 仅导出 HTTP/2（TCP）节点'],['http3','http3 · 仅导出 HTTP/3（QUIC/UDP）节点']],value:'both',help:'决定写入 tt:// 深链与 Mihomo YAML 的协议类型；仅 TCP 或仅 UDP 监听时自动受限于对应传输。'},
+  ttuser:{label:'TrustTunnel 用户名',maxLength:64,placeholder:'留空由 VPS 自动生成',help:'最多 64 字符，不能包含冒号 :；官方服务端要求非空用户名与密码配对。'},
+  ttpass:{label:'TrustTunnel 密码',type:'password',maxLength:128,placeholder:'留空由 VPS 自动生成',help:'最多 128 字符（对齐 Shadowrocket 密码长度上限）。'},
+  ttauthfail:{label:'未认证探测状态码',side:'server',options:[['404','404 Not Found（默认，隐藏 407 代理特征）'],['403','403 Forbidden'],['405','405 Method Not Allowed'],['407','407 Proxy Authentication Required（原生代理特征）']],value:'404',help:'同时写入 auth_failure_status_code 与 non_connect_auth_failure_status_code；推荐保持 404，对代理客户端零影响。'},
+  ttcrmode:{label:'TLS client_random 规则',options:[['off','off · 关闭（默认，兼容 Shadowrocket / Mihomo / 官方客户端）'],['authkey','authkey · 动态密钥认证（HKDF-SHA256 + AES-128，抗探测最强）'],['prefix','prefix · 静态十六进制前缀/掩码匹配']],value:'off',help:'开启后会在 rules.toml 末尾写入默认 deny 规则；需客户端支持对应字段（官方客户端原生支持，Shadowrocket 当前无此项）。'},
+  ttcrval:{label:'client_random 密钥 / 前缀',type:'password',maxLength:129,placeholder:'留空由 VPS 自动生成随机十六进制值',help:'authkey 须为 32–128 位偶数十六进制；prefix 须为 2–64 位偶数十六进制或 prefix/mask。'},
+  ttcidr:{label:'来源 IP 白名单（CIDR）',side:'server',placeholder:'留空不限制，例：1.2.3.0/24,2001:db8::/32',help:'逗号分隔最多 16 条 IPv4/IPv6 CIDR；填写后会写入 rules.toml 白名单并默认拒绝其余来源。'},
+  ttfb:{label:'反代伪装后端地址',side:'server',placeholder:'留空不启用；可填 127.0.0.1:8080',help:'对应 vpn.toml 的 [reverse_proxy].server_address；仅在 VPS 本机或上游已有可达 HTTP 站点时填写。'},
+  ttfbpath:{label:'反代路径掩码（path_mask）',side:'server',maxLength:129,placeholder:'留空全路径反代，例如 /api',help:'仅配置 ttfb 时生效，须为 1–128 位安全路径字符（自动补前导 /）。'},
+  ttcatchall:{label:'未知 SNI 回落到反代后端',side:'server',options:[['n','关闭（默认）'],['y','开启（写入 catch_all_sni_host）']],value:'n',help:'仅配置 ttfb 时生效；开启后未命中主域名的未知 SNI 探测会透明转发到反代后端。'},
+  ttantidpi:{label:'深链标记 anti_dpi',side:'client',options:[['n','关闭（默认）'],['y','开启（在 tt:// 中置位 0x0A）']],value:'n',help:'写入官方 tt:// 深链的 anti_dpi 字段，供官方客户端启用抗 DPI 策略。'},
+  ttprivate:{label:'允许隧道访问服务端内网',side:'server',options:[['n','禁止（默认，防 SSRF 探测内网）'],['y','允许（allow_private_network_connections=true）']],value:'n',help:'默认禁止经隧道访问 VPS 回环与私网地址；有内网访问需求时再手动开启。'},
+  ttipv6:{label:'服务端 IPv6 出口能力',options:[['auto','auto · 按 VPS 实测自动判定（默认）'],['y','开启（ipv6_available=true）'],['n','关闭（ipv6_available=false）']],value:'auto',help:'同时写入 vpn.toml 的 ipv6_available 与深链 0x04（has_ipv6）。'},
+  ttembedcert:{label:'自签证书内嵌至 tt:// 深链',side:'client',options:[['n','关闭 · 保持短链（默认，自签时终端输出 SHA256 指纹）'],['y','开启 · 内嵌 DER 证书字节（0x08，官方客户端免手填指纹）']],value:'n',help:'仅自签证书场景生效；公信 CA 证书按官方规范不内嵌。开启后链接会增加约 1KB+。'},
+  ttcc:{label:'Mihomo QUIC 拥塞控制',side:'client',options:[['bbr','bbr（默认）'],['cubic','cubic'],['reno','reno']],value:'bbr',help:'仅写入 Mihomo YAML 的 HTTP/3 节点 congestion-controller 字段。'},
   warpEnabled:{label:'经 Cloudflare WARP 出站',type:'checkbox'},
   warp:{label:'WARP 出站作用范围',options:WARP_RULES,value:'sx',help:'s 表示 Sing-box，x 表示 Xray；4/6 选择目标 IP 族。同一入站协议的流量已配置经所属核心的 WARP 出站时，须先取消该核心的 WARP 出站才能选 B，包括仅 IPv4/IPv6 的规则。'},
   secondaryEnabled:{label:'配置多个二级代理出站',type:'checkbox',help:'每组独立填写 B 的 URL，并选择 A 接受客户端连接的入站。同一入站只能属于一个 B，且不能同时经所属核心的 WARP 出站。'},
@@ -1822,7 +1839,7 @@ for(let id=1;id<=SECONDARY_LIMIT;id++){
   FIELDS['secuot'+id]={...FIELDS.secuot};
   SECONDARY_KEYS.push('secp'+id,'securl'+id,'secuot'+id);
 }
-const PRIVATE_KEYS = new Set(['agk','uuid','naivepass','mierupass','sudokukey','securl','CF_Token','CF_Key','zerossl_eab_kid','zerossl_eab_hmac','sslcom_eab_kid','sslcom_eab_hmac','obfs_pass','subid','subpass','fmpass','fmheader',...SECONDARY_KEYS.filter(key=>key.startsWith('securl'))]);
+const PRIVATE_KEYS = new Set(['agk','uuid','naivepass','mierupass','sudokukey','ttpass','ttcrval','securl','CF_Token','CF_Key','zerossl_eab_kid','zerossl_eab_hmac','sslcom_eab_kid','sslcom_eab_hmac','obfs_pass','subid','subpass','fmpass','fmheader',...SECONDARY_KEYS.filter(key=>key.startsWith('securl'))]);
 PRIVATE_KEYS.add('xheaders64');
 for(const profile of Object.values(XRAY_PROFILES))for(const base of profile.keys)if(['fmpass','fmheader','xheaders64'].includes(base))PRIVATE_KEYS.add(profile.prefix+'_'+base);
 const UI_ONLY = new Set(['operation','scriptSource','scriptPath','scriptURL','target','version','cdnEnabled','argoEnabled','argoKind','warpEnabled','secondaryEnabled','certMode','acmeMethod']);
@@ -1843,6 +1860,7 @@ function extensionInfo(key){
 
 function fieldDefault(key){
   const spec=FIELDS[key];
+  if(key==='ttup')return ttDefaultUp(value('tttrans'));
   const entry=Object.values(XRAY_PROFILES).find(profile=>profile.mode===key);
   if(entry?.extra&&value(entry.extra)==='y')return extensionPreset(entry.extra).mode;
   return spec?.value??'';
@@ -1850,6 +1868,36 @@ function fieldDefault(key){
 const SUDOKU_PRIMARY_KEYS=['sudokumask','sudokupure','sudokuaead'];
 const SUDOKU_ADVANCED_KEYS=['sudokutable','sudokuct','sudokupad','sudokupath','sudokumux','sudokufb','sudokukey'];
 const SUDOKU_ALL_KEYS=[...SUDOKU_PRIMARY_KEYS,...SUDOKU_ADVANCED_KEYS];
+const TT_PRIMARY_KEYS=['tttrans','ttup','ttuser','ttpass'];
+const TT_ADVANCED_KEYS=['ttauthfail','ttcrmode','ttcrval','ttcidr','ttfb','ttfbpath','ttcatchall','ttantidpi','ttprivate','ttipv6','ttembedcert','ttcc'];
+const TT_ALL_KEYS=[...TT_PRIMARY_KEYS,...TT_ADVANCED_KEYS];
+function ttDefaultUp(trans){return trans==='tcp'||trans==='h2'?'http2':trans==='quic'?'http3':'both';}
+function ttValidCidr(raw){
+  const idx=raw.lastIndexOf('/');if(idx<=0||idx===raw.length-1)return false;
+  const ip=raw.slice(0,idx),p=raw.slice(idx+1);if(!/^\d{1,3}$/.test(p))return false;
+  const n=Number(p);
+  if(isIPv4(ip))return n>=0&&n<=32;
+  if(isIPv6(ip))return n>=0&&n<=128;
+  return false;
+}
+function ttValidClientRandom(mode,raw){
+  const v=raw.replace(/\s+/g,'').toLowerCase();
+  if(mode==='authkey')return /^[0-9a-f]{32,128}$/.test(v)&&v.length%2===0;
+  if(mode==='prefix'){
+    if(v.includes('/')){
+      const parts=v.split('/');
+      return parts.length===2&&parts.every(part=>/^[0-9a-f]{2,64}$/.test(part)&&part.length%2===0);
+    }
+    return /^[0-9a-f]{2,64}$/.test(v)&&v.length%2===0;
+  }
+  return false;
+}
+function generateRandomHex(bytes){
+  const arr=new Uint8Array(bytes);
+  if(window.crypto&&crypto.getRandomValues)crypto.getRandomValues(arr);
+  else for(let i=0;i<bytes;i++)arr[i]=Math.floor(Math.random()*256);
+  return [...arr].map(b=>b.toString(16).padStart(2,'0')).join('');
+}
 function validSudokuCustomTable(item){
   if(!/^[xpv]{8}$/.test(item))return false;
   let x=0,p=0,v=0;for(const ch of item){if(ch==='x')x++;else if(ch==='p')p++;else if(ch==='v')v++;}
@@ -1878,6 +1926,10 @@ function comparableFieldValue(key,raw){
   if(key==='sudokuct')return String(raw).replace(/\s+/g,'').toLowerCase();
   if(key==='sudokupath')return String(raw).trim().replace(/^\/+/,'');
   if(key==='sudokufb'){const t=String(raw).trim();return /^(silent|none)$/i.test(t)?'':t;}
+  if(key==='ttcrval')return String(raw).replace(/\s+/g,'').toLowerCase();
+  if(key==='ttcidr')return String(raw).replace(/\s+/g,'');
+  if(key==='ttfb'){const t=String(raw).trim();return /^(off|none)$/i.test(t)?'':t;}
+  if(key==='ttfbpath'){const t=String(raw).trim();return t?'/'+t.replace(/^\/+/,''):'';}
   return spec?.type==='headers'?String(raw).replace(/\r\n/g,'\n').trim():kind?String(raw).trim():String(raw);
 }
 function isDefaultField(key){return comparableFieldValue(key,value(key))===comparableFieldValue(key,fieldDefault(key));}
@@ -2308,6 +2360,7 @@ function makeField(key){
   if(spec.type==='checkbox'){title.id='field-label-'+key;input.setAttribute('aria-labelledby',title.id);input.checked=Boolean(spec.value);wrap.append(input,title);}else{input.value=spec.value??'';wrap.append(title,input);}
   if(spec.help){const help=node('small','',spec.help);help.id='help-'+key;input.setAttribute('aria-describedby',help.id);wrap.append(help);}
   if(key==='sudokuct'){const tools=node('div','tools');const gen=node('button','small-button','随机生成 2 组位表');gen.type='button';gen.id='sudoku-gen-ct';gen.dataset.sudokuGenCt='true';const clear=node('button','small-button','清空（用内置表）');clear.type='button';clear.id='sudoku-clear-ct';clear.dataset.sudokuClearCt='true';tools.append(gen,clear);wrap.append(tools);}
+  if(key==='ttcrval'){const tools=node('div','tools');const gen=node('button','small-button','随机生成十六进制值');gen.type='button';gen.id='tt-gen-cr';gen.dataset.ttGenCr='true';const clear=node('button','small-button','清空（交由 VPS 生成）');clear.type='button';clear.id='tt-clear-cr';clear.dataset.ttClearCr='true';tools.append(gen,clear);wrap.append(tools);}
   if(key==='scriptURL'){const preview=node('small');preview.id='script-url-preview';preview.hidden=true;preview.setAttribute('role','status');input.setAttribute('aria-describedby',(input.getAttribute('aria-describedby')||'')+' '+preview.id);wrap.append(preview);}
   if(/^securl\d+$/.test(key)){const summary=node('small');summary.id='secondary-summary-'+key.slice(6);summary.hidden=true;summary.setAttribute('role','status');input.setAttribute('aria-describedby',(input.getAttribute('aria-describedby')||'')+' '+summary.id);wrap.append(summary);}
   if(spec.extra){
@@ -2342,6 +2395,7 @@ function secondaryWarpConflict(p,protocols,enabled=value('warpEnabled'),rule=val
 }
 function secondaryUnavailableReason(group,p,protocols){
   if(p.core==='sudoku')return 'Sudoku 仅支持直连出站';
+  if(p.core==='trusttunnel')return 'TrustTunnel 仅支持直连出站';
   if(secondaryWarpConflict(p,protocols))return '先取消此核心的 WARP 出站';
   const owner=secondaryGroups.find(item=>item.id!==group.id&&item.selection.has(p.id));
   return owner?'已分配 B'+owner.id:'';
@@ -2397,6 +2451,15 @@ function initialize(){
           adv.append(node('summary','','高级参数与默认策略（全部可调，默认项不写入命令）'));
           const advGrid=node('div','form-grid');
           for(const key of SUDOKU_ADVANCED_KEYS)advGrid.append(makeField(key));
+          adv.append(advGrid,node('p','extension-note','与脚本默认值一致的选项不会写入命令；任意改动都会同步输出到 VPS 命令，并支持粘贴还原。'));
+          settings.append(adv);
+        }else if(p.id==='ttpt'){
+          for(const key of TT_PRIMARY_KEYS)grid.append(makeField(key));
+          settings.append(grid);
+          const adv=node('details','extension-custom');adv.id='tt-advanced';
+          adv.append(node('summary','','高级参数与默认策略（全部可调，默认项不写入命令）'));
+          const advGrid=node('div','form-grid');
+          for(const key of TT_ADVANCED_KEYS)advGrid.append(makeField(key));
           adv.append(advGrid,node('p','extension-note','与脚本默认值一致的选项不会写入命令；任意改动都会同步输出到 VPS 命令，并支持粘贴还原。'));
           settings.append(adv);
         }else{
@@ -2550,7 +2613,7 @@ function updateVisibility(deploy,protocols){
   setFieldVisibility('scriptPath',value('scriptSource')==='local');setFieldVisibility('scriptURL',value('scriptSource')==='custom');
   $('management-fields').hidden=deploy;
   setFieldVisibility('target',['start','stop','restart','reload'].includes(value('operation')));
-  setFieldVisibility('version',['upx','ups','upsu','downx','downs','downsu'].includes(value('operation')));setFieldVisibility('ippz',value('operation')==='list');
+  setFieldVisibility('version',['upx','ups','upsu','uptt','downx','downs','downsu','downtt'].includes(value('operation')));setFieldVisibility('ippz',value('operation')==='list');
   $('cdn-fields').hidden=!value('cdnEnabled');$('argo-fields').hidden=!value('argoEnabled');
   const sudokuWs=value('sudokumask')==='ws',sudokuAscii=value('sudokutable')==='prefer_ascii';
   setFieldVisibility('sudokupath',sudokuWs||Boolean(value('sudokupath').trim()));
@@ -2559,6 +2622,25 @@ function updateVisibility(deploy,protocols){
   if($('sudoku-gen-ct'))$('sudoku-gen-ct').disabled=sudokuAscii;
   if($('sudoku-clear-ct'))$('sudoku-clear-ct').disabled=!value('sudokuct').trim();
   text('help-sudokuct',sudokuAscii?'当前 Table Type 为 prefer_ascii，自定义位表不生效（仅 entropy 方向使用）；如已填写可点击清空。':FIELDS.sudokuct.help);
+  const ttTrans=value('tttrans'),ttHasTcp=ttTrans!=='quic',ttHasQuic=ttTrans==='all'||ttTrans==='quic';
+  for(const option of $('ttup').options){
+    if(option.value==='both')option.disabled=!(ttHasTcp&&ttHasQuic);
+    else if(option.value==='http2')option.disabled=!ttHasTcp;
+    else if(option.value==='http3')option.disabled=!ttHasQuic;
+  }
+  const ttCrOn=value('ttcrmode')!=='off',ttCrVal=value('ttcrval').trim();
+  setFieldVisibility('ttcrval',ttCrOn||Boolean(ttCrVal));
+  $('ttcrval').disabled=!ttCrOn&&!ttCrVal;
+  if($('tt-gen-cr'))$('tt-gen-cr').disabled=!ttCrOn;
+  if($('tt-clear-cr'))$('tt-clear-cr').disabled=!ttCrVal;
+  $('ttcrval').placeholder=value('ttcrmode')==='authkey'?'留空自动生成 64 位十六进制密钥（32 字节）':'留空自动生成 16 位十六进制前缀（或填 hex/mask）';
+  const ttFbActive=Boolean(value('ttfb').trim()&&!/^(off|none)$/i.test(value('ttfb').trim()));
+  setFieldVisibility('ttfbpath',ttFbActive||Boolean(value('ttfbpath').trim()));
+  $('ttfbpath').disabled=!ttFbActive&&!value('ttfbpath').trim();
+  setFieldVisibility('ttcatchall',ttFbActive||value('ttcatchall')==='y');
+  $('ttcatchall').disabled=!ttFbActive&&value('ttcatchall')!=='y';
+  const ttExportsH3=ttHasQuic&&value('ttup')!=='http2';
+  $('ttcc').disabled=!ttExportsH3&&value('ttcc')==='bbr';
   for(const key of ['xdriveauthfile','xdriveclientfolder']){
     const applicable=xdriveFieldApplicable(key,value('xdriveservice'));
     setFieldVisibility(key,applicable);$(key).disabled=!applicable;
@@ -2653,7 +2735,7 @@ function updateVisibility(deploy,protocols){
       container.dataset.signature=signature;container.replaceChildren();
       for(const p of protocols){
         const item=node('span','secondary-item'),input=node('input');input.type='checkbox';input.dataset.secondary=p.id;input.dataset.secondaryGroup=String(group.id);input.setAttribute('aria-label',p.id+' 经 B'+group.id);
-        item.append(input,node('span','',p.id+' · '+(p.core==='caddy'?'Caddy':p.core==='mita'?'Mita':p.core==='sudoku'?'Sudoku':coreOf(p,protocols)==='xray'?'Xray':'Sing-box')),node('small'));container.append(item);
+        item.append(input,node('span','',p.id+' · '+(p.core==='caddy'?'Caddy':p.core==='mita'?'Mita':p.core==='sudoku'?'Sudoku':p.core==='trusttunnel'?'TrustTunnel':coreOf(p,protocols)==='xray'?'Xray':'Sing-box')),node('small'));container.append(item);
       }
       if(!protocols.length)container.append(node('span','meta','先选择支持二级代理的协议。'));
     }
@@ -2688,6 +2770,19 @@ function collect(deploy,protocols){
           else if(key==='sudokuct')out=String(out).replace(/\s+/g,'').toLowerCase();
           else if(key==='sudokupath')out=String(out).trim().replace(/^\/+/,'');
           else if(key==='sudokufb'){out=String(out).trim();if(/^(silent|none)$/i.test(out))continue;}
+          add(key,out);continue;
+        }
+        if(p.id==='ttpt'){
+          const fbOn=Boolean(value('ttfb').trim()&&!/^(off|none)$/i.test(value('ttfb').trim()));
+          if(key==='ttcrval'&&value('ttcrmode')==='off'&&!value(key).trim())continue;
+          if(key==='ttfbpath'&&!fbOn&&!value(key).trim())continue;
+          if(key==='ttcatchall'&&!fbOn&&value(key)!=='y')continue;
+          if(isDefaultField(key))continue;
+          let out=value(key);
+          if(key==='ttcrval')out=String(out).replace(/\s+/g,'').toLowerCase();
+          else if(key==='ttcidr')out=String(out).replace(/\s+/g,'');
+          else if(key==='ttfb'){out=String(out).trim();if(/^(off|none)$/i.test(out))continue;}
+          else if(key==='ttfbpath'){out=String(out).trim();out=out?'/'+out.replace(/^\/+/,''):'';}
           add(key,out);continue;
         }
         add(key,value(key));
@@ -2738,7 +2833,7 @@ function shellQuote(input){
 function commandArgs(){
   const op=value('operation');if(['install','restore-ip'].includes(op))return [];
   if(['start','stop','restart','reload'].includes(op))return [op,value('target')];
-  if(['upx','ups','upsu','downx','downs','downsu'].includes(op))return [op,...(value('version').trim()?[value('version').trim()]:[])];
+  if(['upx','ups','upsu','uptt','downx','downs','downsu','downtt'].includes(op))return [op,...(value('version').trim()?[value('version').trim()]:[])];
   return [op];
 }
 function buildCommand(pairs,mask){
@@ -2844,8 +2939,8 @@ function parseSavedCommand(raw){
     const aliases={'-h':'help','--help':'help',stats:'status',top:'status'};
     result.operation=aliases[values[0]]||values[0];
     if(!OPERATIONS.some(([id])=>id===result.operation)||['install','restore-ip'].includes(result.operation))throw new Error('命令的操作名称不在当前 GUI 支持范围内。');
-    if(['start','stop','restart','reload'].includes(result.operation)){if(values.length>2)throw new Error('核心管理命令有多余参数。');result.target=({x:'xray','sing-box':'sb',mieru:'mita'})[values[1]]||values[1]||'all';}
-    else if(['upx','ups','upsu','downx','downs','downsu'].includes(result.operation)){if(values.length>2)throw new Error('版本管理命令有多余参数。');result.version=values[1]||'';}
+    if(['start','stop','restart','reload'].includes(result.operation)){if(values.length>2)throw new Error('核心管理命令有多余参数。');result.target=({x:'xray','sing-box':'sb',mieru:'mita',trusttunnel:'tt'})[values[1]]||values[1]||'all';}
+    else if(['upx','ups','upsu','uptt','downx','downs','downsu','downtt'].includes(result.operation)){if(values.length>2)throw new Error('版本管理命令有多余参数。');result.version=values[1]||'';}
     else if(values.length>1)throw new Error('这项管理操作不接受额外位置参数。');
   }
   if(!FIELDS.target.options.some(([id])=>id===result.target))throw new Error('无法还原这个目标核心名称。');
@@ -2903,6 +2998,26 @@ function savedCommandPlan(parsed){
     if(key==='sudokuct')value=raw.replace(/\s+/g,'').toLowerCase();
     if(key==='sudokupath')value=raw.trim().replace(/^\/+/,'');
     if(key==='sudokufb'&&/^(silent|none)$/i.test(raw.trim()))value='';
+    if(['tttrans','ttcrmode','ttcc'].includes(key))value=raw.trim().toLowerCase();
+    if(key==='ttup'){
+      const low=raw.trim().toLowerCase();
+      value=low==='h2'?'http2':low==='h3'?'http3':low;
+    }
+    if(['ttcatchall','ttantidpi','ttprivate','ttembedcert'].includes(key)){
+      const low=raw.trim().toLowerCase();
+      if(['y','yes','1','true'].includes(low))value='y';
+      else if(['n','no','0','false'].includes(low))value='n';
+    }
+    if(key==='ttipv6'){
+      const low=raw.trim().toLowerCase();
+      if(low==='auto')value='auto';
+      else if(['y','yes','1','true'].includes(low))value='y';
+      else if(['n','no','0','false'].includes(low))value='n';
+    }
+    if(key==='ttcrval')value=raw.replace(/\s+/g,'').toLowerCase();
+    if(key==='ttcidr')value=raw.replace(/\s+/g,'');
+    if(key==='ttfb'&&/^(off|none)$/i.test(raw.trim()))value='';
+    if(key==='ttfbpath'){const t=raw.trim();value=t?'/'+t.replace(/^\/+/,''):'';}
     if(key==='xvcdnmode'&&['','auto'].includes(raw))value='packet-up';
     if(key==='acmeca'&&value==='interactive')value='auto';
     // 空覆盖参数继承通用值，稍后按同一优先级解析；枚举控件不能静默变成空选项。
@@ -2920,6 +3035,8 @@ function savedCommandPlan(parsed){
   if(!selected.has('xdrive')&&xdriveKeys.some(key=>pairs.has(key)))throw new Error('XDRIVE 参数需要同时设置 xdrive；未还原，避免隐藏参数丢失。');
   if(!selected.has('sudokupt')&&SUDOKU_ALL_KEYS.some(key=>pairs.has(key)))throw new Error('Sudoku 参数需要同时设置 sudokupt；未还原，避免隐藏参数丢失。');
   if(selected.has('sudokupt')&&pairs.get('argo')==='sudokupt'&&!pairs.has('sudokumask'))fields.sudokumask='ws';
+  if(!selected.has('ttpt')&&TT_ALL_KEYS.some(key=>pairs.has(key)))throw new Error('TrustTunnel 参数需要同时设置 ttpt；未还原，避免隐藏参数丢失。');
+  if(selected.has('ttpt')&&!pairs.has('ttup'))fields.ttup=ttDefaultUp(fields.tttrans);
   if(selected.has('xdrive')){
     for(const key of xdriveKeys)if(pairs.has(key)&&!xdriveFieldApplicable(key,fields.xdriveservice)){
       if(pairs.get(key)!=='')throw new Error(key+' 不适用于 '+fields.xdriveservice+' 后端；请移除不匹配参数，未改动表单。');
@@ -2979,13 +3096,14 @@ function savedCommandPlan(parsed){
       if(!validSS)throw new Error('B'+id+' 的 UoT 需要可成功解析的 SS 链接；未还原，避免隐藏选项导致配置被静默改写。');
     }
     for(const raw of pairs.get(key).replace(/\s/g,'').toLowerCase().split(',')){
-      const token=({xdnspt:'xdns',xicmppt:'xicmp',mita:'mieru'})[raw]||raw;
+      const token=({xdnspt:'xdns',xicmppt:'xicmp',mita:'mieru',tt:'ttpt',trusttunnel:'ttpt'})[raw]||raw;
       if(['xr','sb'].includes(token)){
         const matches=protocols.filter(p=>coreOf(p,protocols)===(token==='xr'?'xray':'singbox'));
         if(!matches.length)throw new Error(key+' 的核心分组没有匹配到已选协议。');
         matches.forEach(p=>selection.add(p.id));
       }else if(selected.has(token)){
         if(token==='sudokupt')throw new Error('Sudoku 官方服务端当前仅支持直连出站，不能分配到二级代理。');
+        if(token==='ttpt')throw new Error('TrustTunnel 官方服务端当前仅支持直连出站，不能分配到二级代理。');
         selection.add(token);
       }else throw new Error(key+' 包含未启用或不支持二级出站的协议。');
     }
@@ -3024,6 +3142,7 @@ function applySavedCommandPlan(plan){
   }
   for(const group of document.querySelectorAll('.core-group'))group.open=PROTOCOLS.some(p=>p.core===group.dataset.core&&plan.selected.has(p.id));
   if($('sudoku-advanced'))$('sudoku-advanced').open=plan.selected.has('sudokupt')&&SUDOKU_ADVANCED_KEYS.some(key=>!isDefaultField(key));
+  if($('tt-advanced'))$('tt-advanced').open=plan.selected.has('ttpt')&&TT_ADVANCED_KEYS.some(key=>!isDefaultField(key));
   commandMode='generate';importError=false;update();
   importMessage='已还原 '+plan.selected.size+' 个协议、'+plan.variableCount+' 个命令变量。'+(commandErrorCount?'当前组合有 '+commandErrorCount+' 项需要处理，见下方提示。':'可以查看选项、继续修改并生成命令。');
   if(plan.notes.length)importMessage+='\n'+plan.notes.join('\n');
@@ -3408,7 +3527,7 @@ function validate(deploy,protocols,pairs){
   const issues=[];const add=(severity,message,id)=>issues.push({severity,message,id});const error=(m,id)=>add('error',m,id);const warn=(m,id)=>add('warning',m,id);
   for(const [key,v] of pairs){
     if(/[\u0000-\u001F\u007F]/.test(v))error(key+' 含有控制字符，请去掉换行、制表符等。',key);
-    if(['uuid','obfs_pass','name','naiveuser','naivepass','mieruuser','mierupass','acmem','naivesite'].includes(key)&&v.length>1024)error(key+' 不能超过 1024 字符。',key);
+    if(['uuid','obfs_pass','name','naiveuser','naivepass','mieruuser','mierupass','ttuser','ttpass','acmem','naivesite'].includes(key)&&v.length>1024)error(key+' 不能超过 1024 字符。',key);
     if(key==='sslcom_eab_kid'&&v&&!/^[A-Za-z0-9_-]+$/.test(v))error('SSL.com EAB Key ID 只允许字母、数字、短横线和下划线。',key);
     if(key==='sslcom_eab_hmac'&&v&&!/^[A-Za-z0-9_=-]+$/.test(v))error('SSL.com EAB HMAC 只允许 Base64URL 字符，不接受空格。',key);
   }
@@ -3419,8 +3538,8 @@ function validate(deploy,protocols,pairs){
   if(/[\u0000-\u001F\u007F]/.test(value('scriptPath')))error('脚本来源不能包含换行或控制字符。','scriptPath');
   if(/[\u0000-\u001F\u007F]/.test(value('scriptURL')))error('脚本来源不能包含换行或控制字符。','scriptURL');
   if(!deploy){
-    if(['downx','downs','downsu'].includes(value('operation'))&&!value('version').trim())error('降级操作必须填写目标版本。','version');
-    if(['upx','ups','upsu','downx','downs','downsu'].includes(value('operation'))&&value('version')&&!/^v?\d+\.\d+\.\d+(?:[-.][A-Za-z0-9.-]+)?$/.test(value('version').trim()))error('版本号格式无效，例如 v26.3.27。','version');
+    if(['downx','downs','downsu','downtt'].includes(value('operation'))&&!value('version').trim())error('降级操作必须填写目标版本。','version');
+    if(['upx','ups','upsu','uptt','downx','downs','downsu','downtt'].includes(value('operation'))&&value('version')&&!/^v?\d+\.\d+\.\d+(?:[-.][A-Za-z0-9.-]+)?$/.test(value('version').trim()))error('版本号格式无效，例如 v26.3.27。','version');
     if(value('operation')==='del')warn('这条命令在 VPS 执行后会卸载组件并删除脚本管理的文件；页面不会执行它。','operation');
     return issues;
   }
@@ -3432,7 +3551,7 @@ function validate(deploy,protocols,pairs){
     const port=typeof p.fixed==='number'?String(p.fixed):value('port-'+p.id).trim()||p.defaultPort||'';
     if(p.fixed!==undefined&&typeof p.fixed!=='number')continue;
     if(port&&!/^\d{1,5}$/.test(port)||port&&(Number(port)<(p.id==='mieru'?1025:1)||Number(port)>65535)){error(p.id+' 的端口应为 '+(p.id==='mieru'?'1025':'1')+' 至 65535 的整数。','port-'+p.id);continue;}
-    const sockets=p.id==='mieru'?[value('mierutrans')]:p.sockets;
+    const sockets=p.id==='mieru'?[value('mierutrans')]:p.id==='ttpt'?(value('tttrans')==='quic'?['udp']:['tcp','h2'].includes(value('tttrans'))?['tcp']:['tcp','udp']):p.sockets;
     if(port){
       const portNum=Number(port);
       for(const socket of sockets){const k=socket+':'+portNum;if(ports.has(k))error(p.id+' 与 '+ports.get(k)+' 同时使用 '+port+'/'+socket+'。','port-'+p.id);ports.set(k,p.id);}
@@ -3509,6 +3628,30 @@ function validate(deploy,protocols,pairs){
     if(value('sudokuaead')==='none'&&!(value('argoEnabled')&&value('argo')==='sudokupt'))warn('AEAD 设为 none 时直连没有内层加密，建议改用 chacha20-poly1305 或 aes-128-gcm。','sudokuaead');
     if(value('sudokupure')==='y')warn('Pure Downlink 已开启：下载流量会产生约 4× 膨胀；如需省流建议关闭（默认 n）。','sudokupure');
   }
+  if(ids.has('ttpt')){
+    const ttu=value('ttuser'),ttpw=value('ttpass'),ttr=value('tttrans'),tup=value('ttup');
+    if(ttu&&(ttu.length>64||ttu.includes(':')))error('ttuser 不能超过 64 字符，且不能包含冒号 :。','ttuser');
+    if(ttpw&&ttpw.length>128)error('ttpass 不能超过 128 字符（对齐 Shadowrocket 密码长度上限）。','ttpass');
+    if(['tcp','h2'].includes(ttr)&&tup!=='http2')error('tttrans='+ttr+' 未开启 QUIC/HTTP3，导出传输偏好只能选 http2。','ttup');
+    if(ttr==='quic'&&tup!=='http3')error('tttrans=quic 仅开启 UDP/HTTP3，导出传输偏好只能选 http3。','ttup');
+    const crm=value('ttcrmode'),crv=value('ttcrval').replace(/\s+/g,'').toLowerCase();
+    if(crm==='off'&&crv)error('ttcrmode=off 时不能单独填写 ttcrval；请先切换为 authkey/prefix 或清空。','ttcrval');
+    if(crm!=='off'&&crv&&!ttValidClientRandom(crm,crv))error(crm==='authkey'?'ttcrmode=authkey 时，ttcrval 须为 32–128 位偶数长度十六进制（≥16 字节）。':'ttcrmode=prefix 时，ttcrval 须为 2–64 位偶数长度十六进制或 prefix/mask。','ttcrval');
+    if(crm!=='off')warn('已开启 TLS client_random 规则：仅支持该特性的客户端（如官方 TrustTunnel 客户端）可直连；Shadowrocket 当前界面无此项，启用后会握手失败，且不会写入 Mihomo YAML。','ttcrmode');
+    const tcidr=value('ttcidr').replace(/\s+/g,'');
+    if(tcidr){
+      const items=tcidr.split(',');
+      if(items.some(item=>!item)||items.length>16||items.some(item=>!ttValidCidr(item)))error('ttcidr 须为逗号分隔的 1–16 条有效 IPv4/IPv6 CIDR。','ttcidr');
+    }
+    const tfb=value('ttfb').trim(),tfbOn=Boolean(tfb&&!/^(off|none)$/i.test(tfb));
+    if(tfbOn&&!validSudokuFallback(tfb))error('ttfb 须留空或填写有效的 host:port / [IPv6]:port。','ttfb');
+    const tfbp=value('ttfbpath').trim();
+    if(tfbp&&!tfbOn)error('ttfbpath 须配合 ttfb 一同设置。','ttfbpath');
+    if(tfbp&&!/^\/[A-Za-z0-9_./-]{1,128}$/.test('/'+tfbp.replace(/^\/+/,'')))error('ttfbpath 仅支持 1–128 位安全路径字符（字母、数字、/ . _ -）。','ttfbpath');
+    if(value('ttcatchall')==='y'&&!tfbOn)error('ttcatchall=y 须配合 ttfb 一同设置。','ttcatchall');
+    if(value('ttauthfail')==='407')warn('ttauthfail=407 会向未认证请求返回 407 代理认证特征；常规代理客户端无需 407，建议保持默认 404。','ttauthfail');
+    if(value('ttprivate')==='y')warn('允许隧道访问服务端内网（ttprivate=y）会放开对 VPS 本机与局域网的转发访问，请确认信任所有凭据持有人。','ttprivate');
+  }
   if(value('cdnEnabled')){
     if(!validDomain(value('cdnym').trim()))error('启用 CDN 后需要填写有效的 cdnym 域名。','cdnym');
     const sudokuCdnActive=ids.has('sudokupt')&&value('sudokumask')==='ws'&&!(value('argoEnabled')&&value('argo')==='sudokupt');
@@ -3554,7 +3697,7 @@ function validate(deploy,protocols,pairs){
     if(value('xhycc')==='force-brutal'&&(Number(value('xhyup'))<=0||Number(value('xhydown'))<=0))error('Force Brutal 需要明确的正值上下行速率。','xhycc');
   }
   if(value('warpEnabled')){
-    const w=value('warp');if(w.includes('x')&&!cores.includes('xray')||w.includes('s')&&!cores.includes('singbox'))warn('WARP 出站规则包含当前没有启用的核心，这部分规则不会覆盖 Naive、Mieru 或 Sudoku。','warp');
+    const w=value('warp');if(w.includes('x')&&!cores.includes('xray')||w.includes('s')&&!cores.includes('singbox'))warn('WARP 出站规则包含当前没有启用的核心，这部分规则不会覆盖 Naive、Mieru、Sudoku 或 TrustTunnel。','warp');
     if(!cores.includes('xray')&&!cores.includes('singbox'))error('当前所选协议不能直接使用脚本的 Xray / Sing-box WARP 出站规则。','warpEnabled');
   }
   if(value('secondaryEnabled')){
@@ -3566,6 +3709,7 @@ function validate(deploy,protocols,pairs){
       if(!group.selection.size)error(label+'至少选择一种入站协议，或移除此组。',listKey);
       for(const p of protocols.filter(item=>group.selection.has(item.id))){
         if(p.core==='sudoku')error(label+'Sudoku 官方服务端当前仅支持直连出站，不能分配到二级代理。',listKey);
+        if(p.core==='trusttunnel')error(label+'TrustTunnel 官方服务端当前仅支持直连出站，不能分配到二级代理。',listKey);
         if(owners.has(p.id))error(p.id+' 同时分配给 B'+owners.get(p.id)+' 与 B'+group.id+'；每个入站只能选择一个 B。',listKey);
         if(secondaryWarpConflict(p,protocols))error(label+p.id+' 的流量已配置经所属核心的 WARP 出站。请取消该核心的 WARP 出站，或取消这个入站的 B 分配。',listKey);
         owners.set(p.id,group.id);
@@ -3741,6 +3885,11 @@ function onFormEdit(event){
     }else $('select-xvargopt').checked=false;
   }
   if(target.dataset.protocol==='xvcdnpt'&&target.checked)$('cdnEnabled').checked=true;
+  if(target.id==='tttrans'){
+    const trans=value('tttrans'),curUp=value('ttup');
+    if(['tcp','h2'].includes(trans)&&curUp!=='http2')$('ttup').value='http2';
+    else if(trans==='quic'&&curUp!=='http3')$('ttup').value='http3';
+  }
   if(['xhmode','vxmode','xvcdnmode'].includes(target.id))target.dataset.edited='true';
   if(target.dataset.extensionToggle&&target.checked)applyExtensionPreset(target.dataset.extensionToggle);
   if(target.dataset.maskGroup&&target.checked)revealSelectedMasks(target.dataset.maskGroup);
@@ -3766,6 +3915,13 @@ document.addEventListener('click',event=>{
   }
   if(event.target.closest('[data-sudoku-gen-ct]')){$('sudokuct').value=generateSudokuCustomTables();update();}
   if(event.target.closest('[data-sudoku-clear-ct]')){$('sudokuct').value='';update();}
+  if(event.target.closest('[data-tt-gen-cr]')){
+    const mode=value('ttcrmode');
+    if(mode==='authkey')$('ttcrval').value=generateRandomHex(32);
+    else if(mode==='prefix')$('ttcrval').value=generateRandomHex(8);
+    update();
+  }
+  if(event.target.closest('[data-tt-clear-cr]')){$('ttcrval').value='';update();}
 });
 $('add-secondary').addEventListener('click',()=>{
   const id=Array.from({length:SECONDARY_LIMIT},(_,index)=>index+1).find(id=>!secondaryGroups.some(group=>group.id===id));
@@ -3814,7 +3970,7 @@ const UI_EN_TEXT=Object.freeze({
   "Airgosbx · 本地配置工作台": "Airgosbx · Local Configuration Workbench",
   "配置工作台": "Configuration Workbench",
   "配置连接，生成 VPS 命令。": "Configure connections and generate VPS commands.",
-  "v1.4 (20261124) · 离线单文件": "v1.4 (20261124) · Offline, single file",
+  "v1.5 (20261125) · 离线单文件": "v1.5 (20261125) · Offline, single file",
   "重置表单": "Reset form",
   "此页面需要浏览器 JavaScript 才能生成命令。所有逻辑都在当前 HTML 内，不加载外部资源。": "This page requires browser JavaScript to generate commands. All logic is contained in this HTML file; no external resources are loaded.",
   "连接概览": "Connection overview",
@@ -3826,7 +3982,31 @@ const UI_EN_TEXT=Object.freeze({
   "出站": "Outbound",
   "VPS 访问目标": "VPS connects to the destination",
   "B 服务器": "Server B",
-  "Cloudflared 建立隧道，Caddy 承载 Naive，Mita 承载 Mieru，Sudoku 承载官方独立协议。入口与出站可独立配置。": "Cloudflared establishes the tunnel, Caddy serves Naive, Mita serves Mieru, and Sudoku runs the official standalone server. Inbound and outbound can be configured independently.",
+  "Cloudflared 建立隧道，Caddy 承载 Naive，Mita 承载 Mieru，Sudoku 承载官方独立协议，TrustTunnel 承载 AdGuard 官方独立服务端。入口与出站可独立配置。": "Cloudflared establishes the tunnel, Caddy serves Naive, Mita serves Mieru, Sudoku runs the official standalone server, and TrustTunnel runs the official AdGuard endpoint. Inbound and outbound can be configured independently.",
+  "AdGuard 官方独立服务端（HTTP/2 & HTTP/3）": "Official standalone AdGuard TrustTunnel server (HTTP/2 & HTTP/3)",
+  "AdGuard 官方开源 TrustTunnel 独立服务端；仅直连出站，不支持 WARP 与二级代理。复用共享 TLS 证书（证书续期 SIGHUP 热重载），默认隐藏 407 代理特征；导出官方 tt:// 深链（兼容 Shadowrocket 与官方客户端）与 Mihomo YAML。": "Official open-source AdGuard TrustTunnel standalone server. Direct outbound only (no WARP or secondary proxy). Reuses the shared TLS certificate with SIGHUP hot-reload and hides 407 proxy status by default. Exports official tt:// deep links (compatible with Shadowrocket and official clients) and Mihomo YAML.",
+  "升级 TrustTunnel（uptt）": "Upgrade TrustTunnel (uptt)",
+  "降级 TrustTunnel（downtt）": "Downgrade TrustTunnel (downtt)",
+  "TrustTunnel 独立协议": "Standalone TrustTunnel protocol",
+  "TrustTunnel 仅支持直连出站": "TrustTunnel supports direct outbound only",
+  "服务端监听协议栈": "Server listen protocols",
+  "导出客户端传输偏好": "Exported client transport preference",
+  "TrustTunnel 用户名": "TrustTunnel username",
+  "TrustTunnel 密码": "TrustTunnel password",
+  "未认证探测状态码": "Auth failure status code",
+  "TLS client_random 规则": "TLS client_random rule",
+  "client_random 密钥 / 前缀": "client_random key / prefix",
+  "随机生成十六进制值": "Generate random hex",
+  "清空（交由 VPS 生成）": "Clear (generate on VPS)",
+  "来源 IP 白名单（CIDR）": "Allowed source CIDRs",
+  "反代伪装后端地址": "Reverse proxy decoy backend",
+  "反代路径掩码（path_mask）": "Reverse proxy path mask",
+  "未知 SNI 回落到反代后端": "Fallback unknown SNI to reverse proxy",
+  "深链标记 anti_dpi": "Deep-link anti_dpi flag",
+  "允许隧道访问服务端内网": "Allow private network connections",
+  "服务端 IPv6 出口能力": "Server IPv6 availability",
+  "自签证书内嵌至 tt:// 深链": "Embed self-signed DER cert in tt://",
+  "Mihomo QUIC 拥塞控制": "Mihomo QUIC congestion control",
   "SUDOKU-ASCII 官方独立服务端（区别于 Xray FM）": "Official standalone SUDOKU-ASCII server (distinct from Xray FM)",
   "SUDOKU-ASCII 官方独立服务端（区别于 Xray FinalMask）；仅直连出站，不支持 WARP 与二级代理。UDP 经 UoT 承载，ws 模式支持 CDN 与 Argo；导出 Shadowrocket 原生 sudoku:// 与 Mihomo YAML。": "Official standalone SUDOKU-ASCII server (distinct from Xray FinalMask). Direct outbound only (no WARP or secondary proxy). Carries UDP via UoT; ws mode supports CDN and Argo. Exports native Shadowrocket sudoku:// links and Mihomo YAML.",
   "升级 Sudoku（upsu）": "Upgrade Sudoku (upsu)",
@@ -3915,7 +4095,7 @@ const UI_EN_TEXT=Object.freeze({
   "对照功能只提取你选择的脚本中的变量声明与帮助条目，不执行、不上传。它能提示变量清单差异，不能代替调用逻辑审查。": "The comparison only extracts variable declarations and help entries from the script you select. It does not execute or upload the file. It can flag differences in the variable list, but cannot replace a review of the calling logic.",
   "选择 airgosbx.sh 对照": "Select airgosbx.sh to compare",
   "清除对照": "Clear comparison",
-  "GUI 版本：v1.4 (20261124)；XHTTP 默认参数版本：V26.09.08.1。尚未读取其他文件。": "GUI version: v1.4 (20261124); XHTTP default parameter version: V26.09.08.1. No other files have been read.",
+  "GUI 版本：v1.5 (20261125)；XHTTP 默认参数版本：V26.09.08.1。尚未读取其他文件。": "GUI version: v1.5 (20261125); XHTTP default parameter version: V26.09.08.1. No other files have been read.",
   "VPS 命令与配置": "VPS command & configuration",
   "协议": "Protocols",
   "命令区域模式": "Command panel mode",

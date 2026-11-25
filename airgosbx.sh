@@ -2,7 +2,7 @@
 # 配套维护：airgosbx.sh 与 airgosbx-gui.html 是同一套工具，必须成套维护、提交和发布。
 # 修改任一文件时，须同步核对并修改另一文件的对应内容。
 # 参数、默认值、协议归属、开关与互斥、校验、命令生成与还原及功能说明必须保持一致。
-AIRGOSBX_VERSION='v1.4 (20261124)'
+AIRGOSBX_VERSION='v1.5 (20261125)'
 # 仅在内置 XHTTP 默认参数改变时更新此标记，普通脚本版本更新不使旧命令失效。
 XHTTP_DEFAULTS_VERSION='V26.09.08.1'
 agsbxurl="${agsbxurl:-https://raw.githubusercontent.com/hugobaum/sbxrago/refs/heads/main/airgosbx.sh}"
@@ -12,7 +12,7 @@ export -n zerossl_eab_kid zerossl_eab_hmac sslcom_eab_kid sslcom_eab_hmac fmpass
   vx_fmheader vw_fmheader vm_fmheader hy_fmheader 2>/dev/null || true
 export -n xheaders64 xh_xheaders64 vx_xheaders64 xvd_xheaders64 xva_xheaders64 2>/dev/null || true
 export -n xdrive_client_id xdrive_client_secret xdrive_refresh_token 2>/dev/null || true
-export -n uuid obfs_pass subid subauth subpass securl naiveuser naivepass mieruuser mierupass sudokukey agk ARGO_AUTH \
+export -n uuid obfs_pass subid subauth subpass securl naiveuser naivepass mieruuser mierupass sudokukey ttuser ttpass ttcrval agk ARGO_AUTH \
   CF_Token CF_Key CF_Email CF_Account_ID CF_Zone_ID 2>/dev/null || true
 # 编号 URL 与旧 securl 具有同等敏感性，任何子进程启动前移除 export 属性。
 for secondary_input_name in ${!securl@}; do export -n "$secondary_input_name" 2>/dev/null || true; done
@@ -40,11 +40,11 @@ is_root(){
   [ "$(id -u 2>/dev/null)" = "0" ]
 }
 
-# 进程探测助手：判断 agsbx 管理的 sing-box / xray / caddy / sudoku 内核或 Mieru 代理是否在运行。
+# 进程探测助手：判断 agsbx 管理的 sing-box / xray / caddy / sudoku / trusttunnel 内核或 Mieru 代理是否在运行。
 # 此前该长管道在第 1/8/12 段被逐字复制三次，现统一收敛为单一函数，杜绝逻辑漂移与维护遗漏。
 agsbx_running(){
   agsbx_component_running xray || agsbx_component_running sing-box || agsbx_component_running caddy \
-    || agsbx_component_running sudoku \
+    || agsbx_component_running sudoku || agsbx_component_running trusttunnel \
     || { [ -f "$HOME/agsbx/mita_managed" ] && command -v mita >/dev/null 2>&1 && mita status 2>/dev/null | grep -q 'RUNNING'; }
 }
 
@@ -71,6 +71,7 @@ agsbx_component_pids(){
     sing-box) expected_exe="$HOME/agsbx/sing-box" ;;
     caddy) expected_exe="$HOME/agsbx/caddy" ;;
     sudoku) expected_exe="$HOME/agsbx/sudoku" ;;
+    trusttunnel) expected_exe="$HOME/agsbx/trusttunnel" ;;
     cloudflared) expected_exe="$HOME/agsbx/cloudflared" ;;
     *) return 1 ;;
   esac
@@ -108,6 +109,7 @@ managed_service_names(){
     cloudflared|argo) managed_sd=argo; managed_rc=argo; managed_bin=cloudflared ;;
     caddy) managed_sd=agsbx-caddy; managed_rc=agsbx-caddy; managed_bin=caddy ;;
     sudoku) managed_sd=agsbx-sudoku; managed_rc=agsbx-sudoku; managed_bin=sudoku ;;
+    trusttunnel) managed_sd=agsbx-tt; managed_rc=agsbx-tt; managed_bin=trusttunnel ;;
     *) return 1 ;;
   esac
 }
@@ -270,6 +272,45 @@ wait_component_listeners(){
       sleep 1
     done
     echo "错误：sudoku 未监听其已配置端口 $port/tcp。"
+    return 1
+  fi
+  if [ "$core" = trusttunnel ]; then
+    local tt_trans_saved tt_need_tcp=yes tt_need_udp=yes tt_ok
+    port=$(cat "$HOME/agsbx/port_tt" 2>/dev/null) || {
+      echo "错误：无法读取 TrustTunnel 监听端口状态文件 port_tt。"
+      return 1
+    }
+    valid_port "$port" || {
+      echo "错误：TrustTunnel 端口状态文件 port_tt 格式无效。"
+      return 1
+    }
+    tt_trans_saved=$(sed -n '1p' "$HOME/agsbx/tt_meta" 2>/dev/null)
+    case "$tt_trans_saved" in
+      tcp|h2) tt_need_tcp=yes; tt_need_udp=no ;;
+      quic) tt_need_tcp=no; tt_need_udp=yes ;;
+      *) tt_need_tcp=yes; tt_need_udp=yes ;;
+    esac
+    for attempt in {1..5}; do
+      pids=$(agsbx_component_pids trusttunnel)
+      listeners=$(ss -H -lntup 2>/dev/null) || return 1
+      tt_ok=yes
+      [ -n "$pids" ] || tt_ok=no
+      if [ "$tt_need_tcp" = yes ] && ! component_owns_listener trusttunnel "$port" tcp "$pids" "$listeners"; then
+        tt_ok=no
+      fi
+      if [ "$tt_need_udp" = yes ] && ! component_owns_listener trusttunnel "$port" udp "$pids" "$listeners"; then
+        tt_ok=no
+      fi
+      [ "$tt_ok" != yes ] || return 0
+      sleep 1
+    done
+    if [ "$tt_need_tcp" = yes ] && [ "$tt_need_udp" = yes ]; then
+      echo "错误：trusttunnel 未同时监听已配置端口 $port/tcp 与 $port/udp。"
+    elif [ "$tt_need_udp" = yes ]; then
+      echo "错误：trusttunnel 未监听已配置端口 $port/udp。"
+    else
+      echo "错误：trusttunnel 未监听已配置端口 $port/tcp。"
+    fi
     return 1
   fi
   [ "$core" = xray ] && config=xr.json || config=sb.json
@@ -457,6 +498,8 @@ component_cron_line(){
       printf '%s' '@reboot sleep 10 && /bin/sh -c "rm -f $HOME/agsbx/caddy-admin.sock; nohup $HOME/agsbx/caddy run --config $HOME/agsbx/Caddyfile > $HOME/agsbx/caddy.log 2>&1 &"' ;;
     sudoku)
       printf '%s' '@reboot sleep 10 && /bin/sh -c "nohup $HOME/agsbx/sudoku -c $HOME/agsbx/sudoku.json > $HOME/agsbx/sudoku.log 2>&1 &"' ;;
+    trusttunnel)
+      printf '%s' '@reboot sleep 10 && /bin/sh -c "nohup $HOME/agsbx/trusttunnel $HOME/agsbx/tt_vpn.toml $HOME/agsbx/tt_hosts.toml > $HOME/agsbx/trusttunnel.log 2>&1 &"' ;;
     *) return 1 ;;
   esac
 }
@@ -474,7 +517,7 @@ filter_component_cron(){
   : > "$destination" || return 1
   while IFS= read -r line || [ -n "$line" ]; do
     managed=no
-    for component in xray sing-box caddy sudoku; do
+    for component in xray sing-box caddy sudoku trusttunnel; do
       case "$component:$mode" in caddy:rep|caddy:runtime-rep) continue ;; esac
       expected=$(component_cron_line "$component") || return 1
       if [ "$line" = "$expected" ] || [ "$line" = "$expected # AIRGOSBX_CORE" ]; then managed=yes; break; fi
@@ -1620,6 +1663,15 @@ verify_install_required_components(){
       failed=yes
     fi
   fi
+  if [ "$install_required_tt" = yes ]; then
+    if ! wait_agsbx_component trusttunnel; then
+      echo "错误：本轮要求的 TrustTunnel 进程未运行。"
+      failed=yes
+    elif ! wait_component_listeners trusttunnel; then
+      echo "错误：本轮要求的 TrustTunnel 监听检查未通过，请查看上方端口状态或日志。"
+      failed=yes
+    fi
+  fi
   if [ "$install_required_argo" = yes ] && ! wait_agsbx_component cloudflared; then
     echo "错误：本轮要求的 Cloudflared Argo 进程未运行。"
     failed=yes
@@ -1638,7 +1690,7 @@ verify_install_required_components(){
 # 管理类命令(start/stop/restart/reload/list/...)应以"是否已安装"放行，而非"是否正在运行"——
 # 否则 stop 停掉最后一个内核后 agsbx_running 变 false，随后的 start 会被前置守卫误判为"未安装"而拦截。
 agsbx_installed(){
-  [ -s "$HOME/agsbx/sing-box" ] || [ -s "$HOME/agsbx/xray" ] || [ -s "$HOME/agsbx/caddy" ] || [ -s "$HOME/agsbx/sudoku" ] \
+  [ -s "$HOME/agsbx/sing-box" ] || [ -s "$HOME/agsbx/xray" ] || [ -s "$HOME/agsbx/caddy" ] || [ -s "$HOME/agsbx/sudoku" ] || [ -s "$HOME/agsbx/trusttunnel" ] \
     || { [ -f "$HOME/agsbx/mita_managed" ] && command -v mita >/dev/null 2>&1; }
 }
 
@@ -1941,7 +1993,28 @@ vrow "sudokufb"    "防主动探测回落：留空或 silent＝静默丢弃；�
 vnote "示例：sudokupt=（直连即用）；sudokupt= sudokumask=ws argo=sudokupt（Argo 隧道 443 HTTPS 接入）。"
 vnote "导出 Shadowrocket 原生 sudoku:// 链接（jh.txt）与 Mihomo YAML（clmi.yaml）；仅直连出站，不参与 warp/secp。"
 
-vg "⑭ Xray 扩展参数（仅作用于本次启用的对应扩展）"
+vg "⑭ TrustTunnel（AdGuard 官方独立服务端·HTTP/2 & HTTP/3）"
+vrow "ttpt"        "独立 TrustTunnel 监听端口（设置即启用，留空＝随机高位端口；支持 443）"
+vrow "ttuser"      "可选自定义用户名（最多 64 字符，不含冒号；留空自动生成）"
+vrow "ttpass"      "可选自定义密码（最多 128 字符；留空自动生成）"
+vrow "tttrans"     "服务端监听栈：all（默认，H1+H2 TCP 与 H3 QUIC 同端口）/ tcp / h2 / quic"
+vrow "ttup"        "导出客户端偏好：both（默认，all 时同时导出 H2+H3）/ http2 / http3"
+vrow "ttauthfail"  "未认证探测返回状态码：404（默认，隐藏 407 代理特征）/ 403 / 405 / 407"
+vrow "ttcrmode"    "TLS client_random 校验：off（默认，兼容全部客户端）/ prefix / authkey"
+vrow "ttcrval"     "client_random 十六进制值（prefix 支持 hex 或 hex/mask；authkey ≥32 位 hex；留空自动生成）"
+vrow "ttcidr"      "可选来源 IP 白名单 CIDR（逗号分隔，留空不限制）"
+vrow "ttfb"        "可选反代伪装后端地址（host:port / [IPv6]:port，留空不启用 reverse_proxy）"
+vrow "ttfbpath"    "反代路径掩码 path_mask（如 /api；仅配置 ttfb 时生效）"
+vrow "ttcatchall"  "未知 SNI 回落到反代后端：n（默认）/ y（仅配置 ttfb 时生效）"
+vrow "ttantidpi"   "深链标记 anti_dpi（供官方客户端开启抗 DPI）：n（默认）/ y"
+vrow "ttprivate"   "允许经隧道访问服务端内网地址：n（默认，防 SSRF）/ y"
+vrow "ttipv6"      "服务端 IPv6 出口能力声明：auto（默认，按 VPS 实测）/ y / n"
+vrow "ttembedcert" "自签证书时在 tt:// 深链内嵌 DER 证书（0x08）：n（默认短链，配 SHA256 指纹）/ y"
+vrow "ttcc"        "Mihomo H3/QUIC 拥塞控制导出项：bbr（默认）/ cubic / reno"
+vnote "示例：ttpt=（直连即用，自动复用共享 TLS 证书并同时导出 H2+H3 tt:// 深链与 Mihomo YAML）。"
+vnote "导出官方标准 tt:// 深链（兼容 Shadowrocket 与 TrustTunnel 官方客户端）；仅直连出站，不参与 warp/secp。"
+
+vg "⑮ Xray 扩展参数（仅作用于本次启用的对应扩展）"
 vrow "xpadding" "XHTTP 填充范围：1-4096 字节，默认 100-1000"
 vrow "xmuxcon"  "XMUX 并发数：0-1024，默认 0；不能与 xmuxmax 同时为正"
 vrow "xmuxmax"  "XMUX 连接数：0-128，默认 3"
@@ -1961,7 +2034,7 @@ vrow "xhyup"    "客户端上行 Mbps：0-100000；force-brutal 需明确正值"
 vrow "xhydown"  "客户端下行 Mbps：0-100000；force-brutal 需明确正值"
 vnote "FM 多项必须使用匹配的 Xray 客户端实现；完整参数随 URL 导出。"
 
-vg "⑮ Xray 按协议覆盖（未设置或空值＝沿用上方通用参数）"
+vg "⑯ Xray 按协议覆盖（未设置或空值＝沿用上方通用参数）"
 vnote "GUI 为每个协议独立传参；范围与同名通用参数一致。"
 vrow "vl_fmpass" "vlpt 专用 fmpass，仅作用于该协议"
 vrow "vl_fmascii" "vlpt 专用 fmascii，仅作用于该协议"
@@ -2050,12 +2123,12 @@ vrow "cmds"     "命令速查表（本表）" 10
 vrow "help"     "完整帮助（vars + cmds）" 10
 
 vg "③ 内核启停（用法：agsbx <动作> [内核]）"
-vnote "内核 = xray ｜ sb ｜ caddy ｜ sudoku ｜ mita ｜ all（省略即全部；已配置时含 Caddy/Sudoku，Mita 需单独指定）"
+vnote "内核 = xray ｜ sb ｜ caddy ｜ sudoku ｜ tt ｜ mita ｜ all（省略即全部；已配置时含 Caddy/Sudoku/TrustTunnel，Mita 需单独指定）"
 vrow "start"    "启动内核" 10
 vrow "stop"     "停止内核（释放其占用的端口）" 10
 vrow "restart"  "重启内核" 10
-vrow "reload"   "重载配置（Caddy/Mita 原生重载；Xray/Sing-box/Sudoku 经检查重启，会短暂断连）" 10
-vrow "res"      "重启 Xray/Sing-box/Sudoku/Argo，并在已配置 Naive 时重启 Caddy（不含 Mita）" 10
+vrow "reload"   "重载配置（Caddy/Mita 原生重载；Xray/Sing-box/Sudoku/TrustTunnel 经检查重启，证书续期自动 SIGHUP 热重载）" 10
+vrow "res"      "重启 Xray/Sing-box/Sudoku/TrustTunnel/Argo，并在已配置 Naive 时重启 Caddy（不含 Mita）" 10
 vnote "同步重启订阅服务，沿用已保存的密码保护开关及密码；随后用 agsbx list 查看链接。"
 vnote "未完成的订阅发布会使用已保存文件、保护状态和证书继续校验；状态不完整会明确报错。"
 
@@ -2063,9 +2136,11 @@ vg "④ 内核版本"
 vrow "upx"      "升级 Xray（upx [版本]，不带版本=最新）" 10
 vrow "ups"      "升级 Sing-box（ups [版本]）" 10
 vrow "upsu"     "升级 Sudoku（upsu [版本]）" 10
+vrow "uptt"     "升级 TrustTunnel（uptt [版本]）" 10
 vrow "downx"    "降级 Xray（downx <版本>，如 downx v26.2.6）" 10
 vrow "downs"    "降级 Sing-box（downs <版本>）" 10
 vrow "downsu"   "降级 Sudoku（downsu <版本>）" 10
+vrow "downtt"   "降级 TrustTunnel（downtt <版本>）" 10
 echo
 hr
 echo
@@ -2790,6 +2865,165 @@ validate_sudoku_options(){
   fi
 }
 
+tt_network_type(){
+  case "${1:-all}" in
+    tcp|h2) printf 'tcp' ;;
+    quic) printf 'udp' ;;
+    *) printf 'both' ;;
+  esac
+}
+
+tt_valid_cidr(){
+  local item="$1" ip prefix
+  [[ "$item" == */* ]] || return 1
+  ip="${item%/*}"; prefix="${item#*/}"
+  [[ "$prefix" =~ ^[0-9]{1,3}$ ]] || return 1
+  if valid_ipv4 "$ip"; then
+    [ "$((10#$prefix))" -le 32 ]
+  elif valid_ipv6 "$ip"; then
+    [ "$((10#$prefix))" -le 128 ]
+  else
+    return 1
+  fi
+}
+
+validate_tt_options(){
+  [ "$ttp" = yes ] || return 0
+  local raw item normalized_cidr='' count=0 p_hex m_hex path_clean
+  if [ -n "$ttuser" ]; then
+    valid_plain_text "$ttuser" 64 || { echo "错误：ttuser 不能超过 64 字符或包含控制字符。"; return 1; }
+    case "$ttuser" in
+      *:*) echo "错误：ttuser 不能包含冒号 :。"; return 1 ;;
+    esac
+  fi
+  if [ -n "$ttpass" ]; then
+    valid_plain_text "$ttpass" 128 || { echo "错误：ttpass 不能超过 128 字符或包含控制字符。"; return 1; }
+  fi
+  tttrans=$(printf '%s' "$tttrans" | tr -d '[:space:]' | tr 'A-Z' 'a-z')
+  case "$tttrans" in
+    all|tcp|h2|quic) ;;
+    *) echo "错误：tttrans 仅支持 all、tcp、h2 或 quic。"; return 1 ;;
+  esac
+  if [ -z "${ttup:-}" ]; then
+    case "$tttrans" in
+      tcp|h2) ttup=http2 ;;
+      quic) ttup=http3 ;;
+      *) ttup=both ;;
+    esac
+  else
+    ttup=$(printf '%s' "$ttup" | tr -d '[:space:]' | tr 'A-Z' 'a-z')
+    case "$ttup" in
+      both|http2|http3) ;;
+      h2) ttup=http2 ;;
+      h3) ttup=http3 ;;
+      *) echo "错误：ttup 仅支持 both、http2 或 http3。"; return 1 ;;
+    esac
+  fi
+  if { [ "$tttrans" = tcp ] || [ "$tttrans" = h2 ]; } && [ "$ttup" != http2 ]; then
+    echo "错误：tttrans=$tttrans 未开启 QUIC/HTTP3，ttup 仅支持 http2。"; return 1
+  fi
+  if [ "$tttrans" = quic ] && [ "$ttup" != http3 ]; then
+    echo "错误：tttrans=quic 仅开启 UDP/HTTP3，ttup 仅支持 http3。"; return 1
+  fi
+  case "$ttauthfail" in
+    403|404|405|407) ;;
+    *) echo "错误：ttauthfail 仅支持 403、404、405 或 407。"; return 1 ;;
+  esac
+  ttcrmode=$(printf '%s' "$ttcrmode" | tr -d '[:space:]' | tr 'A-Z' 'a-z')
+  case "$ttcrmode" in
+    off|prefix|authkey) ;;
+    *) echo "错误：ttcrmode 仅支持 off、prefix 或 authkey。"; return 1 ;;
+  esac
+  if [ -n "$ttcrval" ]; then
+    raw=$(printf '%s' "$ttcrval" | tr -d '[:space:]' | tr 'A-Z' 'a-z')
+    if [ "$ttcrmode" = off ]; then
+      echo "错误：ttcrmode=off 时不能单独填写 ttcrval；请先将 ttcrmode 设为 prefix 或 authkey。"; return 1
+    elif [ "$ttcrmode" = authkey ]; then
+      if ! [[ "$raw" =~ ^[0-9a-f]{32,128}$ ]] || [ "$((${#raw} % 2))" -ne 0 ]; then
+        echo "错误：ttcrmode=authkey 时，ttcrval 须为 32-128 位偶数长度十六进制字符串（≥16 字节）。"; return 1
+      fi
+      ttcrval="$raw"
+    else
+      if [[ "$raw" == */* ]]; then
+        p_hex="${raw%%/*}"; m_hex="${raw#*/}"
+        if [[ "$m_hex" == */* ]] || ! [[ "$p_hex" =~ ^[0-9a-f]{2,64}$ ]] || ! [[ "$m_hex" =~ ^[0-9a-f]{2,64}$ ]] \
+          || [ "$((${#p_hex} % 2))" -ne 0 ] || [ "$((${#m_hex} % 2))" -ne 0 ]; then
+          echo "错误：ttcrmode=prefix 时，ttcrval 的 prefix/mask 两侧须均为 2-64 位偶数长度十六进制。"; return 1
+        fi
+        ttcrval="${p_hex}/${m_hex}"
+      else
+        if ! [[ "$raw" =~ ^[0-9a-f]{2,64}$ ]] || [ "$((${#raw} % 2))" -ne 0 ]; then
+          echo "错误：ttcrmode=prefix 时，ttcrval 须为 2-64 位偶数长度十六进制（或 prefix/mask）。"; return 1
+        fi
+        ttcrval="$raw"
+      fi
+    fi
+  fi
+  if [ -n "$ttcidr" ]; then
+    raw=$(printf '%s' "$ttcidr" | tr -d '[:space:]')
+    case "$raw" in ,*|*,|*,,*) echo "错误：ttcidr 存在空项，请使用逗号分隔有效 CIDR。"; return 1 ;; esac
+    IFS=',' read -r -a tt_cidr_items <<< "$raw"
+    for item in "${tt_cidr_items[@]}"; do
+      count=$((count + 1))
+      [ "$count" -le 16 ] || { echo "错误：ttcidr 最多指定 16 条白名单网段。"; return 1; }
+      tt_valid_cidr "$item" || { echo "错误：ttcidr 项「$item」不是有效的 IPv4/IPv6 CIDR。"; return 1; }
+      normalized_cidr="${normalized_cidr:+$normalized_cidr,}$item"
+    done
+    ttcidr="$normalized_cidr"
+  fi
+  if [ -n "$ttfb" ]; then
+    case "$(printf '%s' "$ttfb" | tr 'A-Z' 'a-z')" in
+      off|none) ttfb='' ;;
+      *)
+        sudoku_valid_fallback_addr "$ttfb" || {
+          echo "错误：ttfb 须留空或填写有效的 host:port / [IPv6]:port。"; return 1
+        } ;;
+    esac
+  fi
+  case "$ttcatchall" in
+    y|Y|yes|YES|1|true|TRUE) ttcatchall=y ;;
+    n|N|no|NO|0|false|FALSE) ttcatchall=n ;;
+    *) echo "错误：ttcatchall 仅支持 y/yes/1 或 n/no/0。"; return 1 ;;
+  esac
+  if [ -n "$ttfbpath" ]; then
+    [ -n "$ttfb" ] || { echo "错误：ttfbpath 须配合 ttfb 一同设置。"; return 1; }
+    path_clean="/${ttfbpath#/}"
+    [[ "$path_clean" =~ ^/[A-Za-z0-9_./-]{1,128}$ ]] || {
+      echo "错误：ttfbpath 仅支持 1-128 位安全 URL 路径字符（字母、数字、/ . _ -）。"; return 1
+    }
+    ttfbpath="$path_clean"
+  fi
+  if [ "$ttcatchall" = y ] && [ -z "$ttfb" ]; then
+    echo "错误：ttcatchall=y 须配合 ttfb 一同设置。"; return 1
+  fi
+  case "$ttantidpi" in
+    y|Y|yes|YES|1|true|TRUE) ttantidpi=y ;;
+    n|N|no|NO|0|false|FALSE) ttantidpi=n ;;
+    *) echo "错误：ttantidpi 仅支持 y/yes/1 或 n/no/0。"; return 1 ;;
+  esac
+  case "$ttprivate" in
+    y|Y|yes|YES|1|true|TRUE) ttprivate=y ;;
+    n|N|no|NO|0|false|FALSE) ttprivate=n ;;
+    *) echo "错误：ttprivate 仅支持 y/yes/1 或 n/no/0。"; return 1 ;;
+  esac
+  case "$(printf '%s' "$ttipv6" | tr 'A-Z' 'a-z')" in
+    auto) ttipv6=auto ;;
+    y|yes|1|true) ttipv6=y ;;
+    n|no|0|false) ttipv6=n ;;
+    *) echo "错误：ttipv6 仅支持 auto、y/yes/1 或 n/no/0。"; return 1 ;;
+  esac
+  case "$ttembedcert" in
+    y|Y|yes|YES|1|true|TRUE) ttembedcert=y ;;
+    n|N|no|NO|0|false|FALSE) ttembedcert=n ;;
+    *) echo "错误：ttembedcert 仅支持 y/yes/1 或 n/no/0。"; return 1 ;;
+  esac
+  ttcc=$(printf '%s' "$ttcc" | tr -d '[:space:]' | tr 'A-Z' 'a-z')
+  case "$ttcc" in
+    bbr|cubic|reno) ;;
+    *) echo "错误：ttcc 仅支持 bbr、cubic 或 reno。"; return 1 ;;
+  esac
+}
+
 deployment_port_specs(){
   printf '%s\n' \
     'vlp:port_vl_re:port_vl_re:tcp' 'xhp:port_xh:port_xh:tcp' 'vxp:port_vx:port_vx:tcp' \
@@ -2799,6 +3033,7 @@ deployment_port_specs(){
     'xvcdn:port_xvcdn:port_xvcdn:tcp' 'xvargo:port_xvargo:port_xvargo:tcp' \
     'xdns:port_xdns:port_xdns:udp' "mierup:port_mieru:port_mieru:$(printf '%s' "$mieru_protocol" | tr A-Z a-z)" \
     'sudokup:port_sudoku:port_sudoku:tcp' \
+    "ttp:port_tt:port_tt:$(tt_network_type "$tttrans")" \
     'sub:subpt:subport.log:tcp'
 }
 
@@ -2806,6 +3041,7 @@ validate_deployment_inputs(){
   local flag variable file network value key has_link_protocol=no
   validate_zerossl_eab_inputs || return 1
   validate_sudoku_options || return 1
+  validate_tt_options || return 1
   case "${acmeca:-auto}" in ''|auto|interactive|letsencrypt|zerossl|sslcom) ;; *) echo "错误：acmeca 仅支持 auto/interactive/letsencrypt/zerossl/sslcom。"; return 1 ;; esac
   while IFS=: read -r flag variable file network; do
     [ "${!flag}" = yes ] || continue
@@ -2813,7 +3049,7 @@ validate_deployment_inputs(){
     [ -z "$value" ] || valid_port "$value" || { echo "错误：$variable 必须为 1-65535 的端口。"; return 1; }
     [ -z "$value" ] || printf -v "$variable" '%s' "$((10#$value))"
   done < <(deployment_port_specs)
-  for key in uuid obfs_pass name naiveuser naivepass mieruuser mierupass acmem naivesite; do
+  for key in uuid obfs_pass name naiveuser naivepass mieruuser mierupass ttuser ttpass acmem naivesite; do
     valid_plain_text "${!key}" 1024 || { echo "错误：$key 太长或包含控制字符。"; return 1; }
   done
   [ -z "$subid" ] || [[ "$subid" =~ ^[A-Za-z0-9_-]{16,128}$ ]] \
@@ -2831,7 +3067,7 @@ validate_deployment_inputs(){
   [ "$xicp" != yes ] || require_xicmp_capability || return 1
   [ "$xdrp" != yes ] || validate_xdrive_inputs || return 1
   if [ "$sub" = yes ]; then
-    for flag in xhp vlp vxp vwp xhyp xvcdn xvargo hyp tup anp arp vmp mierup sudokup; do
+    for flag in xhp vlp vxp vwp xhyp xvcdn xvargo hyp tup anp arp vmp mierup sudokup ttp; do
       [ "${!flag}" != yes ] || has_link_protocol=yes
     done
     if [ -z "$naive" ] && [ "$has_link_protocol" = no ]; then
@@ -2865,6 +3101,7 @@ preflight_service_slots(){
   [ "$xr" != yes ] || require_service_slot xray || return 1
   [ "$sb" != yes ] || require_service_slot sing-box || return 1
   [ "$sudokup" != yes ] || require_service_slot sudoku || return 1
+  [ "$ttp" != yes ] || require_service_slot trusttunnel || return 1
   [ -z "$argo" ] || require_service_slot cloudflared || return 1
   [ -z "$naive" ] || require_service_slot caddy || return 1
   managed_script_path >/dev/null || return 1
@@ -3372,7 +3609,7 @@ case "$1" in
     ;;
 esac
 # 每次调用从公开协议参数推导内部标志，不继承父进程中的中间状态或展示名称。
-vlp='' vmp='' vwp='' vmag='' hyp='' xhyp='' tup='' xhp='' vxp='' anp='' ssp='' arp='' sop='' wap='' xicp='' xdrp='' xvcdn='' xvargo='' mierup='' sudokup=''
+vlp='' vmp='' vwp='' vmag='' hyp='' xhyp='' tup='' xhp='' vxp='' anp='' ssp='' arp='' sop='' wap='' xicp='' xdrp='' xvcdn='' xvargo='' mierup='' sudokup='' ttp=''
 tls_cert_ready=no tls_cert_file='' tls_key_file='' tls_caddy_reuse_notice_shown=no
 rep_manage_certificate=no
 [ -z "${vlpt+x}" ] || vlp=yes
@@ -3407,9 +3644,10 @@ esac
 # 此前仅 vmpt/vwpt 置位，导致单独设 xvargopt+argo=xvargopt 时隧道被静默跳过；补齐 xvargo。
 [ -z "${xvargopt+x}" ] || { xvargo=yes; vmag=yes; }
 [ -z "${sudokupt+x}" ] || { sudokup=yes; vmag=yes; }
+[ -z "${ttpt+x}" ] || ttp=yes
 case "$1" in
   ''|rep) validate_xray_options || exit 1 ;;
-  del|list|status|stats|top|update|res|cert|start|stop|restart|reload|upx|ups|upsu|downx|downs|downsu|__cert_renew|__cert_reload|__restore_hops) ;;
+  del|list|status|stats|top|update|res|cert|start|stop|restart|reload|upx|ups|upsu|uptt|downx|downs|downsu|downtt|__cert_renew|__cert_reload|__restore_hops) ;;
   *) echo "错误：未知命令 $1，请使用 agsbx help。"; exit 1 ;;
 esac
 # 布尔开关 sub 归一化：仅 sub=y/yes/1 视为显式启用，其余值或空/未设一律=关闭，统一规范（禁用 sub=on 之类写法）。
@@ -3459,10 +3697,10 @@ if [ -z "$1" ] && { [ -n "$subpass" ] || [ "$subauth_requested" = yes ]; }; then
   exit 1
 fi
 if [ "$1" = "rep" ]; then
-[ -n "$naive" ] || [ "$mierup" = yes ] || [ "$sudokup" = yes ] || [ "$vwp" = yes ] || [ "$sop" = yes ] || [ "$vxp" = yes ] || [ "$ssp" = yes ] || [ "$vlp" = yes ] || [ "$vmp" = yes ] || [ "$hyp" = yes ] || [ "$tup" = yes ] || [ "$xhp" = yes ] || [ "$anp" = yes ] || [ "$arp" = yes ] || [ "$xhyp" = yes ] || [ "$xdns" = yes ] || [ "$xicp" = yes ] || [ "$xdrp" = yes ] || [ "$xvcdn" = yes ] || [ "$xvargo" = yes ] || { echo "提示：rep重置协议时，请在脚本前至少设置一个协议变量哦! 💣"; exit; }
+[ -n "$naive" ] || [ "$mierup" = yes ] || [ "$sudokup" = yes ] || [ "$ttp" = yes ] || [ "$vwp" = yes ] || [ "$sop" = yes ] || [ "$vxp" = yes ] || [ "$ssp" = yes ] || [ "$vlp" = yes ] || [ "$vmp" = yes ] || [ "$hyp" = yes ] || [ "$tup" = yes ] || [ "$xhp" = yes ] || [ "$anp" = yes ] || [ "$arp" = yes ] || [ "$xhyp" = yes ] || [ "$xdns" = yes ] || [ "$xicp" = yes ] || [ "$xdrp" = yes ] || [ "$xvcdn" = yes ] || [ "$xvargo" = yes ] || { echo "提示：rep重置协议时，请在脚本前至少设置一个协议变量哦! 💣"; exit; }
 fi
 else
-[ "$1" = "del" ] || [ "$1" = cert ] || [ "$1" = __cert_renew ] || [ -n "$naive" ] || [ "$mierup" = yes ] || [ "$sudokup" = yes ] || [ "$vwp" = yes ] || [ "$sop" = yes ] || [ "$vxp" = yes ] || [ "$ssp" = yes ] || [ "$vlp" = yes ] || [ "$vmp" = yes ] || [ "$hyp" = yes ] || [ "$tup" = yes ] || [ "$xhp" = yes ] || [ "$anp" = yes ] || [ "$arp" = yes ] || [ "$xhyp" = yes ] || [ "$xdns" = yes ] || [ "$xicp" = yes ] || [ "$xdrp" = yes ] || [ "$xvcdn" = yes ] || [ "$xvargo" = yes ] || { echo "提示：未安装airgosbx脚本，请在脚本前至少设置一个协议变量哦！💣"; exit; }
+[ "$1" = "del" ] || [ "$1" = cert ] || [ "$1" = __cert_renew ] || [ -n "$naive" ] || [ "$mierup" = yes ] || [ "$sudokup" = yes ] || [ "$ttp" = yes ] || [ "$vwp" = yes ] || [ "$sop" = yes ] || [ "$vxp" = yes ] || [ "$ssp" = yes ] || [ "$vlp" = yes ] || [ "$vmp" = yes ] || [ "$hyp" = yes ] || [ "$tup" = yes ] || [ "$xhp" = yes ] || [ "$anp" = yes ] || [ "$arp" = yes ] || [ "$xhyp" = yes ] || [ "$xdns" = yes ] || [ "$xicp" = yes ] || [ "$xdrp" = yes ] || [ "$xvcdn" = yes ] || [ "$xvargo" = yes ] || { echo "提示：未安装airgosbx脚本，请在脚本前至少设置一个协议变量哦！💣"; exit; }
 fi
 uuid=${uuid:-''}
 obfs_pass=${obfs_pass:-''}
@@ -3497,6 +3735,23 @@ fi
 sudokupath=${sudokupath:-''}
 sudokumux=${sudokumux:-off}
 sudokufb=${sudokufb:-''}
+export port_tt=${ttpt:-''}
+ttuser=${ttuser:-''}
+ttpass=${ttpass:-''}
+tttrans=${tttrans:-all}
+ttup=${ttup:-''}
+ttauthfail=${ttauthfail:-404}
+ttcrmode=${ttcrmode:-off}
+ttcrval=${ttcrval:-''}
+ttcidr=${ttcidr:-''}
+ttfb=${ttfb:-''}
+ttfbpath=${ttfbpath:-''}
+ttcatchall=${ttcatchall:-n}
+ttantidpi=${ttantidpi:-n}
+ttprivate=${ttprivate:-n}
+ttipv6=${ttipv6:-auto}
+ttembedcert=${ttembedcert:-n}
+ttcc=${ttcc:-bbr}
 export subpt=${subpt:-''}
 subid=${subid:-''}
 export ym_vl_re=${reym:-''}
@@ -3568,8 +3823,8 @@ kv_row "主脚本："   "bash <(curl -Ls $agsbxurl)  或  bash <(wget -qO- $agsb
 kv_row "查看信息：" "agsbx list（节点与订阅） ｜ agsbx status（资源/流量）" 12
 kv_row "重置维护：" "变量组 agsbx rep（重置） ｜ agsbx cert（证书维护）" 12
 kv_row "脚本管理：" "agsbx update（更新脚本） ｜ agsbx del（卸载）" 12
-kv_row "内核启停：" "agsbx start｜stop｜restart｜reload [xray｜sb｜caddy｜sudoku｜mita｜all]" 12
-kv_row "内核版本：" "agsbx upx/ups/upsu [版本]（升级） ｜ agsbx downx/downs/downsu <版本>（降级）" 12
+kv_row "内核启停：" "agsbx start｜stop｜restart｜reload [xray｜sb｜caddy｜sudoku｜tt｜mita｜all]" 12
+kv_row "内核版本：" "agsbx upx/ups/upsu/uptt [版本]（升级） ｜ agsbx downx/downs/downsu/downtt <版本>（降级）" 12
 kv_row "更多帮助：" "${C_YELLOW}agsbx cmds${C_RESET}（全部命令） ｜ ${C_YELLOW}agsbx vars${C_RESET}（全部变量） ｜ ${C_YELLOW}agsbx help${C_RESET}（完整帮助）" 12
 note_line "修改型操作需要系统 flock；证书维护任务与部署操作互斥。"
 note_line "rep 保留 Naive/Caddy 与全部证书，重建后请重新导入链接（SOCKS 凭据、传输路径与订阅令牌独立保存）。"
@@ -4413,10 +4668,12 @@ release_asset_digest(){
 
 activate_core_candidate(){
   local core="$1" candidate="$2" binary="$HOME/agsbx/$1" config target backup was_running=no
-  case "$core" in xray) config=xr.json; target=xray ;; sing-box) config=sb.json; target=sb ;; caddy) config=Caddyfile; target=caddy ;; sudoku) config=sudoku.json; target=sudoku ;; *) return 1 ;; esac
+  case "$core" in xray) config=xr.json; target=xray ;; sing-box) config=sb.json; target=sb ;; caddy) config=Caddyfile; target=caddy ;; sudoku) config=sudoku.json; target=sudoku ;; trusttunnel) config=tt_vpn.toml; target=tt ;; *) return 1 ;; esac
   [ -f "$candidate" ] && [ ! -L "$candidate" ] && [ ! -L "$binary" ] || return 1
   if [ "$core" = sudoku ]; then
     chmod 700 "$candidate" && "$candidate" -keygen >/dev/null 2>&1 || return 1
+  elif [ "$core" = trusttunnel ]; then
+    chmod 700 "$candidate" && { "$candidate" --version >/dev/null 2>&1 || "$candidate" --help >/dev/null 2>&1; } || return 1
   else
     chmod 700 "$candidate" && "$candidate" version >/dev/null 2>&1 || return 1
   fi
@@ -4487,10 +4744,10 @@ refresh_runtime_cron(){
       }
       bridge_boot=yes
     fi
-    for component in xray sing-box caddy sudoku; do
+    for component in xray sing-box caddy sudoku trusttunnel; do
       [ "$component:$rep_mode" != caddy:yes ] || continue
       [ "$bridge_boot:$component" != yes:sing-box ] || continue
-      case "$component" in xray) cfg=xr.json ;; sing-box) cfg=sb.json ;; caddy) cfg=Caddyfile ;; sudoku) cfg=sudoku.json ;; esac
+      case "$component" in xray) cfg=xr.json ;; sing-box) cfg=sb.json ;; caddy) cfg=Caddyfile ;; sudoku) cfg=sudoku.json ;; trusttunnel) cfg=tt_vpn.toml ;; esac
       [ -s "$HOME/agsbx/$cfg" ] || continue
       if [ "$bridge_boot:$component" = yes:xray ]; then entry=$(component_cron_line xray bridge "$bridge_script")
       else entry=$(component_cron_line "$component"); fi
@@ -4853,6 +5110,388 @@ EOF
   start_agsbx_core sudoku || return 1
   wait_component_listeners sudoku || return 1
   echo "Sudoku 官方服务端已启动（端口：$port/tcp，HTTP Mask：$sudokumask，Pure Downlink：$pure_bool）。"
+}
+
+toml_escape(){
+  printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+uptt(){
+  local version="${1:-latest}" metadata tag asset stage expected actual checksum_asset candidate
+  [ "$version" = latest ] || { case "$version" in v*) ;; *) version="v$version" ;; esac; }
+  metadata=$(release_json TrustTunnel/TrustTunnel "$version") && tag=$(release_tag "$metadata") || {
+    echo "错误：无法获取 TrustTunnel/TrustTunnel 发布信息。"; return 1
+  }
+  asset=$(printf '%s\n' "$metadata" | awk -v cpu="$cpu" -v tag="$tag" '
+    /"name":[[:space:]]*"/ {
+      n=$0; sub(/^.*"name":[[:space:]]*"/, "", n); sub(/".*$/, "", n)
+      low=tolower(n)
+      if (low !~ /linux/) next
+      if (low ~ /(dbgsym|sha256|dgst|sig|asc|txt|sbom|checksum|android|darwin|windows|freebsd|macos|desktop)/) next
+      if (cpu == "amd64" && low !~ /(x86_64|amd64)/) next
+      if (cpu == "arm64" && low !~ /(aarch64|arm64)/) next
+      score=1
+      arch=(cpu == "amd64" ? "x86_64" : "aarch64")
+      if (low == tolower("trusttunnel-" tag "-linux-" arch ".tar.gz")) score=100
+      else if (low ~ /^trusttunnel-.*linux.*(x86_64|amd64|aarch64|arm64).*\.tar\.gz$/) score=80
+      else if (low ~ /\.tar\.gz$|\.tgz$/) score=60
+      if (score > best_score) { best_score=score; best=n }
+    }
+    END { if (best != "") print best }
+  ')
+  if [ -z "$asset" ]; then
+    echo "错误：在 TrustTunnel/TrustTunnel $tag 发布中未找到匹配 linux/$cpu 的资产。"; return 1
+  fi
+  stage=$(mktemp -d "$HOME/agsbx/.stage-tt.XXXXXX") || return 1
+  expected=$(release_asset_digest "$metadata" "$asset" 2>/dev/null || true)
+  if [ -z "$expected" ]; then
+    checksum_asset=$(printf '%s\n' "$metadata" | awk -v target="$asset" '
+      /"name":[[:space:]]*"/ {
+        n=$0; sub(/^.*"name":[[:space:]]*"/, "", n); sub(/".*$/, "", n)
+        low=tolower(n)
+        if (n == target ".sha256" || n == target ".sha256.txt" || low ~ /^(sha256sums|checksums)(\.txt)?$/) {
+          print n; exit
+        }
+      }
+    ')
+    if [ -n "$checksum_asset" ] && fetch_file "https://github.com/TrustTunnel/TrustTunnel/releases/download/$tag/$checksum_asset" "$stage/checksums.txt"; then
+      expected=$(awk -v file="$asset" '
+        $2 == file || $2 == "*" file || $2 == "./" file { print tolower($1); exit }
+        NF == 1 && $1 ~ /^[0-9a-fA-F]{64}$/ { print tolower($1); exit }
+      ' "$stage/checksums.txt")
+    fi
+  fi
+  if ! [[ "$expected" =~ ^[0-9a-f]{64}$ ]]; then
+    rm -rf -- "$stage"
+    echo "错误：GitHub 未提供 TrustTunnel 资产（$asset）的 SHA256，拒绝无校验下载。"; return 1
+  fi
+  echo "正在下载 TrustTunnel 官方内核：$tag（$asset）……"
+  if ! fetch_file "https://github.com/TrustTunnel/TrustTunnel/releases/download/$tag/$asset" "$stage/archive" progress; then
+    rm -rf -- "$stage"; return 1
+  fi
+  actual=$(sha256sum "$stage/archive" | awk '{print $1}') || { rm -rf -- "$stage"; return 1; }
+  if [ "$actual" != "$expected" ]; then
+    rm -rf -- "$stage"; echo "错误：TrustTunnel SHA256 不匹配，未替换原内核。"; return 1
+  fi
+  echo "TrustTunnel SHA256 校验通过 ✓ ($actual)"
+  mkdir -p "$stage/extract" || { rm -rf -- "$stage"; return 1; }
+  tar -xzf "$stage/archive" -C "$stage/extract" >/dev/null 2>&1 || {
+    rm -rf -- "$stage"; echo "错误：解压 TrustTunnel 压缩包失败。"; return 1
+  }
+  candidate=$(find "$stage/extract" -type f -name 'trusttunnel_endpoint' 2>/dev/null | head -1)
+  if [ -z "$candidate" ]; then
+    candidate=$(find "$stage/extract" -type f -perm /111 ! -name '*.sh' ! -name 'setup_wizard' 2>/dev/null | head -1)
+  fi
+  if [ -z "$candidate" ] || ! activate_core_candidate trusttunnel "$candidate"; then
+    rm -rf -- "$stage"
+    echo "错误：TrustTunnel 候选版本未通过可执行检查或未能启用（若为 Alpine/musl 或旧 glibc 系统，官方预编译包可能不兼容）。"
+    return 1
+  fi
+  atomic_text_file "$HOME/agsbx/tt_version" "${tag#v}" || { rm -rf -- "$stage"; return 1; }
+  rm -rf -- "$stage"
+  echo "TrustTunnel 官方内核已安装：$tag"
+}
+
+# RFC 9000 / DEEP_LINK.md 变长整数编码（前缀 00: 0..63, 01: 64..16383, 10: 16384..1073741823）。
+tt_tlv_varint(){
+  local n="$1"
+  if [ "$n" -le 63 ]; then
+    printf "\\$(printf '%03o' "$n")"
+  elif [ "$n" -le 16383 ]; then
+    printf "\\$(printf '%03o' "$(( 64 | (n >> 8) ))")\\$(printf '%03o' "$(( n & 255 ))")"
+  else
+    printf "\\$(printf '%03o' "$(( 128 | (n >> 24) ))")\\$(printf '%03o' "$(( (n >> 16) & 255 ))")\\$(printf '%03o' "$(( (n >> 8) & 255 ))")\\$(printf '%03o' "$(( n & 255 ))")"
+  fi
+}
+
+tt_tlv_bytes_str(){
+  local tag="$1" val="$2" len
+  local LC_ALL=C
+  len=${#val}
+  tt_tlv_varint "$tag"
+  tt_tlv_varint "$len"
+  printf '%s' "$val"
+}
+
+tt_tlv_byte(){
+  local tag="$1" val="$2"
+  tt_tlv_varint "$tag"
+  tt_tlv_varint 1
+  printf "\\$(printf '%03o' "$val")"
+}
+
+# 生成符合官方 DEEP_LINK.md 的 tt://?<base64url-TLV> 深链（同时兼容 Shadowrocket 与官方客户端）。
+tt_deeplink_link(){
+  local host_sni="$1" addr_port="$2" user="$3" pass="$4" has_ipv6="$5" up_proto="$6" anti_dpi="$7" cr_mode="$8" cr_val="$9" remark="${10}" embed_cert="${11}" cert_file="${12}" trusted_flag="${13}"
+  local der_tmp='' der_len=0 payload ipv6_byte=0 proto_byte=1
+  [ "$has_ipv6" = true ] && ipv6_byte=1
+  [ "$up_proto" = http3 ] && proto_byte=2
+  if [ "$trusted_flag" != yes ] && [ "$embed_cert" = y ]; then
+    [ -s "$cert_file" ] || return 1
+    der_tmp=$(mktemp) || return 1
+    if ! openssl x509 -in "$cert_file" -outform DER -out "$der_tmp" 2>/dev/null || [ ! -s "$der_tmp" ]; then
+      rm -f -- "$der_tmp"
+      return 1
+    fi
+    der_len=$(wc -c < "$der_tmp" | tr -d ' ')
+  fi
+  payload=$({
+    tt_tlv_byte 0 1
+    tt_tlv_bytes_str 1 "$host_sni"
+    tt_tlv_bytes_str 2 "$addr_port"
+    [ -z "$host_sni" ] || tt_tlv_bytes_str 3 "$host_sni"
+    tt_tlv_byte 4 "$ipv6_byte"
+    tt_tlv_bytes_str 5 "$user"
+    tt_tlv_bytes_str 6 "$pass"
+    tt_tlv_byte 7 0
+    if [ -n "$der_tmp" ] && [ "$der_len" -gt 0 ]; then
+      tt_tlv_varint 8
+      tt_tlv_varint "$der_len"
+      cat "$der_tmp"
+    fi
+    tt_tlv_byte 9 "$proto_byte"
+    [ "$anti_dpi" != y ] || tt_tlv_byte 10 1
+    if [ "$cr_mode" = prefix ] && [ -n "$cr_val" ]; then
+      tt_tlv_bytes_str 11 "$cr_val"
+    elif [ "$cr_mode" = authkey ] && [ -n "$cr_val" ]; then
+      tt_tlv_bytes_str 15 "$cr_val"
+    fi
+    tt_tlv_bytes_str 12 "$remark"
+  } | base64 | tr -d '\r\n=' | tr '+/' '-_')
+  [ -z "$der_tmp" ] || rm -f -- "$der_tmp"
+  [ -n "$payload" ] || return 1
+  printf 'tt://?%s' "$payload"
+}
+
+tt_clash_yaml_node(){
+  local node_name="$1" server_addr="$2" port="$3" user="$4" pass="$5" sni="$6" up_proto="$7" cc="$8" trusted_flag="$9" cert_hash="${10}"
+  local alpn_val='h2'
+  [ "$up_proto" != http3 ] || alpn_val='h3'
+  cat <<EOF
+- name: "$(json_escape "$node_name")"
+  type: trusttunnel
+  server: "$(json_escape "$server_addr")"
+  port: $port
+  username: "$(json_escape "$user")"
+  password: "$(json_escape "$pass")"
+  sni: "$(json_escape "$sni")"
+  alpn:
+    - $alpn_val
+  udp: true
+  health-check: true
+  client-fingerprint: chrome
+  skip-cert-verify: false
+EOF
+  if [ "$trusted_flag" != yes ] && [ -n "$cert_hash" ]; then
+    printf '  fingerprint: "%s"\n' "$(json_escape "$cert_hash")"
+  fi
+  if [ "$up_proto" = http3 ]; then
+    printf '  quic: true\n'
+    printf '  congestion-controller: "%s"\n' "$(json_escape "$cc")"
+  fi
+}
+
+installtt(){
+  local port tt_user_eff tt_pass_eff tt_cr_eff tt_sni listen_addr ipv6_avail allow_private
+  local rules_line='' listen_blocks='' rp_block='' catchall_host='' hosts_toml vpn_toml cred_toml rules_toml='' meta_content cidr_item
+  section "配置 TrustTunnel 官方独立服务端"
+  if [ ! -x "$HOME/agsbx/trusttunnel" ]; then
+    uptt || return 1
+  fi
+  setup_tls_certificate || return 1
+  port=$(cat "$HOME/agsbx/port_tt" 2>/dev/null)
+  valid_port "$port" || { echo "错误：TrustTunnel 监听端口无效。"; return 1; }
+  port=$((10#$port))
+  tt_sni=$(cat "$HOME/agsbx/sni.txt" 2>/dev/null)
+  [ -s "$tls_cert_file" ] && [ -s "$tls_key_file" ] && [ -n "$tt_sni" ] || {
+    echo "错误：TrustTunnel 缺少有效的 TLS 证书、私钥或 SNI 状态。"; return 1
+  }
+  if [ -n "$ttuser" ]; then
+    tt_user_eff="$ttuser"
+  else
+    tt_user_eff="tt$(openssl rand -hex 5)" || return 1
+  fi
+  if [ -n "$ttpass" ]; then
+    tt_pass_eff="$ttpass"
+  else
+    tt_pass_eff=$(openssl rand -hex 12) || return 1
+  fi
+  tt_cr_eff="$ttcrval"
+  if [ "$ttcrmode" = prefix ] && [ -z "$tt_cr_eff" ]; then
+    tt_cr_eff=$(openssl rand -hex 8) || return 1
+  elif [ "$ttcrmode" = authkey ] && [ -z "$tt_cr_eff" ]; then
+    tt_cr_eff=$(openssl rand -hex 32) || return 1
+  fi
+  if [ "$effective_ipv_mode" = 4 ] || [ ! -f /proc/net/if_inet6 ] \
+    || [ "$(cat /proc/sys/net/ipv6/conf/all/disable_ipv6 2>/dev/null)" = 1 ]; then
+    listen_addr="0.0.0.0:${port}"
+  elif [ "$(cat /proc/sys/net/ipv6/bindv6only 2>/dev/null)" = 1 ] \
+    && [ "$ip_policy_preferred_family" != 6 ] && [ -n "$v4" ]; then
+    listen_addr="0.0.0.0:${port}"
+  else
+    listen_addr="[::]:${port}"
+  fi
+  case "$ttipv6" in
+    y) ipv6_avail=true ;;
+    n) ipv6_avail=false ;;
+    *) [ "$effective_ipv_mode" != 4 ] && [ -n "$v6" ] && ipv6_avail=true || ipv6_avail=false ;;
+  esac
+  [ "$ttprivate" = y ] && allow_private=true || allow_private=false
+
+  cred_toml=$(cat <<EOF
+[[client]]
+username = "$(toml_escape "$tt_user_eff")"
+password = "$(toml_escape "$tt_pass_eff")"
+EOF
+)
+  atomic_text_file "$HOME/agsbx/tt_credentials.toml" "$cred_toml" || return 1
+  atomic_text_file "$HOME/agsbx/tt_user" "$tt_user_eff" || return 1
+  atomic_text_file "$HOME/agsbx/tt_pass" "$tt_pass_eff" || return 1
+
+  if [ -n "$ttfb" ] && [ "$ttcatchall" = y ]; then
+    catchall_host="fallback.local"
+    [ "$tt_sni" != "$catchall_host" ] || catchall_host="catchall.local"
+    hosts_toml=$(cat <<EOF
+catch_all_sni_host = "$(toml_escape "$catchall_host")"
+
+[[main_hosts]]
+hostname = "$(toml_escape "$tt_sni")"
+cert_chain_path = "$(toml_escape "$tls_cert_file")"
+private_key_path = "$(toml_escape "$tls_key_file")"
+
+[[reverse_proxy_hosts]]
+hostname = "$(toml_escape "$catchall_host")"
+cert_chain_path = "$(toml_escape "$tls_cert_file")"
+private_key_path = "$(toml_escape "$tls_key_file")"
+EOF
+)
+  else
+    hosts_toml=$(cat <<EOF
+[[main_hosts]]
+hostname = "$(toml_escape "$tt_sni")"
+cert_chain_path = "$(toml_escape "$tls_cert_file")"
+private_key_path = "$(toml_escape "$tls_key_file")"
+EOF
+)
+  fi
+  atomic_text_file "$HOME/agsbx/tt_hosts.toml" "$hosts_toml" || return 1
+
+  if [ "$ttcrmode" != off ] || [ -n "$ttcidr" ]; then
+    local cr_line=''
+    if [ "$ttcrmode" = prefix ]; then
+      cr_line="client_random_prefix = \"$(toml_escape "$tt_cr_eff")\""$'\n'
+    elif [ "$ttcrmode" = authkey ]; then
+      cr_line="client_random_auth_key = \"$(toml_escape "$tt_cr_eff")\""$'\n'
+    fi
+    if [ -n "$ttcidr" ]; then
+      IFS=',' read -r -a tt_cidr_arr <<< "$ttcidr"
+      for cidr_item in "${tt_cidr_arr[@]}"; do
+        [ -n "$cidr_item" ] || continue
+        rules_toml="${rules_toml}[[rule]]"$'\n'"cidr = \"$(toml_escape "$cidr_item")\""$'\n'"${cr_line}action = \"allow\""$'\n\n'
+      done
+    else
+      rules_toml="[[rule]]"$'\n'"${cr_line}action = \"allow\""$'\n\n'
+    fi
+    rules_toml="${rules_toml}[[rule]]"$'\n'"action = \"deny\""
+    atomic_text_file "$HOME/agsbx/tt_rules.toml" "$rules_toml" || return 1
+    rules_line="rules_file = \"$(toml_escape "$HOME/agsbx/tt_rules.toml")\""$'\n'
+  else
+    rm -f -- "$HOME/agsbx/tt_rules.toml"
+  fi
+
+  case "$tttrans" in
+    tcp)
+      listen_blocks=$(cat <<'EOF'
+[listen_protocols.http1]
+upload_buffer_size = 32768
+
+[listen_protocols.http2]
+initial_connection_window_size = 8388608
+initial_stream_window_size = 131072
+max_concurrent_streams = 1000
+max_frame_size = 16384
+header_table_size = 65536
+EOF
+) ;;
+    h2)
+      listen_blocks=$(cat <<'EOF'
+[listen_protocols.http2]
+initial_connection_window_size = 8388608
+initial_stream_window_size = 131072
+max_concurrent_streams = 1000
+max_frame_size = 16384
+header_table_size = 65536
+EOF
+) ;;
+    quic)
+      listen_blocks=$(cat <<'EOF'
+[listen_protocols.quic]
+recv_udp_payload_size = 1350
+send_udp_payload_size = 1350
+initial_max_data = 104857600
+initial_max_stream_data_bidi_local = 1048576
+EOF
+) ;;
+    *)
+      listen_blocks=$(cat <<'EOF'
+[listen_protocols.http1]
+upload_buffer_size = 32768
+
+[listen_protocols.http2]
+initial_connection_window_size = 8388608
+initial_stream_window_size = 131072
+max_concurrent_streams = 1000
+max_frame_size = 16384
+header_table_size = 65536
+
+[listen_protocols.quic]
+recv_udp_payload_size = 1350
+send_udp_payload_size = 1350
+initial_max_data = 104857600
+initial_max_stream_data_bidi_local = 1048576
+EOF
+) ;;
+  esac
+
+  if [ -n "$ttfb" ]; then
+    rp_block=$'\n'"[reverse_proxy]"$'\n'"server_address = \"$(toml_escape "$ttfb")\""$'\n'
+    [ -z "$ttfbpath" ] || rp_block="${rp_block}path_mask = \"$(toml_escape "$ttfbpath")\""$'\n'
+    rp_block="${rp_block}h3_backward_compatibility = false"
+  fi
+
+  vpn_toml=$(cat <<EOF
+listen_address = "$(toml_escape "$listen_addr")"
+ipv6_available = $ipv6_avail
+allow_private_network_connections = $allow_private
+auth_failure_status_code = $ttauthfail
+non_connect_auth_failure_status_code = $ttauthfail
+tls_handshake_timeout_secs = 10
+client_listener_timeout_secs = 600
+connection_establishment_timeout_secs = 30
+tcp_connections_timeout_secs = 604800
+udp_connections_timeout_secs = 300
+credentials_file = "$(toml_escape "$HOME/agsbx/tt_credentials.toml")"
+${rules_line}
+[listen_protocols]
+${listen_blocks}
+
+[forward_protocol]
+direct = {}
+${rp_block}
+EOF
+)
+  atomic_text_file "$HOME/agsbx/tt_vpn.toml" "$vpn_toml" || return 1
+  meta_content=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s' \
+    "$tttrans" "$ttup" "$ttauthfail" "$ttcrmode" "$tt_cr_eff" "$ttcidr" \
+    "$ttfb" "$ttfbpath" "$ttcatchall" "$ttantidpi" "$ttprivate" "$ipv6_avail" \
+    "$ttembedcert" "$ttcc" "$tt_sni")
+  atomic_text_file "$HOME/agsbx/tt_meta" "$meta_content" || return 1
+  if [ -n "$name" ] && [ ! -s "$HOME/agsbx/name" ]; then
+    atomic_text_file "$HOME/agsbx/name" "${name}-" || return 1
+  fi
+  start_agsbx_core trusttunnel || return 1
+  wait_component_listeners trusttunnel || return 1
+  echo "TrustTunnel 官方服务端已启动（端口：$port，传输栈：$tttrans，认证失败状态码：$ttauthfail，client_random：$ttcrmode）。"
 }
 upcaddy(){
 # NaiveProxy 服务端＝带 forwardproxy@naive 分支的 Caddy。两种获取方式，按 CPU 架构与用户选择决定：
@@ -7046,6 +7685,14 @@ reload_shared_certificate(){
     # Sing-box 原生监听证书文件变化；Xray 的受管实例确认重启成功后再提交指纹。
     if [ "$core" = xray ]; then kctl restart xray || return 1; fi
   done
+  if grep -Fq "$cf" "$HOME/agsbx/tt_hosts.toml" 2>/dev/null && agsbx_component_running trusttunnel; then
+    local tt_pid
+    for tt_pid in $(agsbx_component_pids trusttunnel); do
+      kill -HUP "$tt_pid" 2>/dev/null || return 1
+    done
+    sleep 1
+    agsbx_component_running trusttunnel || return 1
+  fi
   write_cert_fingerprint || return 1
   printf '%s\n' "$fp" | ip_policy_atomic_write "$HOME/agsbx/.caddy_cert_fp" 600
 }
@@ -10223,6 +10870,10 @@ normalize_secondary_selectors(){
         secondary_error "Sudoku 官方服务端当前仅支持直连出站，不支持 secp 二级代理。"
         return 1
         ;;
+      tt|ttpt|trusttunnel)
+        secondary_error "TrustTunnel 官方服务端当前仅支持直连出站，不支持 secp 二级代理。"
+        return 1
+        ;;
       ca|all)
         secondary_error "不支持 secp=$normalized；NaiveProxy 二级出站请显式使用 secp=naive。"
         return 1
@@ -11918,6 +12569,12 @@ validate_generated_core_config(){
       config="$HOME/agsbx/sudoku.json"
       [ -x "$binary" ] && [ -s "$config" ] || { echo "错误：Sudoku 内核或配置文件不存在。"; return 1; }
       ;;
+    trusttunnel)
+      binary="$HOME/agsbx/trusttunnel"
+      config="$HOME/agsbx/tt_vpn.toml"
+      [ -x "$binary" ] && [ -s "$config" ] && [ -s "$HOME/agsbx/tt_hosts.toml" ] && [ -s "$HOME/agsbx/tt_credentials.toml" ] \
+        || { echo "错误：TrustTunnel 内核或配置文件不完整。"; return 1; }
+      ;;
     *) return 1 ;;
   esac
 }
@@ -11933,6 +12590,9 @@ start_agsbx_core(){
       ;;
     sudoku)
       binary="$HOME/agsbx/sudoku"; config="$HOME/agsbx/sudoku.json"; service="agsbx-sudoku"; init_name="agsbx-sudoku"; description="Airgosbx Sudoku Server Service"; exec_args="-c $config"
+      ;;
+    trusttunnel)
+      binary="$HOME/agsbx/trusttunnel"; config="$HOME/agsbx/tt_vpn.toml"; service="agsbx-tt"; init_name="agsbx-tt"; description="Airgosbx TrustTunnel Server Service"; exec_args="$config $HOME/agsbx/tt_hosts.toml"
       ;;
     *) return 1 ;;
   esac
@@ -12002,6 +12662,8 @@ EOF
   else
     if [ "$core" = sudoku ]; then
       nohup "$binary" -c "$config" 8>&- > "$HOME/agsbx/${core}.log" 2>&1 &
+    elif [ "$core" = trusttunnel ]; then
+      nohup "$binary" "$config" "$HOME/agsbx/tt_hosts.toml" 8>&- > "$HOME/agsbx/${core}.log" 2>&1 &
     else
       nohup "$binary" run -c "$config" 8>&- > "$HOME/agsbx/${core}.log" 2>&1 &
     fi
@@ -12654,6 +13316,7 @@ install_required_singbox=no
 install_required_caddy=no
 install_required_mita=no
 install_required_sudoku=no
+install_required_tt=no
 install_required_argo=no
 install_required_subscription=no
 if [ "$rep_mode" = yes ]; then
@@ -12663,6 +13326,7 @@ else
 fi
 [ "$mierup" = yes ] && install_required_mita=yes
 [ "$sudokup" = yes ] && install_required_sudoku=yes
+[ "$ttp" = yes ] && install_required_tt=yes
 [ -n "$argo" ] && [ -n "$vmag" ] && install_required_argo=yes
 [ "$sub" = yes ] && install_required_subscription=yes
 if [ "$mierup" = yes ]; then
@@ -12759,6 +13423,7 @@ fi
 persist_secondary_proxy_state || return 1
 if [ "$mierup" = yes ]; then installmita || return 1; fi
 if [ "$sudokup" = yes ]; then installsudoku || return 1; fi
+if [ "$ttp" = yes ]; then installtt || return 1; fi
 
 # 双内核 Hysteria 2 跳跃端口规则解耦挂载
 # Sing-box 驱动的 Hysteria 2：shyjpt -> port_hy2
@@ -12916,6 +13581,7 @@ kstat(){
       argo) ver=$("$bin" version 2>/dev/null | awk '{print $3}') ;;
       caddy) ver=$("$bin" version 2>/dev/null | awk '{print $1}' | sed 's/^v//') ;;
       sudoku) ver=$(cat "$HOME/agsbx/sudoku_version" 2>/dev/null | sed 's/^v//') ;;
+      tt) ver=$(cat "$HOME/agsbx/tt_version" 2>/dev/null | sed 's/^v//') ;;
     esac
     kv_row "${name}：" "${C_GREEN}运行中${C_RESET}${ver:+（v${ver}）}" 18
     return
@@ -12939,6 +13605,7 @@ kstat "Sing-box"    "$HOME/agsbx/sing-box"    "$HOME/agsbx/sb.json"      'agsbx/
 kstat "Xray"        "$HOME/agsbx/xray"        "$HOME/agsbx/xr.json"      'agsbx/xray'        xray "$HOME/agsbx/xray.log"
 kstat "Caddy"       "$HOME/agsbx/caddy"       "$HOME/agsbx/Caddyfile"    'agsbx/caddy'       caddy "$HOME/agsbx/caddy.log"
 kstat "Sudoku"      "$HOME/agsbx/sudoku"      "$HOME/agsbx/sudoku.json"  'agsbx/sudoku'      sudoku "$HOME/agsbx/sudoku.log"
+kstat "TrustTunnel" "$HOME/agsbx/trusttunnel" "$HOME/agsbx/tt_vpn.toml"  'agsbx/trusttunnel' tt     "$HOME/agsbx/trusttunnel.log"
 kstat "Cloudflared" "$HOME/agsbx/cloudflared" "$HOME/agsbx/argoport.log" 'agsbx/cloudflared' argo "$HOME/agsbx/argo.log"
 if [ -f "$HOME/agsbx/mita_managed" ]; then
   if [ ! -s "$HOME/agsbx/mita.json" ]; then
@@ -13132,7 +13799,7 @@ fi
 render_cert_hash=$(certificate_fingerprint 2>/dev/null)
 local direct_xh_options='' direct_xh_title='' direct_vl_options='' direct_vl_title='' direct_vl_export_yaml=no
 # 同一进程重复展示时，不能复用上次定义的可选协议订阅函数。
-unset -f clvlpt clvlpt1 clvmpt clvmpt1 clvmcdnpt clvmcdnpt1 clhypt clhypt1 clxhypt clxhypt1 cltupt cltupt1 clvmargopt clvmargopt1 clmierupt clmierupt1 clsudokupt clsudokupt1 clsudokucdnpt clsudokucdnpt1 clsudokuargopt clsudokuargopt1
+unset -f clvlpt clvlpt1 clvmpt clvmpt1 clvmcdnpt clvmcdnpt1 clhypt clhypt1 clxhypt clxhypt1 cltupt cltupt1 clvmargopt clvmargopt1 clmierupt clmierupt1 clsudokupt clsudokupt1 clsudokucdnpt clsudokucdnpt1 clsudokuargopt clsudokuargopt1 clttpt_h2 clttpt_h2_1 clttpt_h3 clttpt_h3_1
 ipbest(){
 # 优先复用 v4v6() 已探测到的地址，两者皆空时才重新发起外网探测
 first_family="$ip_policy_preferred_family"
@@ -13807,6 +14474,135 @@ if [ -f "$HOME/agsbx/cdnym" ] && [ "$sd_mask" = ws ] && [ "$(cat "$HOME/agsbx/vl
   fi
 fi
 fi
+# TrustTunnel 导出官方标准 tt:// 深链（兼容 Shadowrocket 与官方客户端）与 Mihomo YAML；仅直连出站。
+local tt_ready=no tt_port='' tt_u='' tt_p='' tt_trans_s='' tt_up_s='' tt_af_s='' tt_crm_s='' tt_crv_s='' tt_cidr_s='' tt_fb_s='' tt_fbp_s='' tt_ca_s='' tt_adpi_s='' tt_priv_s='' tt_v6_s='' tt_emb_s='' tt_cc_s='' tt_sni_s=''
+if [ -s "$HOME/agsbx/tt_vpn.toml" ] && [ -s "$HOME/agsbx/tt_hosts.toml" ] && [ -s "$HOME/agsbx/tt_user" ] && [ -s "$HOME/agsbx/tt_pass" ] && [ -s "$HOME/agsbx/port_tt" ] && [ -s "$HOME/agsbx/tt_meta" ]; then
+  tt_port=$(cat "$HOME/agsbx/port_tt" 2>/dev/null)
+  tt_u=$(cat "$HOME/agsbx/tt_user" 2>/dev/null)
+  tt_p=$(cat "$HOME/agsbx/tt_pass" 2>/dev/null)
+  tt_trans_s=$(sed -n '1p' "$HOME/agsbx/tt_meta" 2>/dev/null)
+  tt_up_s=$(sed -n '2p' "$HOME/agsbx/tt_meta" 2>/dev/null)
+  tt_af_s=$(sed -n '3p' "$HOME/agsbx/tt_meta" 2>/dev/null)
+  tt_crm_s=$(sed -n '4p' "$HOME/agsbx/tt_meta" 2>/dev/null)
+  tt_crv_s=$(sed -n '5p' "$HOME/agsbx/tt_meta" 2>/dev/null)
+  tt_cidr_s=$(sed -n '6p' "$HOME/agsbx/tt_meta" 2>/dev/null)
+  tt_fb_s=$(sed -n '7p' "$HOME/agsbx/tt_meta" 2>/dev/null)
+  tt_fbp_s=$(sed -n '8p' "$HOME/agsbx/tt_meta" 2>/dev/null)
+  tt_ca_s=$(sed -n '9p' "$HOME/agsbx/tt_meta" 2>/dev/null)
+  tt_adpi_s=$(sed -n '10p' "$HOME/agsbx/tt_meta" 2>/dev/null)
+  tt_priv_s=$(sed -n '11p' "$HOME/agsbx/tt_meta" 2>/dev/null)
+  tt_v6_s=$(sed -n '12p' "$HOME/agsbx/tt_meta" 2>/dev/null)
+  tt_emb_s=$(sed -n '13p' "$HOME/agsbx/tt_meta" 2>/dev/null)
+  tt_cc_s=$(sed -n '14p' "$HOME/agsbx/tt_meta" 2>/dev/null)
+  tt_sni_s=$(cat "$HOME/agsbx/sni.txt" 2>/dev/null)
+  [ -n "$tt_sni_s" ] || tt_sni_s=$(sed -n '15p' "$HOME/agsbx/tt_meta" 2>/dev/null)
+  if valid_port "$tt_port" && [ -n "$tt_u" ] && [ -n "$tt_p" ] && [ -n "$tt_trans_s" ] && [ -n "$tt_up_s" ] && [ -n "$tt_sni_s" ]; then
+    tt_ready=yes
+  elif [ "$cip_mode" = publish ]; then
+    echo "错误：TrustTunnel 状态文件不完整或损坏，拒绝发布订阅；请用完整参数执行 agsbx rep。"
+    return 1
+  fi
+fi
+if [ "$tt_ready" = yes ]; then
+proto_gap
+local tt_cert_file_s tt_cert_mode_s tt_cert_hash_s tt_trusted='no' tt_link_h2='' tt_link_h3='' tt_h2_name tt_h3_name
+local tt_trans_disp tt_cr_disp tt_fb_disp tt_cert_disp tt_want_h2=no tt_want_h3=no
+tt_cert_file_s=$(cat "$HOME/agsbx/cert_file_path" 2>/dev/null)
+tt_cert_mode_s=$(cat "$HOME/agsbx/cert_mode" 2>/dev/null)
+tt_cert_hash_s="$render_cert_hash"
+if cert_trusted "$tt_cert_mode_s"; then
+  tt_trusted=yes
+else
+  [[ "$tt_cert_hash_s" =~ ^[0-9a-f]{64}$ ]] || { echo "错误：TrustTunnel 自签证书指纹无效，拒绝生成节点链接。"; return 1; }
+fi
+case "$tt_up_s" in
+  http2) tt_want_h2=yes ;;
+  http3) tt_want_h3=yes ;;
+  *) tt_want_h2=yes; tt_want_h3=yes ;;
+esac
+tt_h2_name="${sxname}tt-h2-${hostname}"
+tt_h3_name="${sxname}tt-h3-${hostname}"
+if [ "$tt_want_h2" = yes ]; then
+  tt_link_h2=$(tt_deeplink_link "$tt_sni_s" "${server_ip}:${tt_port}" "$tt_u" "$tt_p" "$tt_v6_s" "http2" "$tt_adpi_s" "$tt_crm_s" "$tt_crv_s" "$tt_h2_name" "$tt_emb_s" "$tt_cert_file_s" "$tt_trusted") || {
+    echo "错误：生成 TrustTunnel HTTP/2 深链失败。"; return 1
+  }
+  append_node_link "$tt_link_h2" || return 1
+fi
+if [ "$tt_want_h3" = yes ]; then
+  tt_link_h3=$(tt_deeplink_link "$tt_sni_s" "${server_ip}:${tt_port}" "$tt_u" "$tt_p" "$tt_v6_s" "http3" "$tt_adpi_s" "$tt_crm_s" "$tt_crv_s" "$tt_h3_name" "$tt_emb_s" "$tt_cert_file_s" "$tt_trusted") || {
+    echo "错误：生成 TrustTunnel HTTP/3 深链失败。"; return 1
+  }
+  append_node_link "$tt_link_h3" || return 1
+fi
+if [ "$sub" = yes ] && [ "$tt_crm_s" = off ]; then
+  if [ "$tt_want_h2" = yes ]; then
+    clttpt_h2(){
+      tt_clash_yaml_node "$tt_h2_name" "$server_host" "$tt_port" "$tt_u" "$tt_p" "$tt_sni_s" "http2" "$tt_cc_s" "$tt_trusted" "$tt_cert_hash_s"
+    }
+    clttpt_h2_1(){
+      printf -- '- "%s"\n' "$(json_escape "$tt_h2_name")"
+    }
+  fi
+  if [ "$tt_want_h3" = yes ]; then
+    clttpt_h3(){
+      tt_clash_yaml_node "$tt_h3_name" "$server_host" "$tt_port" "$tt_u" "$tt_p" "$tt_sni_s" "http3" "$tt_cc_s" "$tt_trusted" "$tt_cert_hash_s"
+    }
+    clttpt_h3_1(){
+      printf -- '- "%s"\n' "$(json_escape "$tt_h3_name")"
+    }
+  fi
+fi
+case "$tt_trans_s" in
+  tcp) tt_trans_disp='仅 TCP（HTTP/1.1 + HTTP/2）' ;;
+  h2) tt_trans_disp='仅 TCP（HTTP/2）' ;;
+  quic) tt_trans_disp='仅 UDP（QUIC / HTTP/3）' ;;
+  *) tt_trans_disp='全协议（TCP H1/H2 + UDP H3 同端口）' ;;
+esac
+case "$tt_crm_s" in
+  prefix) tt_cr_disp="prefix（${tt_crv_s}）" ;;
+  authkey) tt_cr_disp="authkey（${tt_crv_s}）" ;;
+  *) tt_cr_disp='关闭（兼容 Shadowrocket / Mihomo / 官方客户端）' ;;
+esac
+if [ -n "$tt_fb_s" ]; then
+  tt_fb_disp="${tt_fb_s}${tt_fbp_s:+（path_mask=${tt_fbp_s}）}"
+  [ "$tt_ca_s" != y ] || tt_fb_disp="${tt_fb_disp} + 未知 SNI 回落"
+else
+  tt_fb_disp='未启用'
+fi
+if [ "$tt_trusted" = yes ]; then
+  tt_cert_disp="公信 CA 证书（${tt_cert_mode_s}；Allow Insecure=关）"
+elif [ "$tt_emb_s" = y ]; then
+  tt_cert_disp="自签证书（已内嵌 DER 至 tt:// 深链；SHA256=${tt_cert_hash_s}）"
+else
+  tt_cert_disp="自签证书（短链未内嵌 DER；Shadowrocket 可填 SHA256=${tt_cert_hash_s}）"
+fi
+node_title "💣【 TrustTunnel 】（AdGuard 官方独立服务端）" "$(protocol_outbound_badge ttpt trusttunnel)"
+kv_row "地址 / 端口：" "$server_host : $tt_port" 19
+kv_row "User / Password：" "$tt_u  ／  $tt_p" 19
+kv_row "SNI / TLS 证书：" "$tt_sni_s（${tt_cert_disp}）" 19
+kv_row "监听协议栈：" "$tt_trans_disp" 19
+kv_row "防探测状态码：" "HTTP ${tt_af_s}（未认证 CONNECT 与普通请求均隐藏 407）" 19
+kv_row "client_random：" "$tt_cr_disp" 19
+[ -z "$tt_cidr_s" ] || kv_row "CIDR 白名单：" "$tt_cidr_s" 19
+kv_row "反代回落：" "$tt_fb_disp" 19
+kv_row "高级标记：" "UDP Relay=内置(_udp2) ／ anti_dpi=${tt_adpi_s} ／ private=${tt_priv_s} ／ ipv6=${tt_v6_s}" 19
+if [ -n "$tt_link_h2" ]; then
+  echo "  官方深链 tt://（HTTP/2 · TCP，兼容 Shadowrocket 与官方客户端）："
+  echo "$tt_link_h2"
+fi
+if [ -n "$tt_link_h3" ]; then
+  echo "  官方深链 tt://（HTTP/3 · QUIC/UDP，需放行 UDP/${tt_port}）："
+  echo "$tt_link_h3"
+fi
+if [ "$tt_crm_s" != off ]; then
+  note_line "已启用 TLS client_random 规则：请使用支持该特性的官方 TrustTunnel 客户端导入上方 tt:// 深链；未写入 Mihomo YAML。"
+else
+  note_line "以上 tt:// 深链已写入 jh.txt / jhsub.txt；开启订阅时同步写入 Mihomo YAML（type: trusttunnel）。"
+fi
+if [ "$tt_trusted" != yes ]; then
+  note_line "自签证书场景：Shadowrocket 若未自动信任内嵌证书，请在节点 TLS → SHA256 栏填入 ${tt_cert_hash_s}。"
+fi
+fi
 # ─── Cloudflare Argo 隧道节点 ───
 local vmatls_link1='' vwatls_link1='' sdatls_link1='' vma_link7='' vwa_link2='' sda_link7=''
 argodomain=$(cat "$HOME/agsbx/sbargoym.log" 2>/dev/null)
@@ -14084,7 +14880,8 @@ clxy=''
 for clash_renderers in clvlpt:clvlpt1 clvmpt:clvmpt1 clvmcdnpt:clvmcdnpt1 \
   clhypt:clhypt1 clxhypt:clxhypt1 cltupt:cltupt1 \
   clvmargopt:clvmargopt1 clmierupt:clmierupt1 \
-  clsudokupt:clsudokupt1 clsudokucdnpt:clsudokucdnpt1 clsudokuargopt:clsudokuargopt1; do
+  clsudokupt:clsudokupt1 clsudokucdnpt:clsudokucdnpt1 clsudokuargopt:clsudokuargopt1 \
+  clttpt_h2:clttpt_h2_1 clttpt_h3:clttpt_h3_1; do
   clash_node=$(get_func "${clash_renderers%%:*}") && clash_name=$(get_func "${clash_renderers#*:}") || continue
   clxy="${clxy}${clash_node}"$'\n'
   clash_names="${clash_names}${clash_name}"$'\n'
@@ -14266,11 +15063,11 @@ if [ "$rep_mode" = yes ]; then
     fi
     [ -f "$permission_path" ] && chmod 600 "$permission_path" 2>/dev/null
   done
-  chmod 700 "$HOME/agsbx/xray" "$HOME/agsbx/sing-box" "$HOME/agsbx/cloudflared" "$HOME/agsbx/sudoku" 2>/dev/null
+  chmod 700 "$HOME/agsbx/xray" "$HOME/agsbx/sing-box" "$HOME/agsbx/cloudflared" "$HOME/agsbx/sudoku" "$HOME/agsbx/trusttunnel" 2>/dev/null
 else
   find "$HOME/agsbx" -type d -exec chmod 700 {} + 2>/dev/null
   find "$HOME/agsbx" -type f -exec chmod 600 {} + 2>/dev/null
-  chmod 700 "$HOME/agsbx/xray" "$HOME/agsbx/sing-box" "$HOME/agsbx/cloudflared" "$HOME/agsbx/caddy" "$HOME/agsbx/sudoku" 2>/dev/null
+  chmod 700 "$HOME/agsbx/xray" "$HOME/agsbx/sing-box" "$HOME/agsbx/cloudflared" "$HOME/agsbx/caddy" "$HOME/agsbx/sudoku" "$HOME/agsbx/trusttunnel" 2>/dev/null
 fi
 [ ! -f "$HOME/agsbx/acme.sh" ] || chmod 700 "$HOME/agsbx/acme.sh" || return 1
 fi
@@ -14301,7 +15098,7 @@ rep_validate_preserved_certificate(){
   [ "$sub" != yes ] || return 0
   if [ "$sub" != yes ] && [ "$hyp" != yes ] && [ "$xhyp" != yes ] \
     && [ "$tup" != yes ] && [ "$ssp" != yes ] && [ "$anp" != yes ] \
-    && [ "$xvcdn" != yes ]; then
+    && [ "$xvcdn" != yes ] && [ "$ttp" != yes ]; then
     return 0
   fi
   mode=$(cat "$HOME/agsbx/cert_mode" 2>/dev/null)
@@ -14421,6 +15218,7 @@ rep_service_is_enabled(){
     xray) systemd_name=xr; openrc_name=xray ;;
     sing-box) systemd_name=sb; openrc_name=sing-box ;;
     sudoku) systemd_name=agsbx-sudoku; openrc_name=agsbx-sudoku ;;
+    trusttunnel) systemd_name=agsbx-tt; openrc_name=agsbx-tt ;;
     argo) systemd_name=argo; openrc_name=argo ;;
     mita) systemd_name=mita; openrc_name=mita ;;
     *) return 1 ;;
@@ -14476,17 +15274,17 @@ rep_begin_transaction(){
   if [ -e "$HOME/websbx" ] && ! cp -a -- "$HOME/websbx" "$rep_backup_dir/websbx"; then
     rep_remove_backup >/dev/null 2>&1 || true; return 1
   fi
-  for unit in xr.service sb.service agsbx-sudoku.service argo.service; do
+  for unit in xr.service sb.service agsbx-sudoku.service agsbx-tt.service argo.service; do
     path="/etc/systemd/system/$unit"
-    case "$unit" in xr.service) component=xray ;; sb.service) component=sing-box ;; agsbx-sudoku.service) component=sudoku ;; argo.service) component=cloudflared ;; esac
+    case "$unit" in xr.service) component=xray ;; sb.service) component=sing-box ;; agsbx-sudoku.service) component=sudoku ;; agsbx-tt.service) component=trusttunnel ;; argo.service) component=cloudflared ;; esac
     service_file_owned "$path" "$component" systemd || continue
     if [ -e "$path" ] && ! cp -a -- "$path" "$rep_backup_dir/systemd/"; then
       rep_remove_backup >/dev/null 2>&1 || true; return 1
     fi
   done
-  for unit in xray sing-box agsbx-sudoku argo; do
+  for unit in xray sing-box agsbx-sudoku agsbx-tt argo; do
     path="/etc/init.d/$unit"
-    case "$unit" in argo) component=cloudflared ;; agsbx-sudoku) component=sudoku ;; *) component="$unit" ;; esac
+    case "$unit" in argo) component=cloudflared ;; agsbx-sudoku) component=sudoku ;; agsbx-tt) component=trusttunnel ;; *) component="$unit" ;; esac
     service_file_owned "$path" "$component" openrc || continue
     if [ -e "$path" ] && ! cp -a -- "$path" "$rep_backup_dir/openrc/"; then
       rep_remove_backup >/dev/null 2>&1 || true; return 1
@@ -14527,6 +15325,7 @@ rep_begin_transaction(){
   rep_old_xray_running=no; agsbx_component_running xray && rep_old_xray_running=yes
   rep_old_singbox_running=no; agsbx_component_running sing-box && rep_old_singbox_running=yes
   rep_old_sudoku_running=no; agsbx_component_running sudoku && rep_old_sudoku_running=yes
+  rep_old_tt_running=no; agsbx_component_running trusttunnel && rep_old_tt_running=yes
   rep_old_argo_running=no; agsbx_component_running cloudflared && rep_old_argo_running=yes
   rep_old_mita_daemon_running=no
   [ -f "$HOME/agsbx/mita_managed" ] && systemctl is-active --quiet mita && rep_old_mita_daemon_running=yes
@@ -14538,6 +15337,7 @@ rep_begin_transaction(){
   rep_old_xray_enabled=no; rep_service_is_enabled xray && rep_old_xray_enabled=yes
   rep_old_singbox_enabled=no; rep_service_is_enabled sing-box && rep_old_singbox_enabled=yes
   rep_old_sudoku_enabled=no; rep_service_is_enabled sudoku && rep_old_sudoku_enabled=yes
+  rep_old_tt_enabled=no; rep_service_is_enabled trusttunnel && rep_old_tt_enabled=yes
   rep_old_argo_enabled=no; rep_service_is_enabled argo && rep_old_argo_enabled=yes
   rep_old_mita_enabled=no; rep_service_is_enabled mita && rep_old_mita_enabled=yes
 
@@ -14573,7 +15373,7 @@ rep_restore_snapshot_files(){
   fi
 
   for backend in systemd openrc; do
-    for component in xray sing-box sudoku cloudflared; do
+    for component in xray sing-box sudoku trusttunnel cloudflared; do
       managed_service_names "$component" || return 1
       if [ "$backend" = systemd ]; then unit="$managed_sd.service"; path="/etc/systemd/system/$unit"
       else unit="$managed_rc"; path="/etc/init.d/$unit"; fi
@@ -14705,6 +15505,10 @@ rep_restore_runtime(){
     if pidof systemd >/dev/null 2>&1; then systemctl enable agsbx-sudoku >/dev/null 2>&1 || failed=yes
     elif command -v rc-update >/dev/null 2>&1; then rc-update add agsbx-sudoku default >/dev/null 2>&1 || failed=yes; fi
   fi
+  if [ "$rep_old_tt_enabled" = yes ]; then
+    if pidof systemd >/dev/null 2>&1; then systemctl enable agsbx-tt >/dev/null 2>&1 || failed=yes
+    elif command -v rc-update >/dev/null 2>&1; then rc-update add agsbx-tt default >/dev/null 2>&1 || failed=yes; fi
+  fi
   if [ "$rep_old_argo_enabled" = yes ]; then
     if pidof systemd >/dev/null 2>&1; then systemctl enable argo >/dev/null 2>&1 || failed=yes
     elif command -v rc-update >/dev/null 2>&1; then rc-update add argo default >/dev/null 2>&1 || failed=yes; fi
@@ -14721,6 +15525,9 @@ rep_restore_runtime(){
   fi
   if [ "$rep_old_sudoku_running" = yes ]; then
     validate_generated_core_config sudoku && kctl start sudoku || failed=yes
+  fi
+  if [ "$rep_old_tt_running" = yes ]; then
+    validate_generated_core_config trusttunnel && kctl start tt || failed=yes
   fi
   if [ "$rep_old_argo_running" = yes ]; then
     if [ "$rep_argo_persistence_ready" = yes ]; then rep_restore_argo_runtime || failed=yes
@@ -14822,7 +15629,7 @@ rep_commit_transaction(){
 cleandel(){
 local cleanup_mode="${1:-del}" cron_tmp filtered_tmp component path
 case "$cleanup_mode" in del|rep) ;; *) echo "错误：未知清理模式 $cleanup_mode。"; return 1 ;; esac
-for component in xray sing-box sudoku cloudflared; do
+for component in xray sing-box sudoku trusttunnel cloudflared; do
   stop_managed_service "$component" yes || return 1
 done
 if [ "$cleanup_mode" = del ]; then
@@ -14874,9 +15681,9 @@ fi
 [ "$cleanup_mode" = del ] && rm -f "$HOME/agsbx/caddy-admin.sock"
 if [ "$cleanup_mode" = rep ]; then
   sleep 1
-  if agsbx_component_running xray || agsbx_component_running sing-box || agsbx_component_running sudoku || agsbx_component_running cloudflared \
+  if agsbx_component_running xray || agsbx_component_running sing-box || agsbx_component_running sudoku || agsbx_component_running trusttunnel || agsbx_component_running cloudflared \
     || subscription_http_is_running; then
-    echo "错误：rep 清理后仍有旧的 Xray、Sing-box、Sudoku、Argo 或订阅进程运行。"
+    echo "错误：rep 清理后仍有旧的 Xray、Sing-box、Sudoku、TrustTunnel、Argo 或订阅进程运行。"
     return 1
   fi
   if [ -f "$HOME/agsbx/mita_managed" ] && command -v mita >/dev/null 2>&1 \
@@ -14906,7 +15713,8 @@ kctl(){
     sb|sing-box) name="Sing-box"; bin="$HOME/agsbx/sing-box"; cfg="$HOME/agsbx/sb.json"; pat='agsbx/sing-box'; sd="sb"; rc="sing-box"; log="$HOME/agsbx/sing-box.log" ;;
     caddy)       name="Caddy";     bin="$HOME/agsbx/caddy";     cfg="$HOME/agsbx/Caddyfile"; pat='agsbx/caddy';    sd="agsbx-caddy"; rc="agsbx-caddy"; log="$HOME/agsbx/caddy.log" ;;
     sudoku)      name="Sudoku";    bin="$HOME/agsbx/sudoku";    cfg="$HOME/agsbx/sudoku.json"; pat='agsbx/sudoku';  sd="agsbx-sudoku"; rc="agsbx-sudoku"; log="$HOME/agsbx/sudoku.log" ;;
-    *)           echo "未知内核：$kernel（可选 xray｜sb｜caddy｜sudoku｜all）"; return 1 ;;
+    tt|trusttunnel) name="TrustTunnel"; bin="$HOME/agsbx/trusttunnel"; cfg="$HOME/agsbx/tt_vpn.toml"; pat='agsbx/trusttunnel'; sd="agsbx-tt"; rc="agsbx-tt"; log="$HOME/agsbx/trusttunnel.log" ;;
+    *)           echo "未知内核：$kernel（可选 xray｜sb｜caddy｜sudoku｜tt｜all）"; return 1 ;;
   esac
   if [ ! -s "$bin" ]; then echo "${name}：内核未下载，无法执行 ${action}。"; return 1; fi
   require_service_slot "${bin##*/}" || return 1
@@ -14914,7 +15722,7 @@ kctl(){
   if [ "$action" != stop ]; then
     command -v ss >/dev/null 2>&1 || { echo "错误：缺少 ss，无法确认监听状态；未启动或重启内核。"; return 1; }
     [ -s "$cfg" ] || { echo "${name}：尚未配置。"; return 1; }
-    case "$kernel" in xray|x) validate_generated_core_config xray || return 1 ;; sb|sing-box) validate_generated_core_config sing-box || return 1 ;; sudoku) validate_generated_core_config sudoku || return 1 ;; esac
+    case "$kernel" in xray|x) validate_generated_core_config xray || return 1 ;; sb|sing-box) validate_generated_core_config sing-box || return 1 ;; sudoku) validate_generated_core_config sudoku || return 1 ;; tt|trusttunnel) validate_generated_core_config trusttunnel || return 1 ;; esac
     case "$kernel" in xray|x) secondary_ensure_bridge xray || return 1 ;; esac
   fi
   # Sing-box 的 SIGHUP 没有完成确认；旧实例退出后新监听仍可能失败，不能以发信号成功代替重载成功。
@@ -14929,6 +15737,11 @@ kctl(){
       sudoku)
         agsbx_component_running sudoku || { echo "Sudoku：进程未运行，请使用 start。"; return 1; }
         echo "Sudoku 不支持配置热重载，改为经检查的重启，完成后验证进程与监听；连接会短暂中断。"
+        action=restart
+        ;;
+      tt|trusttunnel)
+        agsbx_component_running trusttunnel || { echo "TrustTunnel：进程未运行，请使用 start。"; return 1; }
+        echo "TrustTunnel reload 改为经检查的重启，完成后验证进程与监听（证书续期仍由 SIGHUP 自动热重载）。"
         action=restart
         ;;
     esac
@@ -14964,6 +15777,8 @@ kctl(){
           [ "$kernel" = caddy ] && rm -f "$HOME/agsbx/caddy-admin.sock"
           if [ "$kernel" = sudoku ]; then
             nohup "$bin" -c "$cfg" 8>&- > "$log" 2>&1 &
+          elif [ "$kernel" = tt ] || [ "$kernel" = trusttunnel ]; then
+            nohup "$bin" "$cfg" "$HOME/agsbx/tt_hosts.toml" 8>&- > "$log" 2>&1 &
           else
             nohup "$bin" run "$runflag" "$cfg" 8>&- > "$log" 2>&1 &
           fi
@@ -15109,6 +15924,7 @@ for kv in "xray:Xray:$HOME/agsbx/xray:$HOME/agsbx/xr.json" \
   "sing-box:Sing-box:$HOME/agsbx/sing-box:$HOME/agsbx/sb.json" \
   "caddy:Caddy:$HOME/agsbx/caddy:$HOME/agsbx/Caddyfile" \
   "sudoku:Sudoku:$HOME/agsbx/sudoku:$HOME/agsbx/sudoku.json" \
+  "trusttunnel:TrustTunnel:$HOME/agsbx/trusttunnel:$HOME/agsbx/tt_vpn.toml" \
   "cloudflared:Cloudflared:$HOME/agsbx/cloudflared:$HOME/agsbx/argoport.log" \
   "mita:Mita:$HOME/agsbx/mita_managed:$HOME/agsbx/mita.json"; do
   IFS=: read -r k label bin cfg <<< "$kv"
@@ -15278,7 +16094,7 @@ cleandel rep || exit 1
 cleanup_mieru_ufw || exit 1
 reset_mita_config || exit 1
 secondary_clear_numbered_state || { echo "错误：rep 无法清理旧的编号二级代理状态。"; exit 1; }
-rm -rf "$HOME/agsbx"/{sb.json,xr.json,sudoku.json,sudoku_client_key,sudoku_meta,sudoku_path_root,port_sudoku,sbargoym.log,sbargotoken.log,argo.log,argoport.log,cdnym,name,secondary_secp,secondary_meta,secondary_backends,secondary_bridge_port,secondary_bridge_pass,direct_xh_profile,direct_vl_profile,xray_xh_profile,xray_vl_profile,xray_vx_profile,xray_vw_profile,xray_vm_profile,xray_hy_profile,xray_xvd_profile,xray_xva_profile,mita.json,mieru_user,mieru_pass,port_mieru,mieru_protocol,mieru_traffic_seed,mieru_traffic_pattern,mieru_ufw_rule,shyjpt,xhyjpt,socks_user,socks_pass,transport_vm,transport_vw,transport_vx,transport_xh,transport_xvd,transport_xva} \
+rm -rf "$HOME/agsbx"/{sb.json,xr.json,sudoku.json,sudoku_client_key,sudoku_meta,sudoku_path_root,port_sudoku,tt_vpn.toml,tt_hosts.toml,tt_credentials.toml,tt_rules.toml,tt_user,tt_pass,tt_meta,port_tt,sbargoym.log,sbargotoken.log,argo.log,argoport.log,cdnym,name,secondary_secp,secondary_meta,secondary_backends,secondary_bridge_port,secondary_bridge_pass,direct_xh_profile,direct_vl_profile,xray_xh_profile,xray_vl_profile,xray_vx_profile,xray_vw_profile,xray_vm_profile,xray_hy_profile,xray_xvd_profile,xray_xva_profile,mita.json,mieru_user,mieru_pass,port_mieru,mieru_protocol,mieru_traffic_seed,mieru_traffic_pattern,mieru_ufw_rule,shyjpt,xhyjpt,socks_user,socks_pass,transport_vm,transport_vw,transport_vx,transport_xh,transport_xvd,transport_xva} \
   || { echo "错误：rep 无法清理旧的可变协议状态。"; exit 1; }
 rm -f -- "$HOME/agsbx/xdns-client.json" "$HOME/agsbx/xicmp-client.json" "$HOME/agsbx/xdns_domain" "$HOME/agsbx/xdns_resolver" \
   "$HOME/agsbx/xdrive-client.json" \
@@ -15327,6 +16143,18 @@ fi
 upsudoku "$reqver" || exit 1
 cip
 exit $?
+elif [ "$1" = "uptt" ] || [ "$1" = "downtt" ]; then
+reqver="$2"
+if [ "$1" = "downtt" ] && [ -z "$reqver" ]; then echo "用法：agsbx downtt <版本号>，例如 agsbx downtt v1.3.0（升级到最新请用 agsbx uptt）"; exit 1; fi
+curver=$(cat "$HOME/agsbx/tt_version" 2>/dev/null | sed 's/^v//')
+if [ -n "$reqver" ] && [ -n "$curver" ]; then
+  rel=$(vercmp "$reqver" "$curver")
+  if [ "$1" = "uptt" ] && [ "$rel" = "lt" ]; then echo "错误：目标版本 ${reqver#v} 低于当前已记录的 v${curver}，这是降级。请改用：agsbx downtt ${reqver}"; exit 1; fi
+  if [ "$1" = "downtt" ] && [ "$rel" = "gt" ]; then echo "错误：目标版本 ${reqver#v} 高于当前已记录的 v${curver}，这是升级。请改用：agsbx uptt ${reqver}"; exit 1; fi
+fi
+uptt "$reqver" || exit 1
+cip
+exit $?
 elif [ "$1" = "status" ] || [ "$1" = "stats" ] || [ "$1" = "top" ]; then
 showstats
 exit
@@ -15334,8 +16162,8 @@ elif [ "$1" = "res" ]; then
 res_failed=0
 migrate_argo_persistent_startup || res_failed=1
 migrate_subscription_persistent_startup || res_failed=1
-for component in sing-box xray sudoku caddy; do
-  case "$component" in xray) cfg=xr.json; target=xray ;; sing-box) cfg=sb.json; target=sb ;; sudoku) cfg=sudoku.json; target=sudoku ;; caddy) cfg=Caddyfile; target=caddy ;; esac
+for component in sing-box xray sudoku trusttunnel caddy; do
+  case "$component" in xray) cfg=xr.json; target=xray ;; sing-box) cfg=sb.json; target=sb ;; sudoku) cfg=sudoku.json; target=sudoku ;; trusttunnel) cfg=tt_vpn.toml; target=tt ;; caddy) cfg=Caddyfile; target=caddy ;; esac
   [ ! -s "$HOME/agsbx/$cfg" ] || kctl restart "$target" || res_failed=1
 done
 # HTTPS 订阅验证依赖上面的 TLS 内核就绪；订阅收尾只校验已有证书，不调用证书申请函数。
@@ -15362,9 +16190,9 @@ action="$1"; target="${2:-all}"
 case "$target" in
   all)
     lifecycle_failed=0
-    if [ "$action" = stop ]; then lifecycle_order="caddy sudoku xray sb"; else lifecycle_order="sb xray sudoku caddy"; fi
+    if [ "$action" = stop ]; then lifecycle_order="caddy tt sudoku xray sb"; else lifecycle_order="sb xray sudoku tt caddy"; fi
     for target in $lifecycle_order; do
-      case "$target" in xray) cfg=xr.json ;; sb) cfg=sb.json ;; sudoku) cfg=sudoku.json ;; caddy) cfg=Caddyfile ;; esac
+      case "$target" in xray) cfg=xr.json ;; sb) cfg=sb.json ;; sudoku) cfg=sudoku.json ;; tt) cfg=tt_vpn.toml ;; caddy) cfg=Caddyfile ;; esac
       [ -s "$HOME/agsbx/$cfg" ] || continue
       kctl "$action" "$target" || lifecycle_failed=1
     done
@@ -15374,8 +16202,9 @@ case "$target" in
   sb|sing-box) kctl "$action" sb ;;
   caddy)       kctl "$action" caddy ;;
   sudoku)      kctl "$action" sudoku ;;
+  tt|trusttunnel) kctl "$action" tt ;;
   mita|mieru)  mitactl "$action" ;;
-  *)           echo "未知内核：$target（可选 xray｜sb｜caddy｜sudoku｜mita｜all，省略=all）"; exit 1 ;;
+  *)           echo "未知内核：$target（可选 xray｜sb｜caddy｜sudoku｜tt｜mita｜all，省略=all）"; exit 1 ;;
 esac
 exit
 fi
